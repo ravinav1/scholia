@@ -156,6 +156,9 @@ struct StudyThread: Codable, Identifiable, Sendable {
     var draftImage: Data?
     var draftAttachments: [MessageAttachment]?
     var updatedAt = Date()
+    /// A hidden one-shot thread that answers passage explanations in the
+    /// reader popover. Never listed as a conversation.
+    var isSelectionScratch: Bool?
 }
 
 struct StudyCourse: Codable, Identifiable, Sendable {

@@ -41,6 +41,7 @@ struct StudyWorkspaceSmoke {
                 if CommandLine.arguments.contains("--ai-workspace-only") { try await checkAIWorkspace(); exit(0) }
                 if CommandLine.arguments.contains("--document-focus-only") { try await checkDocumentFocus(); exit(0) }
                 if CommandLine.arguments.contains("--document-focus-preview") { try await previewDocumentFocus(); exit(0) }
+                if CommandLine.arguments.contains("--passage-explanation-only") { try await checkPassageExplanationScratch(); exit(0) }
                 if CommandLine.arguments.contains("--reference-shortcuts-only") { try await checkReferenceLinksAndShortcuts(); exit(0) }
                 if CommandLine.arguments.contains("--sync-status-only") { try await checkSyncStatusUI(); exit(0) }
                 if CommandLine.arguments.contains("--ocr-only") { try await checkDocumentOCR(); exit(0) }
@@ -276,8 +277,75 @@ struct StudyWorkspaceSmoke {
             let margins = (rect.minX, host.pdf.bounds.width - rect.maxX)
             precondition(abs(margins.0 - margins.1) < 2, "A fitted page must sit centred in the reader, not beside a scroller strip: \(margins)")
         }
+        let previousMode = AppModel.shared.settings.studyModelMode
+        AppModel.shared.settings.studyModelMode = .fast
+        workspace.draft = "Prove that the eigenvalues of a symmetric matrix are real."
+        try await Task.sleep(for: .milliseconds(500))
+        try snapshot(controller.window, at: output.appendingPathComponent("document-focus-fast-mode.png"))
+        try await courseUIPress("study-model-mode", in: controller.window)
+        try await Task.sleep(for: .milliseconds(600))
+        if let panel = controller.window.childWindows?.first(where: { $0.contentView != nil }) {
+            try snapshot(panel, at: output.appendingPathComponent("document-model-mode-panel.png"))
+        } else {
+            print("WARN: model mode panel did not open as a child window")
+        }
+        AppModel.shared.settings.studyModelMode = previousMode
+        workspace.draft = ""
         controller.window.close()
-        print("PASS: wrote document-chat-minimum.png and document-focus-minimum.png")
+        print("PASS: wrote document-chat-minimum.png, document-focus-minimum.png and document-focus-fast-mode.png")
+    }
+    /// Explain on a passage answers in the reader popover's hidden thread; the
+    /// chat column keeps its conversation until the answer is kept in chat.
+    static func checkPassageExplanationScratch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-passage-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        workspace.createCourse(name: "Passage fixture", code: "TEST")
+        let source = root.appendingPathComponent("Slides.pdf")
+        try fixturePDF().write(to: source)
+        workspace.importDocuments([source])
+        for _ in 0..<500 where workspace.isImporting || workspace.documentIndex == nil { try await Task.sleep(for: .milliseconds(20)) }
+        workspace.draft = "An unsent draft in the conversation"
+        workspace.saveDraft()
+        let visibleBefore = workspace.course?.threads.filter { $0.isSelectionScratch != true } ?? []
+        let configuration = ProviderConfiguration(provider: ProviderCatalog.provider(id: "ollama"), model: "fixture", endpoint: "http://127.0.0.1:1", apiKey: "", language: .english, fastClaudeMode: false)
+        let completion: StudyCompletion = { messages, _, onToken in
+            precondition(messages.last?.content.contains("> eigenvectors") == true)
+            onToken("The selected passage ")
+            return CompletionResult(text: "The selected passage describes eigenvectors.", providerID: "fixture", providerName: "Fixture", model: "fixture")
+        }
+        let sent = workspace.sendReaderSelection("eigenvectors", inChat: false) {
+            workspace.submit(configuration: configuration, complete: completion)
+        }
+        precondition(sent, "Explain must start a request from the passage alone")
+        let target = try unwrap(workspace.selectionResponseTarget)
+        precondition(!target.inChat && workspace.library.selectedThreadID != target.threadID, "The popover follows a hidden thread, not the chat")
+        for _ in 0..<500 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(10)) }
+        precondition(workspace.messages.isEmpty, "The conversation must not show the popover's explanation")
+        precondition(workspace.draft == "An unsent draft in the conversation", "The conversation draft must survive an explanation")
+        let scratch = try unwrap(workspace.course?.threads.first { $0.id == target.threadID })
+        precondition(scratch.isSelectionScratch == true && scratch.messages.count == 2 && scratch.messages.last?.content.contains("describes eigenvectors") == true)
+        let visibleAfter = workspace.course?.threads.filter { $0.isSelectionScratch != true } ?? []
+        precondition(visibleAfter.map(\.id) == visibleBefore.map(\.id) && visibleAfter.allSatisfy { $0.messages.isEmpty },
+            "No visible conversation is created or filled by an explanation")
+        // A second explanation replaces the first in the hidden thread instead of growing it.
+        _ = workspace.sendReaderSelection("eigenvectors", inChat: false) { workspace.submit(configuration: configuration, complete: completion) }
+        for _ in 0..<500 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(10)) }
+        precondition(workspace.course?.threads.filter { $0.isSelectionScratch == true }.count == 1)
+        precondition(workspace.course?.threads.first { $0.isSelectionScratch == true }?.messages.count == 2)
+        workspace.keepSelectionExplanationInChat()
+        precondition(workspace.messages.count == 2 && workspace.messages.last?.content.contains("describes eigenvectors") == true,
+            "Keep in chat moves the explanation into the document conversation")
+        precondition(workspace.course?.threads.first { $0.isSelectionScratch == true }?.messages.isEmpty == true)
+        precondition(workspace.selectionResponseTarget?.inChat == true)
+        // With the setting on, the explanation goes straight into the conversation.
+        _ = workspace.sendReaderSelection("eigenvectors", inChat: true) { workspace.submit(configuration: configuration, complete: completion) }
+        for _ in 0..<500 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(10)) }
+        precondition(workspace.messages.count == 4 && workspace.selectionResponseTarget?.inChat == true)
+        workspace.flush()
+        let reopened = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        precondition(reopened.course?.threads.filter { $0.isSelectionScratch != true }.count == max(1, visibleBefore.count) && reopened.messages.count == 4)
+        print("PASS: passage explanations answer in a hidden thread, keep the conversation and draft, replace each other, and can be kept in chat")
     }
     static func checkPDFSelectionChat() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-selection-\(UUID())")

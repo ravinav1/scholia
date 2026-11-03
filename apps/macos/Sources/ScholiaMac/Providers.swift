@@ -469,6 +469,8 @@ struct AppSettings: Codable, Equatable, Sendable {
     var reasoningEfforts: [String: String] = ["claudecode": "high", "codex": "high"]
     // Optional so settings saved before study routing retain manual behavior.
     var studyModelMode: StudyModelMode?
+    /// Passage explanations answer in the reader popover only, unless set.
+    var selectionExplanationsInChat: Bool?
     var quickAskProviderID: String?
     var quickAskModels: [String: String]?
     var quickAskReasoningEfforts: [String: String]?
@@ -495,6 +497,7 @@ struct AppSettings: Codable, Equatable, Sendable {
 
     var resolvedExplainShortcut: KeyboardShortcut { explainShortcut ?? .explainDefault }
     var resolvedStudyModelMode: StudyModelMode { studyModelMode ?? .manual }
+    var resolvedSelectionExplanationsInChat: Bool { selectionExplanationsInChat ?? false }
     var resolvedCaptureShortcut: KeyboardShortcut { captureShortcut ?? .captureDefault }
     var resolvedQuickAskShortcut: KeyboardShortcut { quickAskShortcut ?? .quickAskDefault }
     var resolvedToggleSelectionPopupShortcut: KeyboardShortcut {

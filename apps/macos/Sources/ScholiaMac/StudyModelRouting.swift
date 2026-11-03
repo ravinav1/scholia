@@ -80,18 +80,40 @@ enum StudyModelRouter {
         let classification = mode == .auto
             ? classify(question: question, previousQuestions: previousQuestions, contextCharacters: contextCharacters)
             : (tier: mode.rawValue, reason: mode == .fast ? "Fast mode selected" : "Deep mode selected")
-        guard let definition = (choices[classification.tier] ?? [])
-            .compactMap({ id in availableModels.first(where: { $0.id == id }) })
-            .first(where: { !hasImages || $0.supportsImages != false }) else {
+        _ = choices
+        guard let choice = tierChoice(tier: classification.tier, providerID: providerID,
+            availableModels: availableModels, hasImages: hasImages) else {
             return unchanged("No suitable verified routing model is available; using your selected model")
         }
-        let preferred = ["fast": "low", "balanced": "medium", "deep": "high"][classification.tier]!
-        let effort = definition.reasoningEfforts.contains(preferred) ? preferred
-            : definition.defaultReasoningEffort.flatMap { definition.reasoningEfforts.contains($0) ? $0 : nil }
-                ?? definition.reasoningEfforts.first
-        return StudyModelRoute(mode: mode, modelID: definition.id, reasoningEffort: effort,
+        return StudyModelRoute(mode: mode, modelID: choice.model.id, reasoningEffort: choice.reasoningEffort,
             tier: classification.tier, reason: classification.reason)
     }
+
+    static let tiers = ["fast", "balanced", "deep"]
+    static func tierLabel(_ tier: String) -> String {
+        switch tier {
+        case "fast": "Everyday"
+        case "balanced": "Problems"
+        case "deep": "Proofs"
+        default: tier.capitalized
+        }
+    }
+    private static let tierEfforts = ["fast": "low", "balanced": "medium", "deep": "high"]
+
+    /// The verified model and reasoning level a tier uses for a provider. The
+    /// mode picker shows this so the choice is visible before a question is sent.
+    static func tierChoice(
+        tier: String, providerID: String, availableModels: [ModelDefinition], hasImages: Bool = false
+    ) -> (model: ModelDefinition, reasoningEffort: String?)? {
+        guard let ids = candidates[providerID]?[tier],
+            let definition = ids.compactMap({ id in availableModels.first(where: { $0.id == id }) })
+                .first(where: { !hasImages || $0.supportsImages != false }) else { return nil }
+        let effort = tierEfforts[tier].flatMap { definition.reasoningEfforts.contains($0) ? $0 : nil }
+            ?? definition.defaultReasoningEffort.flatMap { definition.reasoningEfforts.contains($0) ? $0 : nil }
+            ?? definition.reasoningEfforts.first
+        return (definition, effort)
+    }
+    static func supportsRouting(providerID: String) -> Bool { candidates[providerID] != nil }
 
     private static func matches(_ expression: String, in text: String) -> Bool {
         text.range(of: expression, options: [.regularExpression, .caseInsensitive]) != nil

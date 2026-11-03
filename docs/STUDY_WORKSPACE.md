@@ -251,6 +251,16 @@ message box starts one line tall and grows with what you type. The reader
 centres a fitted page and stays on the current page when its width changes,
 for example when entering focus.
 
+The **⚡** mode button opens a panel listing Manual, Auto study, Fast and Deep
+with the model and reasoning level each one uses for the active provider, so
+the choice is visible before a question is sent. In Fast, Deep or Auto study
+the model button shows the model the current draft would be sent to.
+
+Selecting a passage in a PDF and choosing **Explain** answers in a popover over
+the reader only; the conversation beside it keeps its own thread and draft.
+**Keep in chat** moves that explanation into the document conversation, and
+**Always keep in chat** makes every explanation go there as well.
+
 Any open document can take the whole screen for a lecture: press the focus
 button in the reader toolbar, **⌘⇧F**, or **View → Toggle Document Focus**. The
 Mac app hides the sidebar and top bar, enters full screen, and keeps the chat

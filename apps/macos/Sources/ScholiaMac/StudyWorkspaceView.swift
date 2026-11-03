@@ -406,12 +406,13 @@ struct StudyWorkspaceView: View {
                                 Label("Add your first document", systemImage: "plus")
                             }.scholiaButtonStyle(.plain).font(.caption).foregroundStyle(.secondary).padding(10)
                         }
-                        if !course.threads.isEmpty {
+                        let conversations = course.threads.filter { $0.isSelectionScratch != true }
+                        if !conversations.isEmpty {
                             sectionTitle("CONVERSATIONS") {
                                 workspace.newThread()
                                 if courseWorkspaceVisible { courseChatExpanded = true }
                             }.padding(.top, 23)
-                            ForEach(course.threads.reversed()) { thread in
+                            ForEach(conversations.reversed()) { thread in
                                 StudySidebarThreadRow(
                                     thread: thread, selected: workspace.library.selectedThreadID == thread.id,
                                     deletable: workspace.streamingThreadID != thread.id,
@@ -745,7 +746,9 @@ private struct StudyReaderPane: View {
                                 onSelectionAction: { text, explain, question in
                                     workspace.selectedText = text
                                     if explain && !workspace.isStreaming {
-                                        return workspace.sendReaderSelection(text, question: question) {
+                                        return workspace.sendReaderSelection(
+                                            text, question: question, inChat: app.settings.resolvedSelectionExplanationsInChat
+                                        ) {
                                             workspace.send(using: app)
                                         }
                                     }
@@ -757,10 +760,16 @@ private struct StudyReaderPane: View {
                                     return false
                                 },
                                 selectionResponse: { close in
-                                    AnyView(StudySelectionResponseView(workspace: workspace, onClose: close) {
+                                    AnyView(StudySelectionResponseView(
+                                        workspace: workspace,
+                                        alwaysInChat: Binding(
+                                            get: { app.settings.resolvedSelectionExplanationsInChat },
+                                            set: { app.settings.selectionExplanationsInChat = $0; app.persistSettings() }),
+                                        onClose: close
+                                    ) {
                                         close()
                                         tutorVisible = true
-                                        workspace.openSelectionInChat(workspace.selectedText)
+                                        workspace.keepSelectionExplanationInChat()
                                     })
                                 },
                                 selectionBusy: workspace.isStreaming
@@ -2099,12 +2108,32 @@ private struct StudyTutorComposer: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.colorScheme) private var colorScheme
     @State private var modelsPresented = false
+    @State private var modesPresented = false
     @State private var inspectedAttachment: MessageAttachment?
     private var dark: Bool { colorScheme == .dark }
     private var modelDefinition: ModelDefinition? { app.modelDefinition(for: app.activeProvider, id: app.activeModel) }
     private var visionAvailable: Bool {
         (modelDefinition?.supportsImages ?? (app.activeProvider.id != "opencode"))
             && (app.activeProvider.supportsImages || app.activeProvider.bridge?.imageSupportComesFromHealth == true)
+    }
+    /// The route Fast, Deep or Auto study would take for the current draft, so
+    /// the composer shows the model and reasoning it will use before sending.
+    private var previewRoute: StudyModelRoute? {
+        guard app.activeStudyModelMode != .manual else { return nil }
+        return StudyModelRouter.route(
+            mode: app.activeStudyModelMode, providerID: app.activeProvider.id, selectedModel: app.activeModel,
+            reasoningEffort: app.activeStudyReasoningEffort, availableModels: app.verifiedModels(for: app.activeProvider),
+            question: draftState.text, previousQuestions: workspace.messages.filter { $0.role == .user }.map(\.content),
+            hasImages: workspace.draftImage != nil)
+    }
+    private func modelLabel(_ id: String) -> String { app.modelDefinition(for: app.activeProvider, id: id)?.label ?? id }
+    private func effortLabel(_ effort: String) -> String { effort == "xhigh" ? "Extra high" : effort.capitalized }
+    private var routeSummary: String? {
+        previewRoute.map { route in
+            "\(route.mode.label) will use \(modelLabel(route.modelID))"
+                + (route.reasoningEffort.map { " with \(effortLabel($0).lowercased()) reasoning" } ?? "")
+                + " · \(route.reason)"
+        }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2222,17 +2251,19 @@ private struct StudyTutorComposer: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text(app.activeStudyModelMode == .manual
-                                 ? modelDefinition?.label ?? app.activeModel : app.activeProvider.name)
+                                 ? modelDefinition?.label ?? app.activeModel
+                                 : previewRoute.map { modelLabel($0.modelID) } ?? app.activeProvider.name)
                                 .lineLimit(1).truncationMode(.middle)
                             Image(systemName: "chevron.down").font(.system(size: 8))
                         }.font(.system(size: 10)).foregroundStyle(.secondary)
                     }.scholiaButtonStyle(.plain).popover(isPresented: $modelsPresented) {
-                        ScholiaModelPickerPopover(isPresented: $modelsPresented, usesExplainModel: true)
+                        ScholiaModelPickerPopover(isPresented: $modelsPresented, usesExplainModel: true, routeNote: routeSummary)
                             .environmentObject(app)
                     }
-                    .help(app.activeStudyModelMode == .manual ? "Choose a model"
-                        : "The model is chosen for each question. Open to choose a provider or manage models.")
+                    .help(routeSummary.map { "\($0). Open to choose a provider or manage models." } ?? "Choose a model")
                     .accessibilityLabel("Choose a model")
+                    .accessibilityValue(previewRoute.map { modelLabel($0.modelID) } ?? modelDefinition?.label ?? app.activeModel)
+                    .accessibilityIdentifier("study-model-choice")
                     Spacer(minLength: 0)
                     Button {
                         if workspace.isCurrentThreadStreaming {
@@ -2289,22 +2320,17 @@ private struct StudyTutorComposer: View {
             get: { app.settings.language },
             set: { app.settings.language = $0; app.persistSettings() }
         ))
-        Menu {
-            ForEach(StudyModelMode.allCases) { mode in
-                Button {
-                    app.selectStudyModelMode(mode)
-                } label: {
-                    if app.activeStudyModelMode == mode {
-                        Label(mode.label, systemImage: "checkmark")
-                    } else {
-                        Text(mode.label)
-                    }
-                }.help(mode.detail)
+        Button { modesPresented.toggle() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "bolt")
+                Text(app.activeStudyModelMode.label)
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold))
+            }.font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+        }.scholiaButtonStyle(.plain)
+            .popover(isPresented: $modesPresented, arrowEdge: .top) {
+                StudyModelModePanel(presented: $modesPresented, selectedModelLabel: modelDefinition?.label ?? app.activeModel,
+                    selectedReasoning: app.activeStudyReasoningEffort).environmentObject(app)
             }
-        } label: {
-            Label(app.activeStudyModelMode.label, systemImage: "bolt")
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-        }.menuStyle(.borderlessButton).scholiaPointingCursor().fixedSize()
             .help(app.activeStudyModelMode.detail).accessibilityLabel("Study model mode")
             .accessibilityValue(app.activeStudyModelMode.label)
             .accessibilityIdentifier("study-model-mode")
@@ -2331,6 +2357,14 @@ private struct StudyTutorComposer: View {
             )
             .accessibilityLabel("Reasoning mode")
             .accessibilityValue(app.activeStudyReasoningEffort ?? "default")
+        } else if let route = previewRoute, let effort = route.reasoningEffort {
+            HStack(spacing: 4) {
+                Image(systemName: "brain")
+                Text(effortLabel(effort))
+            }.font(.system(size: 10)).foregroundStyle(.secondary).fixedSize()
+                .help("\(route.mode.label) chose \(effortLabel(effort).lowercased()) reasoning · \(route.reason)")
+                .accessibilityLabel("Reasoning mode").accessibilityValue(effort)
+                .accessibilityIdentifier("study-routed-reasoning")
         }
         if app.activeProvider.id == "codex" {
             CodexUsageIndicator(monitor: app.codexUsage, configuration: app.codexUsageConfiguration())
@@ -2430,5 +2464,68 @@ private struct StudyWorkspaceOptionsPanel: View {
                 .disabled(workspace.isStreaming || workspace.isImporting || workspace.canvasBusy)
         }
         .padding(16).frame(width: 300)
+    }
+}
+
+/// The study modes with the model and reasoning level each one uses for the
+/// active provider, so "Fast" or "Deep" is never a guess.
+private struct StudyModelModePanel: View {
+    @Binding var presented: Bool
+    var selectedModelLabel: String
+    var selectedReasoning: String?
+    @EnvironmentObject private var app: AppModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    private func effortLabel(_ effort: String) -> String { effort == "xhigh" ? "extra high" : effort }
+    private func choice(_ tier: String) -> String {
+        let models = app.verifiedModels(for: app.activeProvider)
+        guard let choice = StudyModelRouter.tierChoice(tier: tier, providerID: app.activeProvider.id, availableModels: models) else {
+            return StudyModelRouter.supportsRouting(providerID: app.activeProvider.id)
+                ? "no verified model · uses \(selectedModelLabel)" : "not available for \(app.activeProvider.name) · uses \(selectedModelLabel)"
+        }
+        return choice.model.label + (choice.reasoningEffort.map { " · \(effortLabel($0)) reasoning" } ?? "")
+    }
+    private func uses(_ mode: StudyModelMode) -> String {
+        switch mode {
+        case .manual: selectedModelLabel + (selectedReasoning.map { " · \(effortLabel($0)) reasoning" } ?? "")
+        case .fast: choice("fast")
+        case .deep: choice("deep")
+        case .auto: StudyModelRouter.tiers.map { "\(StudyModelRouter.tierLabel($0)): \(choice($0))" }.joined(separator: "\n")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Model mode").font(.headline).padding(.bottom, 4)
+            ForEach(StudyModelMode.allCases) { mode in
+                let selected = app.activeStudyModelMode == mode
+                Button {
+                    app.selectStudyModelMode(mode)
+                    presented = false
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected ? Color.accentColor : Color.secondary).padding(.top, 1)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(mode.label).font(.system(size: 12, weight: .semibold))
+                            Text(mode.detail).font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(uses(mode)).font(.caption.monospacedDigit()).foregroundStyle(Color.accentColor)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(9).contentShape(Rectangle())
+                    .background(selected ? Color.accentColor.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                }.scholiaButtonStyle(.plain)
+                    .accessibilityLabel(mode.label).accessibilityValue(uses(mode))
+                    .accessibilityIdentifier("study-model-mode-\(mode.rawValue)")
+            }
+            Text("Models are chosen among those verified for \(app.activeProvider.name). Verify more in Settings to widen the choice.")
+                .font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
+        }
+        .padding(14).frame(width: 340)
+        .tint(ScholiaVisualStyle.accentColor(for: colorScheme))
+        .accentColor(ScholiaVisualStyle.accentColor(for: colorScheme))
     }
 }

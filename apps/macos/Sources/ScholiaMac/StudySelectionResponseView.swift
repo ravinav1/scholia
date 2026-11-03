@@ -8,15 +8,20 @@ struct StudySelectionResponseView: View {
     let answerID: UUID?
     let sourceTitle: String
     let initialError: String?
+    let inChat: Bool
+    @Binding var alwaysInChat: Bool
     var onClose: () -> Void
     var onOpenChat: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
-    init(workspace: StudyWorkspaceModel, onClose: @escaping () -> Void, onOpenChat: @escaping () -> Void) {
+    init(workspace: StudyWorkspaceModel, alwaysInChat: Binding<Bool>, onClose: @escaping () -> Void, onOpenChat: @escaping () -> Void) {
         self.workspace = workspace
+        _alwaysInChat = alwaysInChat
         courseID = workspace.course?.id
-        threadID = workspace.thread?.id
-        answerID = workspace.isCurrentThreadStreaming ? workspace.messages.last?.id : nil
+        let target = workspace.selectionResponseTarget
+        threadID = target?.threadID ?? workspace.thread?.id
+        answerID = target?.answerID ?? (workspace.isCurrentThreadStreaming ? workspace.messages.last?.id : nil)
+        inChat = target?.inChat ?? true
         sourceTitle = workspace.document.map { "\($0.title) · page \(workspace.currentPage)" }
             ?? workspace.course?.displayName ?? "Selected passage"
         initialError = answerID == nil ? workspace.error : nil
@@ -82,8 +87,15 @@ struct StudySelectionResponseView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
             Divider()
-            HStack {
-                Button("Open in chat", action: onOpenChat)
+            HStack(spacing: 12) {
+                Button(inChat ? "Show in chat" : "Keep in chat", action: onOpenChat)
+                    .disabled(answer?.isStreaming == true)
+                    .help(inChat ? "This explanation is already in the document conversation"
+                        : "Move this explanation into the document conversation")
+                    .accessibilityIdentifier("selection-keep-in-chat")
+                Toggle("Always keep in chat", isOn: $alwaysInChat).toggleStyle(.checkbox)
+                    .help("Answer passage explanations in the conversation as well as here")
+                    .accessibilityIdentifier("selection-always-in-chat")
                 Spacer()
                 if answer?.isStreaming == true {
                     Button("Stop", action: workspace.stopAnswer)

@@ -588,7 +588,7 @@ extension StudyWorkspaceSmoke {
         throw StudyError.message("Missing accessibility element \(id). Found: \(identifiers)")
     }
 
-    private static func courseUIPress(_ id: String, in window: NSWindow) async throws {
+    static func courseUIPress(_ id: String, in window: NSWindow) async throws {
         let element = try await courseUIWaitForElement(id, in: window)
         try courseUIRequire(element.accessibilityPerformPress(), "Could not activate \(id)")
         try await courseUISettle()

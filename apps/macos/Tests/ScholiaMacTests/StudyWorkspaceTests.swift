@@ -142,6 +142,37 @@ final class StudyWorkspaceTests: XCTestCase {
         XCTAssertFalse(model.library.courses[0].threads.contains { $0.id == thread.id })
     }
 
+    @MainActor
+    func testPassageExplanationsStayOutOfTheConversationUntilKept() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        model.createCourse(name: "Algebra", code: "TMA4115")
+        let slides = StudyDocument(title: "Week 41", kind: .pdf, fileName: "original.pdf", pageCount: 1, contentHash: "slides")
+        try model.store.write(document: slides, index: StudyDocumentIndex(pages: [StudyPage(number: 1, text: "Eigenvalues")]), data: Data("Fixture".utf8))
+        model.library.courses[0].documents.append(slides)
+        model.selectDocument(slides.id)
+        model.automaticContextEnabled = false
+        let config = ProviderConfiguration(provider: ProviderCatalog.provider(id: "ollama"), model: "test", endpoint: "http://127.0.0.1:11434", apiKey: "", language: .english, fastClaudeMode: false)
+        let sent = model.sendReaderSelection("Av = λv", inChat: false) {
+            model.submit(configuration: config) { _, _, onToken in
+                onToken("An eigenvector ")
+                return CompletionResult(text: "An eigenvector keeps its direction.", providerID: "test", providerName: "Test", model: "test")
+            }
+        }
+        XCTAssertTrue(sent)
+        for _ in 0..<100 where model.isStreaming { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(model.messages.isEmpty, "The visible conversation must not receive the popover's explanation")
+        let scratch = try XCTUnwrap(model.library.courses[0].threads.first { $0.isSelectionScratch == true })
+        XCTAssertEqual(scratch.messages.count, 2)
+        XCTAssertEqual(model.selectionResponseTarget?.threadID, scratch.id)
+        XCTAssertEqual(model.selectionResponseTarget?.inChat, false)
+        model.keepSelectionExplanationInChat()
+        XCTAssertEqual(model.messages.count, 2, "Keep in chat moves the explanation into the document conversation")
+        XCTAssertTrue(model.library.courses[0].threads.first { $0.isSelectionScratch == true }?.messages.isEmpty == true)
+        XCTAssertEqual(model.library.courses[0].threads.filter { $0.isSelectionScratch != true }.count, 1)
+    }
+
     func testStudyWindowKeepsAppInDockIndependentlyOfQuickChat() {
         XCTAssertEqual(scholiaApplicationActivationPolicy(explanationWindowParticipates: false, quickChatWindowVisible: false, studyWindowVisible: true), .regular)
     }

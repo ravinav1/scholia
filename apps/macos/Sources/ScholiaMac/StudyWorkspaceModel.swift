@@ -532,11 +532,67 @@ final class StudyWorkspaceModel: ObservableObject {
         saveDraft()
         focusTutor()
     }
+    /// Where the reader's explanation popover reads its answer from.
+    struct SelectionResponseTarget: Equatable {
+        var threadID: UUID
+        var answerID: UUID
+        var inChat: Bool
+    }
+    @Published private(set) var selectionResponseTarget: SelectionResponseTarget?
+
+    /// The hidden one-shot thread that answers passage explanations for the
+    /// open document. Emptied before each use so the popover shows one answer.
+    private func selectionScratchThreadID() -> UUID? {
+        guard let ci = courseIndex(), let document else { return nil }
+        if let index = library.courses[ci].threads.firstIndex(where: { $0.isSelectionScratch == true && $0.documentID == document.id }) {
+            library.courses[ci].threads[index].messages = []
+            library.courses[ci].threads[index].sources = [:]
+            return library.courses[ci].threads[index].id
+        }
+        var thread = StudyThread(documentID: document.id, mode: mode, automaticContextEnabled: automaticContextEnabled,
+            includeCourseContext: includeCourseContext)
+        thread.isSelectionScratch = true
+        thread.title = "Selected passage"
+        library.courses[ci].threads.append(thread)
+        return thread.id
+    }
+    /// Moves the popover's explanation into the document conversation.
+    func keepSelectionExplanationInChat() {
+        guard let target = selectionResponseTarget, let ci = courseIndex(),
+            let si = library.courses[ci].threads.firstIndex(where: { $0.id == target.threadID }),
+            library.courses[ci].threads[si].isSelectionScratch == true,
+            !library.courses[ci].threads[si].messages.isEmpty else {
+            // Already in the conversation (or nothing to move): just go there.
+            focusTutor()
+            return
+        }
+        guard !isStreaming else { return }
+        let scratch = library.courses[ci].threads[si]
+        useOpenDocumentConversation()
+        if threadIndex(in: ci) == nil {
+            let thread = StudyThread(documentID: document?.id, assignmentID: assignment?.id, mode: mode)
+            library.courses[ci].threads.append(thread)
+            library.selectedThreadID = thread.id
+        }
+        guard let ti = threadIndex(in: ci) else { return }
+        if library.courses[ci].threads[ti].messages.isEmpty, let first = scratch.messages.first {
+            library.courses[ci].threads[ti].title = String(first.content.prefix(70))
+        }
+        library.courses[ci].threads[ti].messages.append(contentsOf: scratch.messages)
+        library.courses[ci].threads[ti].sources.merge(scratch.sources) { _, new in new }
+        library.courses[ci].threads[ti].updatedAt = Date()
+        library.courses[ci].threads[si].messages = []
+        library.courses[ci].threads[si].sources = [:]
+        selectionResponseTarget = SelectionResponseTarget(threadID: library.courses[ci].threads[ti].id, answerID: target.answerID, inChat: true)
+        save()
+        focusTutor()
+    }
     @discardableResult
-    func sendReaderSelection(_ text: String, question: String = "", send: () -> Void) -> Bool {
+    func sendReaderSelection(_ text: String, question: String = "", inChat: Bool = false, send: () -> Void) -> Bool {
         guard !isStreaming, !isIngestingAttachment,
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        useOpenDocumentConversation()
+        let previousThreadID = library.selectedThreadID
+        if inChat { useOpenDocumentConversation() }
         let savedDraft = draft
         let savedImage = draftImage
         let savedAttachments = draftAttachments
@@ -546,8 +602,16 @@ final class StudyWorkspaceModel: ObservableObject {
         draftImage = nil
         draftAttachments = []
         editingMessageID = nil
+        if !inChat, let scratch = selectionScratchThreadID() { library.selectedThreadID = scratch }
         send()
         let sent = isStreaming || error != nil
+        if let threadID = library.selectedThreadID, let answerID = thread?.messages.last?.id, sent {
+            selectionResponseTarget = SelectionResponseTarget(threadID: threadID, answerID: answerID, inChat: inChat)
+        } else {
+            selectionResponseTarget = nil
+        }
+        // The popover follows the scratch thread by ID; the chat column keeps its own conversation.
+        if !inChat { library.selectedThreadID = previousThreadID }
         draft = savedDraft
         draftImage = savedImage
         draftAttachments = savedAttachments
@@ -795,7 +859,7 @@ final class StudyWorkspaceModel: ObservableObject {
         library.showingCourseLibrary = false
         library.selectedDocumentID = id
         if !preservingConversation {
-            library.selectedThreadID = course?.threads.last(where: { $0.documentID == id && $0.assignmentID == assignmentID })?.id
+            library.selectedThreadID = course?.threads.last(where: { $0.documentID == id && $0.assignmentID == assignmentID && $0.isSelectionScratch != true })?.id
         }
         restoreThread()
         loadSelectedDocument()

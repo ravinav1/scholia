@@ -1325,6 +1325,9 @@ struct ScholiaModelPickerPopover: View {
     var usesExplainModel = false
     var providerID: String? = nil
     var onTestModel: ((String, String) -> Void)? = nil
+    /// Shown when a study mode picks the model itself, so the list below is
+    /// understood as the catalog, not the active choice.
+    var routeNote: String? = nil
     @State private var query = ""
     @State private var displayedModels: [String: [ModelDefinition]] = [:]
     @State private var displayedRecentModels: [RecentProviderModel] = []
@@ -1347,6 +1350,18 @@ struct ScholiaModelPickerPopover: View {
             }
             .padding(.horizontal, 12)
             .padding(.top, 11)
+
+            if let routeNote {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "bolt").foregroundStyle(Color.accentColor)
+                    Text("\(routeNote). Choose Manual in the mode menu to pick a model yourself.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(10)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 9))
+                .padding(.horizontal, 10).padding(.top, 10)
+                .accessibilityIdentifier("model-route-note")
+            }
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
