@@ -55,10 +55,35 @@ struct PerformanceAudit {
             }
         }
     }
+    static func auditHistoryWrites(root: URL) throws {
+        let url = root.appendingPathComponent("chats.json")
+        let values = (0..<20).map { number in
+            StoredConversation(id: UUID(), title: "Synthetic chat \(number)", createdAt: Date(), updatedAt: Date(),
+                capture: nil, messages: [ConversationMessage(role: .user, content: "Explain this figure",
+                    imageData: Data(repeating: 65, count: 1_000_000), imageMimeType: "image/jpeg")])
+        }
+        try measure("native.history.synchronousSave", iterations: 5) {
+            try ConversationStore.save(values, to: url)
+        }
+        let writer = ConversationHistoryWriter { try ConversationStore.save($0, to: url) }
+        measure("native.history.queuedSave", iterations: 20) { writer.save(values) }
+        let start = ContinuousClock.now
+        try writer.flush()
+        let flushMs = milliseconds(start)
+        let restored = ConversationStore.load(from: url)
+        precondition(Set(restored.map(\.id)) == Set(values.map(\.id)))
+        precondition(restored.allSatisfy { $0.messages.first?.imageData?.count == 1_000_000 })
+        emit("native.history.durability", ["flushMs": flushMs, "retainedChats": restored.count,
+            "encodedBytes": try Data(contentsOf: url).count])
+    }
     static func main() async {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-audit-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         do {
+            if CommandLine.arguments.contains("--history-only") {
+                try auditHistoryWrites(root: root)
+                return
+            }
             _ = NSApplication.shared
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [AuditProtocol.self]

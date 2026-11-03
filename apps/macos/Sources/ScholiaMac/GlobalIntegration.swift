@@ -273,6 +273,22 @@ enum SelectionWatcherDecision: Equatable {
     case unchanged
 }
 
+enum SelectionWatcherEventAction: Equatable {
+    case capture, clear, ignore
+
+    static func action(type: NSEvent.EventType, keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Self {
+        if type == .leftMouseUp { return .capture }
+        // Typing cancels a pending read immediately. Only selection gestures
+        // should send accessibility requests to the application being used.
+        if type == .keyDown { return .clear }
+        guard type == .keyUp else { return .ignore }
+        let flags = modifiers.intersection([.command, .shift, .option, .control])
+        if keyCode == UInt16(kVK_ANSI_A), flags == [.command] { return .capture }
+        let navigation: Set<UInt16> = [123, 124, 125, 126, 115, 119, 116, 121]
+        return flags.contains(.shift) && navigation.contains(keyCode) ? .capture : .ignore
+    }
+}
+
 struct SelectionWatcherState {
     private static let handledSelectionSuppressionDuration: TimeInterval = 30
 
@@ -380,10 +396,16 @@ final class SelectionWatcher {
 
     func start() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp, .keyUp]) { [weak self] event in
+        monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp, .keyDown, .keyUp]) { [weak self] event in
             let respectPopupHitArea = event.type == .leftMouseUp
+            let action = SelectionWatcherEventAction.action(type: event.type, keyCode: event.keyCode,
+                modifiers: event.modifierFlags)
             Task { @MainActor in
-                self?.selectionMayHaveChanged(respectPopupHitArea: respectPopupHitArea)
+                switch action {
+                case .capture: self?.selectionMayHaveChanged(respectPopupHitArea: respectPopupHitArea)
+                case .clear: self?.clearSelection()
+                case .ignore: break
+                }
             }
         }
     }
@@ -407,6 +429,13 @@ final class SelectionWatcher {
         )
     }
 
+    private func clearSelection() {
+        pending?.cancel()
+        pending = nil
+        _ = state.update(text: nil, pid: nil)
+        onSelectionCleared()
+    }
+
     private func selectionMayHaveChanged(respectPopupHitArea: Bool) {
         pending?.cancel()
         let point = NSEvent.mouseLocation
@@ -421,18 +450,12 @@ final class SelectionWatcher {
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard !Task.isCancelled, let self else { return }
             guard !respectPopupHitArea || !self.shouldIgnore(point) else { return }
-            var capture = try? await SelectionReader.capture(
+            let capture = try? await SelectionReader.capture(
                 preferredPID: pid,
                 allowClipboardFallback: false
             )
-            if capture == nil {
-                try? await Task.sleep(nanoseconds: 160_000_000)
-                guard !Task.isCancelled else { return }
-                capture = try? await SelectionReader.capture(
-                    preferredPID: pid,
-                    allowClipboardFallback: false
-                )
-            }
+            guard !Task.isCancelled, self.applicationTracker.preferredPID == pid,
+                  self.shouldCapture(self.applicationTracker.preferredApplication) else { return }
             switch self.state.update(
                 text: capture?.text,
                 pid: pid,

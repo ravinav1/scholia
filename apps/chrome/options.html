@@ -17,6 +17,15 @@
       </div>
     </header>
 
+    <section class="card" aria-labelledby="exam-planner-heading">
+      <div class="section-heading"><div><p class="eyebrow">Study workspace</p><h2 id="exam-planner-heading">Exam planner</h2></div></div>
+      <p class="section-copy">Open the planner from the extension menu or sidebar to review exam dates copied from Studentweb, choose the exams you intend to take, and check overlaps.</p>
+      <label><span>Scholia website address</span><input id="exam-workspace-url" type="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:8792/"></label>
+      <p class="section-copy">For the Mac app, first choose <strong>Open in Browser</strong> (⌘2) and keep Scholia running. For a hosted workspace, enter its HTTPS address and sign in there.</p>
+      <div class="bridge-actions"><button id="exam-workspace-save" type="button" class="secondary">Save address</button><button id="open-exam-planner" type="button" class="primary">Open exam planner ↗</button></div>
+      <p id="exam-workspace-status" class="section-copy" role="status"></p>
+    </section>
+
     <form id="settings-form">
       <section class="card grid-two">
         <label>
@@ -26,7 +35,7 @@
         <label>
           <span>Answer language</span>
           <select id="language">
-            <option value="auto">Match the page</option>
+            <option value="auto">Auto · match prompt</option>
             <option value="en">English</option>
             <option value="no">Norsk bokmål</option>
           </select>

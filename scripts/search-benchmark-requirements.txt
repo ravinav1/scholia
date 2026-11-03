@@ -1,0 +1,2 @@
+# Optional benchmark only; never imported by the app or hosted service.
+tantivy==0.26.2

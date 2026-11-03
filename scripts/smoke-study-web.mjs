@@ -50,9 +50,27 @@ async function evaluate(expression) {
 async function waitFor(expression, label) {
   for (let i = 0; i < 150; i++) { if (await evaluate(expression)) return; await sleep(100); }
   console.error('Browser state:', await evaluate(`({toast:document.querySelector('#toast')?.textContent, conflict:document.querySelector('#draft-conflict')?.textContent, visibleConflict:!document.querySelector('#draft-conflict')?.hidden, practice:document.querySelector('#practice-dialog')?.textContent?.slice(0,1800)})`));
+  try {
+    const native = await (await fetch(address + '/api/state', { headers: { 'X-Scholia-Token': token }, signal: AbortSignal.timeout(2000) })).json();
+    const selectedCourse = native.library?.courses.find((course) => course.id === native.library.selectedCourseID);
+    const selectedDocument = selectedCourse?.documents.find((document) => document.id === native.library.selectedDocumentID);
+    console.error('Native reading state:', { loadingDocument: native.loadingDocument, canSend: native.canSend, busy: native.busy, streaming: native.streaming, status: native.status, error: native.error, page: native.page, pageTextLength: native.pageText?.length, documentID: selectedDocument?.id, documentKind: selectedDocument?.kind });
+  } catch (error) { console.error('Native state unavailable:', error.message); }
   throw new Error(`Timed out: ${label}`);
 }
 async function click(selector) { await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`); }
+async function reloadPage() {
+  const firstEvent = client.events.length;
+  await client.send('Page.reload');
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const events = client.events.slice(firstEvent);
+    const navigation = events.findIndex((event) => event.method === 'Page.frameNavigated' && !event.params.frame.parentId);
+    if (navigation >= 0 && events.slice(navigation + 1).some((event) => event.method === 'Page.loadEventFired')) return;
+    await sleep(50);
+  }
+  throw new Error('Timed out: fresh document after reload');
+}
 async function shot(name) {
   const result = await client.send('Page.captureScreenshot', { format: 'png' });
   await writeFile(join(output, name), Buffer.from(result.data, 'base64'));
@@ -88,7 +106,7 @@ try {
   await waitFor(`document.querySelector('[data-action="favorite"][data-id="${algebra.id}"]').getAttribute('aria-pressed') === 'true'`, 'favorite saved');
   await evaluate('document.querySelector("#workspace-filter").value = "favorites"; document.querySelector("#workspace-filter").dispatchEvent(new Event("change", { bubbles: true }))');
   await waitFor('document.querySelectorAll(".course-card").length === 3', 'favorites filter');
-  await client.send('Page.reload');
+  await reloadPage();
   await waitFor(`document.querySelector('[data-action="favorite"][data-id="${algebra.id}"]')?.getAttribute('aria-pressed') === 'true'`, 'favorite survives reload');
   await click(`.card-open[data-id="${algebra.id}"]`);
   await waitFor('document.querySelector(".course-materials")', 'course workspace');
@@ -105,6 +123,9 @@ try {
   await client.send('Input.dispatchMouseEvent', {type:'mouseReleased',x:rect.x+140,y:rect.y+90,button:'left',clickCount:1});
   await waitFor('!document.querySelector("#question-image").hidden', 'image attached');
   await evaluate('document.querySelector("#question").value = "Explain this diagram"; document.querySelector("#question").dispatchEvent(new Event("input", {bubbles:true}))');
+  // PDF.js can render the PDF before the native text index is ready. A user
+  // cannot send yet; wait for the real composer gate before forcing submits.
+  await waitFor('!document.querySelector("#send").disabled', 'native reading context ready to send');
   // Hold the send response briefly so new typing exercises the pending-request race.
   await evaluate(`window.studyFetch = window.fetch; window.studySendCount = 0; window.fetch = async (...args) => {
     const sending = args[0] === '/api/action' && args[1]?.body && JSON.parse(args[1].body).action === 'send';
@@ -143,7 +164,7 @@ try {
   await evaluate('document.querySelector("#workspace-filter").value = "all"; document.querySelector("#workspace-filter").dispatchEvent(new Event("change", { bubbles: true }))');
   await waitFor(`document.querySelector('#library [data-action="resume"][data-id="${pdf.id}"]')`, 'continue reading card');
   await shot('web-continue-reading.png');
-  await client.send('Page.reload');
+  await reloadPage();
   await waitFor(`document.querySelector('#library [data-action="resume"][data-id="${pdf.id}"]')`, 'reading history survives reload');
   await click(`#library [data-action="resume"][data-id="${pdf.id}"]`);
   await waitFor('!document.querySelector("#workspace").hidden && document.querySelector("#page-input")?.value === "2"', 'resume exact reading position');
@@ -166,7 +187,7 @@ try {
   assert.equal((await evaluate(learningRequest)).attempts.length, 1, 'double submit creates one attempt');
   await click('[data-practice="hint"]');
   await waitFor('document.querySelector(".practice-hint")', 'graduated hint');
-  await client.send('Page.reload');
+  await reloadPage();
   await waitFor('document.querySelector("#review-due") && document.querySelector("#page-input")', 'reload reading');
   await click('#review-due');
   await waitFor('document.querySelector("[data-practice=resume]")', 'saved practice handoff');
@@ -232,7 +253,7 @@ try {
   assert.equal(conflict.status, 400);
   const afterConflict = await (await fetch(address + '/api/state', { headers: { 'X-Scholia-Token': token } })).json();
   assert.notEqual(afterConflict.draft, 'Delayed wrong-course draft');
-  await client.send('Page.reload');
+  await reloadPage();
   await waitFor('document.querySelector(".course-materials")', 'second-window navigation');
   await click('[data-action="library"]');
   await waitFor('!document.querySelector("#library").hidden', 'return from practice');

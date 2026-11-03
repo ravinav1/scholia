@@ -1,4 +1,4 @@
-import { escapeHtml as esc } from '../chrome/src/render.js';
+import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 import { submissionBadgeMarkup } from './assignments.js';
 
 function materialRowMarkup(
@@ -10,6 +10,7 @@ function materialRowMarkup(
     selectedAssignmentID = '',
     busy = false,
     savedLabel = 'Saved offline',
+    showClassification = false,
   } = {}
 ) {
   const isAssignment = item.materialID?.startsWith('assignments:');
@@ -24,7 +25,55 @@ function materialRowMarkup(
     const url = new URL(item.sourceURL);
     if (url.protocol === 'https:') link = url.href;
   } catch {}
-  return `<div class="material-row ${selected ? 'active' : ''}"><button class="${compact ? 'material-nav-item' : ''}" data-action="${isAssignment ? 'assignment' : item.documentID ? 'document' : 'material'}" data-id="${esc(id)}" data-course-id="${esc(courseID)}" ${disabled ? 'disabled' : ''}><span class="material-title"><strong>${esc(item.title)}</strong>${compact ? '' : `<small>${esc(item.detail)}</small>`}${isAssignment && item.requiresSubmission !== false ? submissionBadgeMarkup(item.submissionStatus) : ''}${item.badge ? `<small class="material-badge">${esc(item.badge)}</small>` : ''}</span><span class="cloud" title="${item.documentID ? esc(savedLabel) : 'Download on demand'}" aria-label="${item.documentID ? esc(savedLabel) : 'Download on demand'}">${item.documentID ? '▣' : '↓'}</span></button>${!compact && item.updateAvailable ? `<button class="material-update" data-action="material" data-id="${esc(item.materialID)}" ${busy ? 'disabled' : ''}>Update</button>` : ''}${!compact && link ? `<a href="${esc(link)}" target="_blank" rel="noreferrer" aria-label="Open ${esc(item.title)} in Canvas">↗</a>` : ''}</div>`;
+  const classification = showClassification
+    ? [item.categoryTitle, item.topic].filter(Boolean).join(' · ')
+    : '';
+  const extraction = ['ocr', 'mixed'].includes(item.extractionMethod) ? 'Includes OCR text' : '';
+  return `<div class="material-row ${selected ? 'active' : ''}"><button class="${compact ? 'material-nav-item' : ''}" data-action="${isAssignment ? 'assignment' : item.documentID ? 'document' : 'material'}" data-id="${esc(id)}" data-course-id="${esc(courseID)}" title="${esc(item.title)}" ${selected ? 'aria-current="true"' : ''} ${disabled ? 'disabled' : ''}><span class="material-title"><strong>${esc(item.title)}</strong>${compact ? '' : `<small>${esc(item.detail)}</small>`}${!compact && (classification || extraction) ? `<small class="material-classification" title="${esc(item.classificationBasis || '')}">${esc([classification, extraction].filter(Boolean).join(' · '))}</small>` : ''}${isAssignment && item.requiresSubmission !== false ? submissionBadgeMarkup(item.submissionStatus, item.assignment) : ''}${item.badge ? `<small class="material-badge">${esc(item.badge)}</small>` : ''}</span><span class="cloud" title="${item.documentID ? esc(savedLabel) : 'Download on demand'}" aria-label="${item.documentID ? esc(savedLabel) : 'Download on demand'}">${item.documentID ? '▣' : '↓'}</span></button>${!compact && item.updateAvailable ? `<button class="material-update" data-action="material" data-id="${esc(item.materialID)}" ${busy ? 'disabled' : ''}>Update</button>` : ''}${link ? `<a href="${esc(link)}" target="_blank" rel="noreferrer" aria-label="Open ${esc(item.title)} in Canvas">↗</a>` : ''}</div>`;
+}
+
+const materialSearchText = (item) =>
+  [item.title, item.fileName, item.categoryTitle, item.topic, item.canvasHeading, item.canvasSubheading, item.canvasGroupTitle]
+    .filter(Boolean)
+    .join(' ')
+    .toLocaleLowerCase();
+
+// Canvas headings take precedence over inferred categories/topics. For courses
+// without Canvas structure, retain the existing content-based organization.
+function groupedRowsMarkup(group, options) {
+  const canvas = /^(module:|canvas-page:|folder:)/.test(group.id);
+  if (canvas) {
+    let previous, previousSection;
+    return group.items.map((item) => {
+      const heading = item.canvasHeading;
+      const section = item.canvasSubheading;
+      const changed = heading !== previous;
+      const title = heading && changed && heading !== group.title
+        ? `<h3 class="material-subheader">${esc(heading)}</h3>` : '';
+      const subtitle = section && (changed || section !== previousSection)
+        ? `<h4 class="material-subheader">${esc(section)}</h4>` : '';
+      previous = heading;
+      previousSection = section;
+      return title + subtitle + materialRowMarkup(item, options);
+    }).join('');
+  }
+  const heading = (item) => item.topic;
+  if (!group.items.some(heading))
+    return group.items.map((item) => materialRowMarkup(item, options)).join('');
+  let previous;
+  return group.items
+    .map((item, index) => {
+      const title = heading(item) || group.title;
+      const repeatsRow = title.toLocaleLowerCase() === item.title.toLocaleLowerCase();
+      const nextTitle = group.items[index + 1] && heading(group.items[index + 1]);
+      const subheader =
+        title !== previous && (!repeatsRow || nextTitle === title)
+          ? `<h3 class="material-subheader">${esc(title)}</h3>`
+          : '';
+      previous = title;
+      return subheader + materialRowMarkup(item, options);
+    })
+    .join('');
 }
 
 export function materialGroupsMarkup(groups, options = {}) {
@@ -34,7 +83,7 @@ export function materialGroupsMarkup(groups, options = {}) {
     .map((group) => ({
       ...group,
       items: group.items.filter((item) =>
-        `${group.title} ${item.title}`.toLocaleLowerCase().includes(needle)
+        `${group.title.toLocaleLowerCase()} ${materialSearchText(item)}`.includes(needle)
       ),
     }))
     .filter((group) => group.items.length);
@@ -43,15 +92,15 @@ export function materialGroupsMarkup(groups, options = {}) {
   return visible
     .map((group) => {
       const key = `${courseID}:${group.id}`;
-      return `<details class="material-group ${compact ? 'compact' : ''}" data-collapse-key="${esc(key)}" ${needle || (!closed.has(key) && (group.id !== 'assets' || closed.has(`open:${key}`))) ? 'open' : ''}><summary><span>${esc(group.title)}</span><small>${group.items.length}</small></summary>${compact ? '' : `<p class="group-basis">${esc(group.basis)}</p>`}${group.items.map((item) => materialRowMarkup(item, options)).join('')}</details>`;
+      return `<details class="material-group ${compact ? 'compact' : ''}" data-collapse-key="${esc(key)}" ${needle || (!closed.has(key) && (group.id !== 'assets' || closed.has(`open:${key}`))) ? 'open' : ''}><summary><span>${esc(group.title)}</span><small>${group.items.length}</small></summary>${compact ? '' : `<p class="group-basis">${esc(group.basis)}</p>`}${groupedRowsMarkup(group, options)}</details>`;
     })
     .join('');
 }
 
 export function materialFilesMarkup(files, options = {}) {
   const needle = (options.query || '').trim().toLocaleLowerCase();
-  const visible = files.filter((item) => item.title.toLocaleLowerCase().includes(needle));
-  return `<div class="material-files" aria-label="All files"><p class="file-count">${visible.length} files</p>${visible.length ? visible.map((item) => materialRowMarkup(item, { ...options, compact: false })).join('') : `<p class="material-empty">${needle ? 'No matching files.' : 'No files in this workspace yet.'}</p>`}</div>`;
+  const visible = files.filter((item) => materialSearchText(item).includes(needle));
+  return `<div class="material-files" aria-label="All files"><p class="file-count">${visible.length} files</p>${visible.length ? visible.map((item) => materialRowMarkup(item, { ...options, compact: false, showClassification: true })).join('') : `<p class="material-empty">${needle ? 'No matching files.' : 'No files in this workspace yet.'}</p>`}</div>`;
 }
 
 export function materialViewPicker(view) {

@@ -8,6 +8,7 @@ struct StudyPracticeView: View {
     @State private var scope = ""
     @State private var count = 3
     @State private var openBook = false
+    @State private var style = CoursePracticeStyle.concepts
     @State private var confidence = 0
     @State private var answer = ""
     @State private var correction = ""
@@ -78,16 +79,25 @@ struct StudyPracticeView: View {
     }
     private var setup: some View {
         VStack(alignment: .leading, spacing: 15) {
-            Text("Practice this").font(.title)
+            Text("Practice your course").font(.title)
+            if let coverage = view.coverage { courseCoverage(coverage) }
+            Picker("Material", selection: $workspace.practiceSourceScope) {
+                Text("Cover the whole course").tag("course")
+                Text("Revisit weak areas").tag("weak")
+                if workspace.document != nil { Text("Current reading / selection").tag("reading") }
+            }
+            Picker("Practice mode", selection: $style) {
+                ForEach(CoursePracticeStyle.allCases) { Text($0.title).tag($0) }
+            }
             Text(
-                workspace.selectedText.isEmpty
+                workspace.practiceSourceScope != "reading" ? "All saved course materials · sources rotate between sessions" : workspace.selectedText.isEmpty
                     ? workspace.document.map { "\($0.title) · page/section \(workspace.currentPage)" }
                         ?? "Downloaded course materials" : "Selected passage · \(workspace.document?.title ?? "Course")"
             ).foregroundStyle(.secondary)
             if workspace.draftImage != nil { Text("Includes your selected figure.").font(.caption) }
             TextField("Topic or focus (optional)", text: $scope).textFieldStyle(.roundedBorder)
             Picker("Session length", selection: $count) {
-                ForEach(1...5, id: \.self) { Text("\($0) question\($0 == 1 ? "" : "s")").tag($0) }
+                ForEach([1, 2, 3, 4, 5, 8, 12], id: \.self) { Text("Up to \($0) question\($0 == 1 ? "" : "s")").tag($0) }
             }
             Toggle("Open-book practice", isOn: $openBook)
             Text(
@@ -98,7 +108,8 @@ struct StudyPracticeView: View {
             Button("Prepare questions") {
                 generating = true
                 generationStart = learning.state.sequence
-                workspace.startPractice(using: app, count: count, scope: scope, openBook: openBook)
+                workspace.startPractice(using: app, count: count, scope: scope, openBook: openBook,
+                    sourceScope: workspace.practiceSourceScope, style: style.rawValue)
             }.scholiaButtonStyle(.borderedProminent).disabled(
                 learning.busy != nil || workspace.course == nil || generating)
             Text("Untimed · Saved locally · Generated questions can be imperfect").font(.caption).foregroundStyle(
@@ -106,7 +117,7 @@ struct StudyPracticeView: View {
             if !view.sessions.isEmpty {
                 Divider()
                 Text("Continue a session").font(.headline)
-                ForEach(view.sessions) { saved in
+                ForEach(view.sessions.filter { $0.courseID == workspace.course?.id }) { saved in
                     Button("\(saved.title) · \(saved.finished ? "Recap" : "Resume")") {
                         run(LearningCommand(action: "resume", sessionID: saved.id))
                         workspace.practiceScreen = "session"
@@ -114,6 +125,50 @@ struct StudyPracticeView: View {
                 }
             }
         }.onChange(of: learning.error) { _, error in if error != nil { generating = false } }
+            .onAppear { if workspace.document == nil { workspace.practiceSourceScope = "course" } }
+    }
+    private func courseCoverage(_ coverage: CoursePracticeCoverage) -> some View {
+        let pages = coverage.materials.reduce(0) { $0 + $1.pages }
+        let attempted = coverage.materials.reduce(0) { $0 + $1.attempted }
+        let independent = coverage.materials.reduce(0) { $0 + $1.independent }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(coverage.title).font(.headline)
+            ProgressView(value: Double(attempted), total: Double(max(1, pages)))
+            Text("\(attempted) of \(pages) readable pages attempted · \(independent) last answered independently")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Each course session moves across saved readings and pages. Coverage records practice, not mastery of every concept.")
+                .font(.caption).foregroundStyle(.secondary)
+            if coverage.missing > 0 {
+                HStack {
+                    Text("\(coverage.missing) materials still need downloading.")
+                    Button("Download course materials") {
+                        workspace.practicePresented = false
+                        workspace.syncCanvasCourses(courseIDs: [coverage.courseID], downloadAll: true)
+                    }
+                }.font(.caption)
+            }
+            DisclosureGroup("Material coverage") {
+                ForEach(coverage.materials) { material in
+                    HStack {
+                        Text(material.title).lineLimit(2)
+                        Spacer()
+                        Text("\(material.attempted)/\(material.pages) · \(material.needsReview) to revisit").foregroundStyle(.secondary)
+                    }.font(.caption).padding(.vertical, 3)
+                }
+            }
+            if !coverage.concepts.isEmpty {
+                DisclosureGroup("Concept progress") {
+                    ForEach(coverage.concepts) { concept in
+                        HStack {
+                            Text(concept.title)
+                            Spacer()
+                            Text(concept.independent ? "Answered independently" : concept.needsReview ? "Revisit" : "Not attempted")
+                                .foregroundStyle(.secondary)
+                        }.font(.caption).padding(.vertical, 3)
+                    }
+                }
+            }
+        }.padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
     private func activity(_ s: LearningSession, _ q: LearningQuestionView) -> some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -196,8 +251,16 @@ struct StudyPracticeView: View {
             }
             HStack {
                 if s.hintCount < q.hintCount { Button("Next hint") { run(command("hint")) } }
-                if !s.revealed { Button("Show solution / worked example") { run(command("reveal")) } }
+                if !s.revealed {
+                    Button("Show solution / worked example") { run(command("reveal")) }
+                        .disabled(!view.attempts.contains { $0.questionID == q.id })
+                        .help("Save an attempt first. You can describe where you are stuck.")
+                }
                 Button("Save for review") { run(command("saveReview")) }
+            }
+            if currentAttempts.isEmpty && !s.revealed {
+                Text("Save an attempt to unlock the solution. If you are stuck, describe what you tried or where you need help.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let solution = q.referenceAnswer {
                 Divider()
@@ -214,13 +277,18 @@ struct StudyPracticeView: View {
                 Button("Finish now") { run(command("finish")) }.disabled(learning.busy != nil)
                 Spacer()
                 Button("Explain in tutor") {
-                    guard run(command("reveal")) else { return }
+                    guard run(command("source")) else { return }
                     workspace.resumeReading(q.source.documentID)
                     workspace.setPage(q.source.page)
                     workspace.newThread()
                     workspace.mode = .explain
                     workspace.draft =
-                        "Explain this practice question with a worked example:\n\(q.prompt)\n\nReference solution:\n\(q.referenceAnswer ?? learning.state.questions[q.id]?.referenceAnswer ?? "")"
+                        "Help me understand this practice question without giving away the solution:\n\(q.prompt)"
+                    if let attempt = view.attempts.last(where: { $0.questionID == q.id }) {
+                        workspace.draft += "\n\nMy attempt:\n\(attempt.answer)\n\nHelp me find the first gap in my reasoning."
+                    } else {
+                        workspace.draft += "\n\nExplain the relevant concept and give me one starting hint."
+                    }
                     workspace.saveDraft()
                     workspace.practicePresented = false
                 }
@@ -311,13 +379,16 @@ struct StudyPracticeView: View {
                     }
                     if let solution = q.referenceAnswer {
                         DisclosureGroup("Reference solution") { RichMarkdownView(source: solution) }
-                    } else {
+                    } else if !attempts.isEmpty {
                         Button("Show solution") {
                             run(
                                 LearningCommand(
                                     action: "revealSaved", sessionID: session?.id, questionID: q.id,
                                     expectedVersion: session?.version))
                         }
+                    } else {
+                        Text("Skipped without an attempt. Practise this question again to unlock its solution.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     Button("Save for review") { run(LearningCommand(action: "saveReview", questionID: q.id)) }
                 }.padding(14).background(.quaternary, in: RoundedRectangle(cornerRadius: 10))

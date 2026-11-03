@@ -43,6 +43,15 @@ test('PDF context retains explicit page boundaries and a document map', () => {
   assert.equal(result.extractedCharacters, 'Introduction\nFirst paragraph.'.length + 'Conclusion'.length);
 });
 
+test('a growing PDF index distinguishes pending pages from extraction limits', () => {
+  const partial = formatPdfContext(['First page'], 3, { indexing: true });
+  assert.equal(partial.extractedPageCount, 1);
+  assert.match(partial.context, /indexing is still in progress/);
+  assert.match(partial.outline, /pages 2–3: not indexed yet/);
+  assert.doesNotMatch(partial.context, /safety limit/);
+  assert.match(formatPdfContext(['First page'], 3).context, /local safety limit/);
+});
+
 test('PDF downloads are assembled from streamed response chunks', async () => {
   const response = new Response(new ReadableStream({
     start(controller) {

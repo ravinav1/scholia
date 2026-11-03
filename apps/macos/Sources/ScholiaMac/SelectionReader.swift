@@ -31,17 +31,27 @@ struct ApplicationContextSnapshot: Equatable, Sendable {
     var context: String?
 }
 
+// Accessibility IPC can wait on another app. Serialize reads away from the
+// UI thread, and let cancellation discard queued/outdated selection requests.
+private actor AccessibilitySelectionWorker {
+    static let shared = AccessibilitySelectionWorker()
+    func capture(pid: pid_t?) throws -> CapturedContent {
+        try Task.checkCancellation()
+        return try SelectionReader.captureWithAccessibility(pid: pid)
+    }
+}
+
 @MainActor
 enum SelectionReader {
-    static let maximumSelectionLength = TextInputPolicy.maximumMessageUTF16Units
+    nonisolated static let maximumSelectionLength = TextInputPolicy.maximumMessageUTF16Units
     nonisolated static let maximumApplicationContextLength = 24_000
     private nonisolated static let maximumApplicationContextNodes = 800
 
-    static func kind(for text: String) -> CaptureKind {
+    nonisolated static func kind(for text: String) -> CaptureKind {
         likelyLatex(text) ? .latex : .text
     }
 
-    static var isTrusted: Bool { AXIsProcessTrusted() }
+    nonisolated static var isTrusted: Bool { AXIsProcessTrusted() }
 
     @discardableResult
     static func requestPermission() -> Bool {
@@ -58,7 +68,7 @@ enum SelectionReader {
         let pid = preferredPID ?? frontmostPID
 
         do {
-            return try captureWithAccessibility(pid: pid)
+            return try await AccessibilitySelectionWorker.shared.capture(pid: pid)
         } catch SelectionReaderError.noSelection where allowClipboardFallback && pid == frontmostPID {
             if let copied = await captureByCopying(pid: pid) { return copied }
             throw SelectionReaderError.noSelection
@@ -199,9 +209,11 @@ enum SelectionReader {
         )
     }
 
-    static func captureWithAccessibility(pid: pid_t?) throws -> CapturedContent {
+    nonisolated static func captureWithAccessibility(pid: pid_t?) throws -> CapturedContent {
+        try Task.checkCancellation()
         guard isTrusted else { throw SelectionReaderError.permissionRequired }
         let root = pid.map(AXUIElementCreateApplication) ?? AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(root, 0.15)
         guard let focused: AXUIElement = attribute(kAXFocusedUIElementAttribute, from: root) else {
             throw SelectionReaderError.noFocusedElement
         }
@@ -223,7 +235,7 @@ enum SelectionReader {
         )
     }
 
-    private static func content(
+    private nonisolated static func content(
         text: String,
         pid: pid_t?,
         root: AXUIElement? = nil,
@@ -272,7 +284,7 @@ enum SelectionReader {
         )
     }
 
-    private static func selectedTextBounds(from element: AXUIElement) -> CGRect? {
+    private nonisolated static func selectedTextBounds(from element: AXUIElement) -> CGRect? {
         guard let selectedRange = selectedTextRange(from: element),
               let rangeValue = accessibilityValue(for: CFRange(
                   location: selectedRange.location,
@@ -299,33 +311,43 @@ enum SelectionReader {
         return bounds
     }
 
-    private static func boundedSelection(
+    private nonisolated static func boundedSelection(
         startingAt focusedElement: AXUIElement
     ) -> (text: String, element: AXUIElement)? {
-        for element in selectionCandidates(startingAt: focusedElement) {
-            if isProtectedTextElement(element) { continue }
+        func selection(in element: AXUIElement) -> (text: String, element: AXUIElement)? {
+            guard !Task.isCancelled, !isProtectedTextElement(element) else { return nil }
             guard let rawText = boundedSelectedText(from: element),
                   let text = TextInputPolicy.preparedMessage(
                       rawText,
                       maximumUTF16Units: maximumSelectionLength
-                  ) else { continue }
+                  ) else { return nil }
             return (text, element)
+        }
+        // Most selections are directly on the focused text control. Do not
+        // eagerly enumerate its entire accessibility subtree before checking it.
+        if let selected = selection(in: focusedElement) { return selected }
+        if let range = selectedTextRange(from: focusedElement), range.length == 0 { return nil }
+        for element in selectionCandidates(startingAt: focusedElement).dropFirst() {
+            guard !Task.isCancelled else { return nil }
+            if let selected = selection(in: element) { return selected }
         }
         return nil
     }
 
-    private static func selectionCandidates(startingAt focusedElement: AXUIElement) -> [AXUIElement] {
+    private nonisolated static func selectionCandidates(startingAt focusedElement: AXUIElement) -> [AXUIElement] {
         var candidates = [focusedElement]
         var parent = focusedElement
         for _ in 0..<5 {
+            guard !Task.isCancelled else { return candidates }
             guard let next: AXUIElement = attribute(kAXParentAttribute, from: parent) else { break }
             candidates.append(next)
             parent = next
         }
 
-        var queue: [AXUIElement] = attribute(kAXChildrenAttribute, from: focusedElement) ?? []
+        let children: [AXUIElement] = attribute(kAXChildrenAttribute, from: focusedElement) ?? []
+        var queue = Array(children.prefix(40 - candidates.count))
         var cursor = 0
-        while cursor < queue.count, candidates.count < 40 {
+        while cursor < queue.count, candidates.count < 40, !Task.isCancelled {
             let element = queue[cursor]
             cursor += 1
             candidates.append(element)
@@ -337,12 +359,12 @@ enum SelectionReader {
         return candidates
     }
 
-    private static func isProtectedTextElement(_ element: AXUIElement) -> Bool {
+    private nonisolated static func isProtectedTextElement(_ element: AXUIElement) -> Bool {
         let subrole: String? = attribute(kAXSubroleAttribute, from: element)
         return subrole == (kAXSecureTextFieldSubrole as String)
     }
 
-    private static func boundedSelectedText(from element: AXUIElement) -> String? {
+    private nonisolated static func boundedSelectedText(from element: AXUIElement) -> String? {
         if let selectedRange = selectedTextRange(from: element), selectedRange.length > 0 {
             let boundedRange = CFRange(
                 location: selectedRange.location,
@@ -387,7 +409,7 @@ enum SelectionReader {
         )
     }
 
-    private static func parameterizedText(
+    private nonisolated static func parameterizedText(
         _ attributeName: String,
         range: CFRange,
         from element: AXUIElement
@@ -403,7 +425,7 @@ enum SelectionReader {
         return plainText(from: value)
     }
 
-    private static func textAttribute(_ name: String, from element: AXUIElement) -> String? {
+    private nonisolated static func textAttribute(_ name: String, from element: AXUIElement) -> String? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else {
             return nil
@@ -411,12 +433,12 @@ enum SelectionReader {
         return plainText(from: value)
     }
 
-    private static func plainText(from value: CFTypeRef?) -> String? {
+    private nonisolated static func plainText(from value: CFTypeRef?) -> String? {
         if let text = value as? String { return text }
         return (value as? NSAttributedString)?.string
     }
 
-    private static func selectedTextRange(from element: AXUIElement) -> CFRange? {
+    private nonisolated static func selectedTextRange(from element: AXUIElement) -> CFRange? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(
             element,
@@ -593,7 +615,7 @@ enum SelectionReader {
         return titles
     }
 
-    private static func mailConversationRoot(
+    private nonisolated static func mailConversationRoot(
         startingAt element: AXUIElement?,
         focusedWindow: AXUIElement?
     ) -> AXUIElement? {
@@ -820,7 +842,7 @@ enum SelectionReader {
         return excluded.contains { identity.contains($0) }
     }
 
-    private static func likelyLatex(_ value: String) -> Bool {
+    private nonisolated static func likelyLatex(_ value: String) -> Bool {
         guard value.count < 4_000 else { return false }
         let signals = ["\\frac", "\\sum", "\\int", "\\sqrt", "$$", "∫", "∑", "√", "≤", "≥", "≠"]
         return signals.contains { value.contains($0) }
@@ -831,6 +853,7 @@ enum SelectionReader {
     }
 
     private nonisolated static func attribute<T>(_ name: String, from element: AXUIElement) -> T? {
+        guard !Task.isCancelled else { return nil }
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
         guard result == .success else { return nil }

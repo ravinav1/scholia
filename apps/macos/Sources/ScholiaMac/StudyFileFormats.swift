@@ -335,7 +335,7 @@ enum StudyFileFormats {
 
 /// Reads only named, bounded ZIP parts in memory. Nothing is expanded onto disk
 /// and macro/external relationships are never evaluated.
-private final class StudyOfficeArchive {
+final class StudyOfficeArchive {
     struct Entry {
         var offset: Int
         var size: Int
@@ -351,7 +351,7 @@ private final class StudyOfficeArchive {
         self.data = data
         func u16(_ n: Int) throws -> Int { Int(try readNumber(n, length: 2)) }
         func u32(_ n: Int) throws -> Int { Int(try readNumber(n, length: 4)) }
-        guard data.count >= 22 else { throw StudyError.message("This is not a readable Office archive.") }
+        guard data.count >= 22 else { throw StudyError.message("This is not a readable ZIP archive.") }
         var end: Int?
         for n in stride(from: data.count - 22, through: max(0, data.count - 65_557), by: -1) {
             if try u32(n) == 0x0605_4b50 {
@@ -360,13 +360,13 @@ private final class StudyOfficeArchive {
             }
         }
         guard let end, try u16(end + 4) == 0, try u16(end + 6) == 0 else {
-            throw StudyError.message("Multipart Office archives are unsupported.")
+            throw StudyError.message("Multipart ZIP archives are unsupported.")
         }
         let count = try u16(end + 10)
         var position = try u32(end + 16)
-        guard count <= 10_000 else { throw StudyError.message("This Office archive has too many parts.") }
+        guard count <= 10_000 else { throw StudyError.message("This ZIP archive has too many parts.") }
         for _ in 0..<count {
-            guard try u32(position) == 0x0201_4b50 else { throw StudyError.message("The Office archive is damaged.") }
+            guard try u32(position) == 0x0201_4b50 else { throw StudyError.message("The ZIP archive is damaged.") }
             let flags = try u16(position + 8)
             let method = try u16(position + 10)
             let size = try u32(position + 20)
@@ -376,13 +376,13 @@ private final class StudyOfficeArchive {
             let comment = try u16(position + 32)
             let local = try u32(position + 42)
             guard position + 46 + length <= data.count else {
-                throw StudyError.message("The Office archive is incomplete.")
+                throw StudyError.message("The ZIP archive is incomplete.")
             }
             let name = String(decoding: data[(position + 46)..<(position + 46 + length)], as: UTF8.self)
-            guard flags & 1 == 0 else { throw StudyError.message("Unlock this Office document before importing it.") }
+            guard flags & 1 == 0 else { throw StudyError.message("Unlock this archive before importing it.") }
             guard !name.hasPrefix("/"), !name.split(separator: "/").contains(".."), !name.contains("\\"),
                 entries[name] == nil
-            else { throw StudyError.message("The Office archive contains an invalid part name.") }
+            else { throw StudyError.message("The ZIP archive contains an invalid part name.") }
             entries[name] = Entry(
                 offset: local, size: size, expanded: expanded, method: method,
                 crc: try readNumber(position + 16, length: 4))
@@ -391,24 +391,24 @@ private final class StudyOfficeArchive {
     }
     private func readNumber(_ offset: Int, length: Int) throws -> UInt32 {
         guard offset >= 0, offset + length <= data.count else {
-            throw StudyError.message("The Office archive is incomplete.")
+            throw StudyError.message("The ZIP archive is incomplete.")
         }
         return (0..<length).reduce(UInt32(0)) { $0 | UInt32(data[offset + $1]) << ($1 * 8) }
     }
     func read(_ name: String) throws -> Data {
         try Task.checkCancellation()
         guard let item = entries[name], item.expanded <= 8_000_000, item.size <= 100_000_000 else {
-            throw StudyError.message("An Office document part is missing or too large.")
+            throw StudyError.message("An archive member is missing or too large.")
         }
         expandedBytes += item.expanded
         guard expandedBytes <= 64_000_000, try readNumber(item.offset, length: 4) == 0x0403_4b50 else {
-            throw StudyError.message("The Office document exceeds the extraction limit.")
+            throw StudyError.message("The archive exceeds the extraction limit.")
         }
         let start =
             item.offset + 30 + Int(try readNumber(item.offset + 26, length: 2))
             + Int(try readNumber(item.offset + 28, length: 2))
         guard start >= 0, start + item.size <= data.count else {
-            throw StudyError.message("An Office document part is incomplete.")
+            throw StudyError.message("An archive member is incomplete.")
         }
         let compressed = data.subdata(in: start..<(start + item.size))
         let result: Data
@@ -429,16 +429,16 @@ private final class StudyOfficeArchive {
                     return inflate(&stream, Z_FINISH) == Z_STREAM_END && stream.total_out == item.expanded
                 }
             }
-            guard valid else { throw StudyError.message("An Office document part could not be decompressed.") }
+            guard valid else { throw StudyError.message("An archive member could not be decompressed.") }
             result = Data(output.prefix(item.expanded))
         } else {
-            throw StudyError.message("This Office compression format is unsupported.")
+            throw StudyError.message("This ZIP compression format is unsupported.")
         }
         let checksum = result.withUnsafeBytes {
             crc32(0, $0.bindMemory(to: Bytef.self).baseAddress, uInt(result.count))
         }
         guard result.count == item.expanded, UInt32(checksum) == item.crc else {
-            throw StudyError.message("An Office document part failed its integrity check.")
+            throw StudyError.message("An archive member failed its integrity check.")
         }
         return result
     }

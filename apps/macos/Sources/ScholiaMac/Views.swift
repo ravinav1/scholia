@@ -2,6 +2,28 @@
 @preconcurrency import Carbon
 import SwiftUI
 
+struct AnswerLanguageMenu: View {
+    @Binding var selection: AnswerLanguage
+
+    var body: some View {
+        Menu {
+            Picker("Default response language", selection: $selection) {
+                ForEach(AnswerLanguage.allCases) { language in
+                    Text(language.label).tag(language)
+                }
+            }
+        } label: {
+            Label(selection == .automatic ? "Auto" : selection.label, systemImage: "globe")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton).scholiaPointingCursor().fixedSize()
+        .help("Default response language for all chats. Auto follows the language of your prompt.")
+        .accessibilityLabel("Response language")
+        .accessibilityValue(selection.label)
+        .accessibilityIdentifier("response-language")
+    }
+}
+
 struct MenuContent: View {
     @EnvironmentObject private var model: AppModel
 
@@ -35,6 +57,10 @@ struct MenuContent: View {
                 MenuActionButton(
                     title: "Open in Browser", icon: "globe",
                     shortcut: "⌘2", action: model.openStudyWebsite
+                )
+                MenuActionButton(
+                    title: "Study on Paper", icon: "camera.viewfinder",
+                    shortcut: "⌘3", action: { PaperStudyWindowController.shared.show(app: model) }
                 )
                 MenuActionButton(
                     title: "Quick Ask", icon: "sparkles",
@@ -182,6 +208,10 @@ struct MenuContent: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Button("Update Scholia…", action: ScholiaAppUpdater.open)
+                .font(.caption)
+                .help("Build and install the latest changes from your Scholia folder, then reopen the app.")
+
             Divider()
             HStack {
                 Button("Open Scholia", action: model.openConversation)
@@ -324,6 +354,12 @@ struct ExplanationPanelView: View {
     @State private var composerFocused = false
 
     var body: some View {
+        AttachmentDropContainer(onDrop: { model.attachFromPasteboard(isQuickAsk: false, pasteboard: $0, acceptingDrop: true) }) {
+            panelBody.environmentObject(model)
+        }
+    }
+
+    private var panelBody: some View {
         VStack(spacing: 0) {
             header
             Divider()
@@ -435,10 +471,15 @@ struct ExplanationPanelView: View {
                 }
                 .padding(18)
             }
-            .onChange(of: model.messages) { _, _ in
+            .onChange(of: model.messages.count) { _, _ in
                 withAnimation(reduceMotion ? nil : ScholiaVisualStyle.fastAnimation) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
+            }
+            .onChange(of: model.messages.last?.content) { _, _ in
+                // Keep up with streaming without restarting an animated scroll
+                // (or comparing the entire conversation) for every text delta.
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
             .onChange(of: model.errorMessage) { _, _ in
                 withAnimation(reduceMotion ? nil : ScholiaVisualStyle.fastAnimation) {
@@ -477,7 +518,7 @@ struct ExplanationPanelView: View {
                 }
                 .scholiaButtonStyle(.bordered)
                 .disabled(model.isStreaming || model.isIngestingDraftAttachment)
-                .help("Attach an image, PDF, or text file")
+                .help("Attach any file or project folder")
 
                 ComposerTextView(
                     text: $model.draft,
@@ -496,7 +537,8 @@ struct ExplanationPanelView: View {
                     onSubmit: {
                         if !model.isStreaming { model.askDraft() }
                     },
-                    onPasteAttachment: { model.attachFromPasteboard(isQuickAsk: false) }
+                    onPasteAttachment: { model.attachFromPasteboard(isQuickAsk: false) },
+                    onDropAttachment: { model.attachFromPasteboard(isQuickAsk: false, pasteboard: $0, acceptingDrop: true) }
                 )
 
                 if model.isStreaming {
@@ -532,6 +574,10 @@ struct ExplanationPanelView: View {
             }
 
             HStack(spacing: 7) {
+                AnswerLanguageMenu(selection: Binding(
+                    get: { model.settings.language },
+                    set: { model.settings.language = $0; model.persistSettings() }
+                ))
                 Button {
                     if model.conversationContextEnabled {
                         model.conversationCompactContextEnabled.toggle()
@@ -590,10 +636,6 @@ struct ExplanationPanelView: View {
         }
         .padding(11)
         .background(.thinMaterial)
-        .dropDestination(for: URL.self) { urls, _ in
-            model.attachFiles(at: urls, isQuickAsk: false)
-            return urls.contains(where: \.isFileURL)
-        }
         .animation(reduceMotion ? nil : ScholiaVisualStyle.fastAnimation, value: composerFocused)
         .onAppear(perform: focusComposerForImageDraft)
         .onChange(of: model.capture?.id) { _, _ in focusComposerForImageDraft() }
@@ -710,21 +752,36 @@ struct MessageAttachmentChips: View {
     let attachments: [MessageAttachment]
     var compact = false
     var onRemove: ((UUID) -> Void)? = nil
+    @State private var inspectedAttachment: MessageAttachment?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(attachments) { attachment in
+                    VStack(alignment: .leading, spacing: 3) {
                     AttachmentKindChip(
-                        label: attachment.fileName,
-                        detail: compact ? nil : attachment.formattedByteCount,
-                        systemImage: attachment.isImage ? "photo"
+                        label: attachment.mimeType == "inode/directory" ? "Folder · \(attachment.fileName)" : attachment.fileName,
+                        detail: compact ? attachment.readStatusLabel : "\(attachment.readStatusLabel) · \(attachment.formattedByteCount)",
+                        systemImage: attachment.mimeType == "inode/directory" ? "folder" : attachment.isImage ? "photo"
                             : attachment.mimeType == "application/pdf" ? "doc.richtext" : "doc.text",
                         remove: onRemove.map { action in { action(attachment.id) } }
                     )
-                    .help("\(attachment.fileName) · \(attachment.formattedByteCount) · \(attachment.isImage ? "image included" : "complete extracted text included")")
+                    .help(attachment.readingDetailsText)
+                    .onTapGesture { inspectedAttachment = attachment }
+                    .accessibilityAction(named: Text("Show source and reading details")) { inspectedAttachment = attachment }
+                    if !compact, let path = attachment.sourcePath {
+                        Text(path).font(.system(size: 9)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.head).frame(maxWidth: 360, alignment: .leading)
+                    }
+                    }
                 }
             }
+        }
+        .popover(item: $inspectedAttachment) { attachment in
+            ScrollView {
+                Text(attachment.readingDetailsText).font(.system(size: 11)).textSelection(.enabled)
+                    .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(width: 370).frame(maxHeight: 450)
         }
     }
 }
@@ -756,6 +813,7 @@ private struct MessageView: View {
                    !reasoning.isEmpty {
                     ProviderReasoningView(source: reasoning)
                 }
+                if let activity = message.activity { ConversationActivityView(events: activity) }
                 if message.role == .user, let imageData = message.imageData {
                     ConversationMessageImageView(data: imageData)
                 }
@@ -764,18 +822,10 @@ private struct MessageView: View {
                 }
                 if !message.content.isEmpty {
                     if message.role == .assistant {
-                        if message.isStreaming {
-                            Text(message.content)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            RichMarkdownView(
-                                source: message.content,
-                                registerSelectionView: { selectionRegions.register($0, for: message.id) }
-                            )
-                        }
+                        RichMarkdownView(
+                            source: message.content,
+                            registerSelectionView: { selectionRegions.register($0, for: message.id) }
+                        )
                     } else if isEditing {
                         ConversationMessageEditor(
                             text: $editDraft,
@@ -802,6 +852,9 @@ private struct MessageView: View {
                 }
                 if let metadata = message.metadata {
                     Text(metadata).font(.caption2).foregroundStyle(.tertiary)
+                }
+                if message.role == .assistant, !message.isStreaming {
+                    ChatResponseUsageView(usage: message.usage, duration: message.responseDurationSeconds)
                 }
             }
             .padding(message.role == .user ? 10 : 2)
@@ -915,6 +968,7 @@ struct SettingsView: View {
     @State private var apiKey = ""
     @State private var keyStatus: String?
     @State private var pendingSessionDeletion: OpenCodePoisonedAttachment?
+    @State private var modelPickerPresented = false
 
     private var provider: ProviderDefinition { model.activeProvider }
     private var quickAskProvider: ProviderDefinition { model.activeQuickAskProvider }
@@ -925,6 +979,14 @@ struct SettingsView: View {
                 .tabItem { Label("Provider", systemImage: "network") }
             behaviorSettings
                 .tabItem { Label("Behavior", systemImage: "switch.2") }
+            PersonalizationSettingsView(sync: .shared)
+                .tabItem { Label("Personalization", systemImage: "person.crop.circle") }
+            Form {
+                Section("Course content") {
+                    StudyCourseUpdatePreferences(workspace: model.studyWorkspace, showsStatus: true)
+                }
+            }.formStyle(.grouped)
+                .tabItem { Label("Courses", systemImage: "books.vertical") }
             privacySettings
                 .tabItem { Label("Privacy", systemImage: "lock.shield") }
         }
@@ -1011,27 +1073,21 @@ struct SettingsView: View {
                         .menuStyle(.borderlessButton).scholiaPointingCursor()
                         .help("Models that passed Test provider for this endpoint")
 
-                        Menu {
-                            let candidates = model.unverifiedCandidateModels(for: provider)
-                            if candidates.isEmpty {
-                                Text("No untested catalog models")
-                            } else {
-                                ForEach(candidates) { item in
-                                    Button(modelPickerLabel(item)) {
-                                        model.settings.models[provider.id] = item.id
-                                        model.persistSettings()
-                                    }
-                                }
-                                if candidates.count == 80 {
-                                    Divider()
-                                    Text("Type another model ID above to test it")
-                                }
-                            }
-                        } label: {
-                            Text("Select to test…")
+                        Button("Browse & test…") {
+                            modelPickerPresented = true
                         }
-                        .menuStyle(.borderlessButton).scholiaPointingCursor()
-                        .help("Select a catalog candidate, then run Test provider before it appears in normal model pickers")
+                        .popover(isPresented: $modelPickerPresented) {
+                            ScholiaModelPickerPopover(
+                                isPresented: $modelPickerPresented,
+                                usesExplainModel: true,
+                                providerID: provider.id,
+                                onTestModel: { modelID, _ in
+                                    saveKey(testAfterSaving: true, modelID: modelID)
+                                }
+                            )
+                            .environmentObject(model)
+                        }
+                        .help("Search and test any catalog or custom model")
                     }
                 }
 
@@ -1157,7 +1213,7 @@ struct SettingsView: View {
                 Text("Press ⌘Tab in Quick Chat to cycle the thinking profiles supported by their selected models; use ⇧⌘Tab to go back. Each profile can use the current model with only a reasoning-effort change, or override both model and effort.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("Quick Chat profile changes are temporary. Set the saved default here. Model pickers list only models that have passed Test provider for their current endpoint.")
+                Text("Quick Chat profile changes are temporary. Set the saved default here. Use Browse & test to verify models for their current endpoint before selecting them.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1179,6 +1235,9 @@ struct SettingsView: View {
                         saveKey(testAfterSaving: true)
                     }
                     .disabled(model.isTestingProvider)
+                    if model.isTestingProvider {
+                        Button("Cancel test") { model.cancelModelTest() }
+                    }
                     if provider.bridge != nil {
                         if model.activeBridgeIsReady {
                             Label("Local provider ready", systemImage: "checkmark.circle.fill")
@@ -1403,6 +1462,9 @@ struct SettingsView: View {
                     Text("One or more shortcuts are already registered by another app. Choose another combination or use the menu-bar actions.")
                         .font(.caption).foregroundStyle(.orange)
                 }
+                DisclosureGroup("Workspace shortcuts") {
+                    StudyWorkspaceShortcutList().padding(.vertical, 8)
+                }
             }
 
             Section("Permissions") {
@@ -1446,6 +1508,35 @@ struct SettingsView: View {
 
     private var privacySettings: some View {
         Form {
+            Section("Local files") {
+                Toggle("Allow file access", isOn: Binding(
+                    get: { model.settings.resolvedLocalFileAccessEnabled },
+                    set: { enabled in
+                        model.settings.localFileAccessEnabled = enabled
+                        if !enabled { model.settings.localFileWriteAccessEnabled = false }
+                        model.persistSettings()
+                    }
+                ))
+                Text("Give Scholia a path or an approximate filename and folder in chat. It can search your Mac and read matching documents, text, code, and images. Files it reads are sent to your selected model to answer your request.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Allow write access", isOn: Binding(
+                    get: { model.settings.resolvedLocalFileWriteAccessEnabled },
+                    set: { enabled in
+                        model.settings.localFileWriteAccessEnabled = enabled
+                        model.persistSettings()
+                    }
+                ))
+                .disabled(!model.settings.resolvedLocalFileAccessEnabled)
+                Text("Off by default. When enabled, Scholia can create folders and create or edit text and code files you ask it to change. Turning it off blocks further writes, including during an answer.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("macOS may ask for access to Documents, Desktop, or Downloads. For other protected locations, grant Scholia Full Disk Access in System Settings.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Open Full Disk Access settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
             Section("Visible workspace context") {
                 Toggle(
                     "Use compact visible-window context by default",
@@ -1464,7 +1555,7 @@ struct SettingsView: View {
             Section("Local first") {
                 Label("No Scholia server, analytics, or telemetry", systemImage: "checkmark.shield.fill")
                 Text("Text and images are captured only after a question, selection, shortcut, Services command, clipboard action, or region gesture. Images are resized locally before they leave your Mac.")
-                Text("Only the selected content, the context mode you choose, source app/window labels, your question, and bounded conversation history are sent directly to the provider you choose.")
+                Text("Selected content, the context mode you choose, source app/window labels, files read for your request, your question, and bounded conversation history are sent directly to the provider you choose.")
                 Text("Quick Ask prompts and answers are temporary. Full chats are stored locally only after you open or move a conversation into chat, and can be cleared from the chat history menu.")
             }
             Section("Endpoint safety") {
@@ -1646,11 +1737,14 @@ struct SettingsView: View {
         apiKey = model.apiKey(for: provider.id)
     }
 
-    private func saveKey(testAfterSaving: Bool = false) {
+    private func saveKey(testAfterSaving: Bool = false, modelID: String? = nil) {
         do {
             try model.saveAPIKey(apiKey, for: provider.id)
             keyStatus = apiKey.isEmpty ? "Credential removed." : "Saved securely in Keychain."
-            if testAfterSaving { model.testActiveProvider(apiKeyOverride: apiKey) }
+            if testAfterSaving {
+                keyStatus = nil
+                model.testModel(modelID ?? model.activeModel, providerID: provider.id, apiKeyOverride: apiKey)
+            }
         } catch {
             keyStatus = error.localizedDescription
         }

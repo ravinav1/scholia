@@ -367,7 +367,9 @@ export async function resolvedPageMetadata(options = {}) {
     pageCount: Math.max(0, Number(metadata?.pageCount) || 0),
     extractedPageCount: Math.max(0, Number(metadata?.extractedPageCount) || 0),
     extractedCharacters: Math.max(0, Number(metadata?.extractedCharacters) || 0),
-    ...(typeof resolver === 'function' ? { pdfViewer: true } : {}),
+    ocrNotice: String(metadata?.ocrNotice || ''),
+    ...(metadata?.pdfIndexStage ? { pdfIndexStage: metadata.pdfIndexStage } : {}),
+    ...(typeof resolver === 'function' ? { pdfViewer: true, sourceKind: 'pdf' } : {}),
     ...(metadata?.pdfLocalContext ? { pdfLocalContext: true } : {}),
     renderedContextCharacters: Math.max(0, Number(metadata?.renderedContextCharacters) || 0),
     htmlContextCharacters: Math.max(0, Number(metadata?.htmlContextCharacters) || 0)

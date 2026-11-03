@@ -2,6 +2,7 @@ import {
   normalizeChatGptWebContext,
   publicChatGptWebContext
 } from './chatgpt-context.js';
+import { normalizeRecentModels } from './recent-models.js';
 
 export const SETTINGS_KEY = 'scholia.settings.v1';
 const DEFAULT_PROVIDER_ID = 'openai';
@@ -49,6 +50,7 @@ export const PROVIDERS = Object.freeze([
     supportsWebSearch: true,
     defaultModel: 'gpt-5-mini',
     models: [reasoningModel('gpt-6-astra', 'GPT-6 Astra', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
+      reasoningModel('gpt-6.1-sol', 'GPT-6.1 Sol', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
       reasoningModel('gpt-6-sol', 'GPT-6 Sol', ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
       reasoningModel('gpt-6-luna', 'GPT-6 Luna', ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
       'gpt-5.5', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o4-mini']
@@ -208,6 +210,7 @@ export const PROVIDERS = Object.freeze([
     defaultModel: 'gpt-5.5',
     models: [
       reasoningModel('gpt-6-astra', 'GPT-6 Astra', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
+      reasoningModel('gpt-6.1-sol', 'GPT-6.1 Sol', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
       reasoningModel('gpt-6-sol', 'GPT-6 Sol', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
       reasoningModel('gpt-6-luna', 'GPT-6 Luna', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
       reasoningModel('gpt-5.5', 'GPT-5.5', CODEX_REASONING_EFFORTS, 'high'),
@@ -368,6 +371,28 @@ export function compareModelNames(left, right) {
   return byLabel || MODEL_NAME_COLLATOR.compare(modelId(left), modelId(right));
 }
 
+export function sortModelChoices(models, verified = new Set()) {
+  const capacity = (id) => {
+    const words = new Set(String(id).toLowerCase().split(/[^a-z]+/));
+    for (const [score, names] of [[0, ['nano', 'tiny']], [1, ['mini', 'lite', 'small']], [2, ['flash', 'haiku', 'luna']], [3, ['medium', 'terra']], [5, ['opus', 'astra', 'pro', 'ultra', 'max', 'large']]]) {
+      if (names.some((name) => words.has(name))) return score;
+    }
+    return 4;
+  };
+  const family = (id) => String(id).toLowerCase().split('/').at(-1).split(/\d/, 1)[0].replace(/[-_.]+$/, '');
+  return [...models].sort((left, right) => {
+    const a = modelId(left), b = modelId(right);
+    if (verified.has(a) !== verified.has(b)) return verified.has(a) ? -1 : 1;
+    const tier = capacity(b) - capacity(a);
+    if (tier) return tier;
+    if (family(a) === family(b)) {
+      const version = MODEL_NAME_COLLATOR.compare(b, a);
+      if (version) return version;
+    }
+    return compareModelNames(left, right);
+  });
+}
+
 export function modelDefinition(providerOrId, id, settings = {}) {
   const provider = typeof providerOrId === 'string' ? providerById(providerOrId) : providerOrId;
   return providerModelChoices(provider, settings).find((model) => modelId(model) === id) || null;
@@ -390,6 +415,7 @@ export function providerModelChoices(providerOrId, settings = {}, { includeSelec
     ...(provider?.models || []),
     ...(settings?.discoveredModels?.[provider?.id] || []),
     ...(settings?.customModels?.[provider?.id] || []),
+    ...normalizeRecentModels(settings?.recentModels).filter((item) => item.providerID === provider?.id).map((item) => item.modelID),
     ...(includeSelected ? [settings?.models?.[provider?.id]] : [])
   ].filter(Boolean);
   for (const entry of candidates) {
@@ -416,7 +442,7 @@ export function providerModelChoices(providerOrId, settings = {}, { includeSelec
     }
     models.set(id, normalized);
   }
-  return [...models.values()].sort(compareModelNames);
+  return sortModelChoices([...models.values()]);
 }
 
 export function modelReasoning(providerOrId, id, settings = {}) {
@@ -549,6 +575,7 @@ export function mergeSettings(raw = {}) {
     customModels,
     discoveredModels,
     modelCatalogCheckedAt,
+    recentModels: normalizeRecentModels(source.recentModels).filter((item) => PROVIDERS_BY_ID.has(item.providerID)),
     reasoningEfforts,
     fastMode: source.fastMode === true,
     includePageContext: source.includePageContext !== false,
@@ -569,6 +596,7 @@ export function publicSettings(settings) {
     customModels: merged.customModels,
     discoveredModels: merged.discoveredModels,
     modelCatalogCheckedAt: merged.modelCatalogCheckedAt,
+    recentModels: merged.recentModels,
     reasoningEfforts: merged.reasoningEfforts,
     fastMode: merged.fastMode,
     includePageContext: merged.includePageContext,

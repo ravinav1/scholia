@@ -24,10 +24,10 @@ final class StudyWorkspaceTests: XCTestCase {
         XCTAssertEqual(pack.sources.map(\.page), [1, 2, 3])
         XCTAssertTrue(pack.imagePages.contains(3))
         XCTAssertTrue(pack.imagePages.contains(2))
-        let messages = StudyContextBuilder.requestMessages([ConversationMessage(role: .user, content: "Explain page 3")], pack: pack, mode: .guide, images: [])
+        let messages = StudyContextBuilder.requestMessages([ConversationMessage(role: .user, content: "Explain page 3")], pack: pack, mode: .explain, images: [])
         let prepared = try PromptBuilder.prepare(messages: messages, capture: nil, languagePreference: .english)
         XCTAssertTrue(prepared.messages[0].content.contains("A diagonalization example"))
-        XCTAssertTrue(prepared.messages[0].content.contains("one specific guiding question"))
+        XCTAssertTrue(prepared.messages[0].content.contains("one manageable next step"))
         XCTAssertTrue(prepared.messages[0].content.contains("Current page: 2 of 3"))
     }
 
@@ -42,6 +42,26 @@ final class StudyWorkspaceTests: XCTestCase {
         XCTAssertTrue(pack.sources.contains { $0.page == 20 })
         XCTAssertTrue(pack.text.contains("omitted pages are not visible"))
         XCTAssertLessThan(pack.text.count, 5_000)
+    }
+
+    func testExplicitEntirePDFIncludesAllPagesBeyondTheNormalBudget() throws {
+        let pages = (1...30).map { StudyPage(number: $0,
+            text: String(repeating: "Document evidence 🧠 e\u{301}. ", count: 500) + "Conclusion \($0)") }
+        let document = StudyDocument(title: "Long reading", kind: .pdf, fileName: "original.pdf", pageCount: 30)
+        let pack = try StudyContextBuilder.entirePDF(document: document, index: StudyDocumentIndex(pages: pages))
+        XCTAssertTrue(pack.wholeDocument)
+        XCTAssertEqual(pack.sources.count, 30)
+        XCTAssertGreaterThan(pack.text.utf16.count, 140_000)
+        let messages = StudyContextBuilder.requestMessages([ConversationMessage(role: .user, content: "Explain the entire PDF.")],
+            pack: pack, mode: .explain, images: [])
+        let prepared = try PromptBuilder.prepare(messages: messages, capture: nil, languagePreference: .automatic)
+        XCTAssertEqual(messages[0].attachments?.map(\.extractedText).joined(), pack.text)
+        XCTAssertTrue(prepared.messages[0].content.contains("Conclusion 30"))
+        XCTAssertTrue(prepared.messages[0].content.contains("Read every supplied PDF page"))
+        XCTAssertThrowsError(try StudyContextBuilder.entirePDF(document: document,
+            index: StudyDocumentIndex(pages: Array(pages.dropLast()))))
+        let oversized = StudyDocumentIndex(pages: (1...30).map { StudyPage(number: $0, text: String(repeating: "x", count: 30_000)) })
+        XCTAssertThrowsError(try StudyContextBuilder.entirePDF(document: document, index: oversized))
     }
 
     func testCourseRetrievalIsScopedToSelectedCourse() throws {
@@ -63,11 +83,11 @@ final class StudyWorkspaceTests: XCTestCase {
         let model = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
         model.createCourse(name: "Algebra", code: "TMA4115")
         model.draft = "Why is this linear?"
-        model.mode = .guide
+        model.mode = .explain
         let config = ProviderConfiguration(provider: ProviderCatalog.provider(id: "ollama"), model: "test", endpoint: "http://127.0.0.1:11434", apiKey: "", language: .english, fastClaudeMode: false)
         model.submit(configuration: config) { messages, _, onToken in
             XCTAssertTrue(messages.last?.content.hasPrefix("Why is this linear?") == true)
-            XCTAssertTrue(messages.last?.content.contains("one specific guiding question") == true)
+            XCTAssertTrue(messages.last?.content.contains("one manageable next step") == true)
             onToken("A linear map ")
             return CompletionResult(text: "A linear map preserves sums and scaling.", providerID: "test", providerName: "Test", model: "test")
         }

@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCodexExecArguments } from '../scripts/lib/codex-cli-arguments.mjs';
 
+test('teaching instructions reach Codex at developer priority with literal newlines and quotes', () => {
+  const systemInstructions = 'Teaching rules: "preserve learner work"\nDo not solve the whole PDF. Literal `text` and $(text).';
+  const args = buildCodexExecArguments({ model: 'gpt-6.1-sol', effort: 'low', systemInstructions });
+  const value = args.find((item) => item.startsWith('developer_instructions='));
+  assert.equal(JSON.parse(value.slice('developer_instructions='.length)), systemInstructions);
+});
+
 test('Codex Fast mode selects the fast service tier for an ephemeral read-only execution', () => {
   const args = buildCodexExecArguments({
     model: 'gpt-5.6-sol',

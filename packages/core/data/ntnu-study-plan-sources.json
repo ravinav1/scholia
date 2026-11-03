@@ -1,0 +1,6 @@
+{
+  "programmes": [
+    { "programmeCode": "MTTK", "admissionYears": "published", "defaultAdmissionYear": 2023, "studyYears": 5 },
+    { "programmeCode": "MTNANO", "admissionYears": "published", "defaultAdmissionYear": 2023, "studyYears": 5 }
+  ]
+}

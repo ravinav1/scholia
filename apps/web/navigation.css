@@ -1,0 +1,251 @@
+/* Keep navigation and core actions usable as the reading space narrows. */
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 5px 27px;
+}
+.sidebar-heading .brand {
+  margin: 0;
+}
+.sidebar-close,
+.sidebar-scrim,
+.sidebar-study-tools > button,
+.upload-short-label {
+  display: none;
+}
+.sidebar-study-tools {
+  display: contents;
+}
+.sidebar .nav-all {
+  margin-bottom: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 500;
+  min-height: 44px;
+}
+.sidebar .nav-all:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+.sidebar .nav-all[aria-current='page'] {
+  background: color-mix(in srgb, var(--green) 11%, var(--rail));
+  color: var(--green);
+  font-weight: 600;
+}
+.sidebar .nav-all[data-action='exams'] {
+  margin-bottom: 24px;
+}
+.sidebar .nav-all.workspace-back {
+  border: 0;
+  font-size: 12px;
+}
+.sidebar .section-label > button:not(.section-toggle) {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 7px;
+}
+.topbar-actions {
+  flex: none;
+  align-items: center;
+}
+.topbar-actions > button {
+  min-height: 38px;
+  white-space: nowrap;
+}
+.topbar-actions .action-search,
+.topbar-actions #add-document {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.action-search svg,
+.mobile-menu svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.action-search kbd {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 4px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10px;
+}
+#breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  line-height: 1.5;
+}
+#breadcrumb .breadcrumb-parent {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  min-width: 0;
+  text-align: left;
+  padding: 7px 0;
+}
+#breadcrumb:has(.breadcrumb-current) .breadcrumb-parent {
+  max-width: 45%;
+}
+#breadcrumb .breadcrumb-parent:hover {
+  color: var(--green);
+  background: transparent;
+}
+#breadcrumb > span {
+  margin: 0;
+}
+#breadcrumb .breadcrumb-separator {
+  flex: none;
+}
+#breadcrumb .breadcrumb-current {
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1220px) {
+  .action-search kbd,
+  .topbar-actions .action-canvas {
+    display: none;
+  }
+  .topbar-actions {
+    gap: 7px;
+  }
+}
+@media (max-width: 1120px) {
+  .sidebar-study-tools .sidebar-review {
+    display: block;
+    border: 0;
+    text-align: left;
+    margin: -12px 0 18px;
+    min-height: 40px;
+    padding: 10px 12px;
+    color: var(--muted);
+  }
+}
+@media (max-width: 850px) {
+  .app .sidebar {
+    width: min(320px, calc(100vw - 40px));
+    z-index: 40;
+    padding: 20px 18px;
+    box-shadow: 12px 0 40px #17271b26;
+    overscroll-behavior: contain;
+  }
+  .sidebar-heading {
+    margin-bottom: 24px;
+  }
+  .sidebar-close {
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex: none;
+  }
+  .app.sidebar-open .sidebar-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #15251c66;
+    cursor: default;
+  }
+  .topbar .mobile-menu {
+    display: grid !important;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex: none;
+  }
+  .mobile-menu svg {
+    width: 20px;
+    height: 20px;
+  }
+  .topbar-actions > button {
+    font-size: 11px;
+  }
+}
+@media (max-width: 640px) {
+  .topbar {
+    gap: 8px;
+    padding: 0 12px;
+    min-height: 64px;
+  }
+  .topbar-actions {
+    gap: 6px;
+  }
+  .topbar-actions > button {
+    min-height: 40px;
+  }
+  .topbar-actions .action-search {
+    width: 40px;
+    padding: 10px;
+  }
+  .action-search > span,
+  .upload-full-label,
+  .topbar-actions #practice-this {
+    display: none;
+  }
+  .upload-short-label {
+    display: inline;
+  }
+  .topbar-actions #add-document {
+    padding: 9px 11px;
+    color: var(--green);
+  }
+  .sidebar-study-tools .sidebar-practice,
+  .sidebar-study-tools .sidebar-create {
+    display: block;
+    min-height: 42px;
+    border: 0;
+    text-align: left;
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    color: var(--muted);
+  }
+  .sidebar-study-tools .sidebar-create {
+    margin-bottom: 20px;
+  }
+  .sidebar-study-tools .sidebar-review {
+    margin: -12px 0 4px;
+  }
+  #breadcrumb {
+    gap: 7px;
+    font-size: 11px;
+  }
+  #breadcrumb .breadcrumb-parent {
+    font-size: 12px;
+  }
+  #breadcrumb:has(.breadcrumb-current) {
+    flex-wrap: wrap;
+    align-content: center;
+    gap: 0;
+  }
+  #breadcrumb:has(.breadcrumb-current) .breadcrumb-parent {
+    max-width: 100%;
+    width: 100%;
+    padding: 0;
+    font-size: 10px;
+  }
+  #breadcrumb .breadcrumb-separator {
+    display: none;
+  }
+  #breadcrumb .breadcrumb-current {
+    width: 100%;
+  }
+}

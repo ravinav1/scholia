@@ -1,5 +1,8 @@
 {
   "manifest_version": 3,
+  "mime_types_handler": {
+    "application/pdf": { "handler_url": "pdf-viewer.html", "can_embed": true }
+  },
   "name": "Scholia — Select & Explain",
   "short_name": "Scholia",
   "version": "0.2.2",
@@ -10,6 +13,7 @@
     "activeTab",
     "alarms",
     "contextMenus",
+    "offscreen",
     "clipboardWrite",
     "scripting",
     "storage",

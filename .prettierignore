@@ -5,3 +5,4 @@ dist/
 apps/macos/.build/
 apps/macos/.swiftpm/
 package-lock.json
+output/

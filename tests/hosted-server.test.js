@@ -114,14 +114,24 @@ test('hidden assignments persist per account without altering submission status 
   assert.equal(saved.canvasMaterials[0].assignment.status, 'submitted');
   await app.request('/api/action', { ...alice, data: { ...action, enabled: false } });
   assert.deepEqual(app.store.account(alice.user.id).library.courses[0].hiddenAssignmentIDs, []);
+  const overview = await app.request('/api/action', { ...alice, data: { action: 'assignments' } });
+  assert.equal(overview.body.library.courseLibraryView, 'assignments');
+  assert.equal(overview.body.showingLibrary, true);
+  const reload = await app.request('/api/state', alice);
+  assert.equal(reload.body.library.courseLibraryView, 'assignments');
+  assert.equal(reload.body.library.courses[0].canvasMaterials[0].assignment.status, 'submitted');
+  const dashboard = await app.request('/api/action', { ...alice, data: { action: 'library' } });
+  assert.equal(dashboard.body.library.courseLibraryView, 'all');
 });
 
 test('each hosted user indexes Canvas privately and opens the assignment PDF on demand', async (t) => {
   const calls = [];
+  let dueAt = '2026-10-08T21:59:59Z', offline = false;
   const remoteRequest = async (address, options) => {
     const url = new URL(address),
       token = options.headers?.Authorization;
     calls.push({ path: url.pathname, token });
+    if (offline) throw new Error('Offline');
     if (url.hostname === 'files.example') {
       assert.equal(token, undefined, 'Canvas credentials must not reach the file host');
       return { status: 200, headers: {}, data: Buffer.from(onePagePdf('Assignment PDF body')) };
@@ -130,7 +140,7 @@ test('each hosted user indexes Canvas privately and opens the assignment PDF on 
     const assignment = {
       id: 1,
       name: `${identity} exercise`,
-      due_at: '2026-10-02T18:00:00Z',
+      due_at: dueAt,
       submission_types: ['online_upload'],
       submission: { workflow_state: identity === 'Alice' ? 'submitted' : 'unsubmitted' },
       description: '<p>Show your work.</p><a href="/courses/1/files/2/download">PDF</a>',
@@ -207,6 +217,46 @@ test('each hosted user indexes Canvas privately and opens the assignment PDF on 
     /Alice|Assignment PDF body/
   );
   assert.doesNotMatch(JSON.stringify(opened.body), /alice-canvas-token|bob-canvas-token/);
+
+  const fileRequests = calls.filter(c => c.path.endsWith('.pdf')).length;
+  const openAgain = () => app.request('/api/action', {
+    ...alice, data: { action: 'assignment', courseID: course.id, id: 'assignments:1' },
+  });
+  dueAt = '2026-10-11T21:59:59Z';
+  const moved = await openAgain();
+  const details = moved.body.library.courses[0].canvasMaterials.find(m => m.id === 'assignments:1').assignment;
+  assert.equal(details.dueAt, dueAt, 'Opening a cached assignment must fetch its revised deadline');
+  assert.equal(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Oslo', weekday: 'long', day: 'numeric', month: 'long' })
+    .format(new Date(details.dueAt)), 'Sunday 11 October');
+  assert.equal(moved.body.library.selectedDocumentID, doc.id, 'The saved PDF stays selected');
+  assert.equal(calls.filter(c => c.path.endsWith('.pdf')).length, fileRequests, 'Refreshing a deadline does not download the PDF again');
+  offline = true;
+  const saved = await openAgain();
+  assert.match(saved.body.assignmentNotice, /Deadline may be out of date/);
+  assert.match(saved.body.pageText, /Assignment PDF body/);
+  offline = false;
+  dueAt = null;
+  const removed = await openAgain();
+  assert.equal(removed.body.library.courses[0].canvasMaterials.find(m => m.id === 'assignments:1').assignment.dueAt, null);
+  assert.equal(removed.body.assignmentNotice, null);
+});
+
+test('search API enforces auth, CSRF and account scope and finds contents across workspaces', async (t) => {
+  const app = await fixture(t), alice = await app.login('search-a@example.com'), bob = await app.login('search-b@example.com');
+  const document = await app.documents.import(alice.user.id, 'notes.txt', Buffer.from('Exact eigenvector evidence.'));
+  const account = app.workspaces.account(alice.user.id);
+  account.library.courses.push({ id: 'first', name: 'First', documents: [document], canvasMaterials: [], threads: [] },
+    { id: 'second', name: 'Second', documents: [], canvasMaterials: [], threads: [] });
+  assert.equal((await app.request('/api/search?q=eigenvector')).status, 401);
+  assert.equal((await app.request('/api/search?q=eigenvector', { cookie: alice.cookie })).status, 403);
+  const result = await app.request('/api/search?q=eigenvector', alice);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.results[0].documentID, document.id);
+  assert.equal(result.body.results[0].page, 1);
+  assert.equal((await app.request('/api/search?q=eigenvector&courseID=second', alice)).body.total, 0);
+  assert.equal((await app.request('/api/search?q=eigenvector', bob)).body.total, 0);
+  assert.equal((await app.request('/api/search?q=eigenvector&courseID=first', bob)).status, 404);
+  assert.equal((await app.request('/api/search?q=' + 'x'.repeat(513), alice)).status, 400);
 });
 
 async function fixture(t, options = {}) {
@@ -331,6 +381,88 @@ test('hosted accounts isolate workspaces, documents, conversations, credentials 
   assert.equal((await app.request('/auth/logout', { ...alice, data: {} })).status, 200);
   assert.equal((await app.request('/api/state', alice)).status, 401);
   assert.equal((await app.request('/api/state', bob)).status, 200);
+});
+
+test('whole-course questions retain metadata, course drafts and scope across readings and citations', async (t) => {
+  const completions = [];
+  const app = await fixture(t, {
+    complete: async (payload) => {
+      completions.push(payload);
+      return { text: 'A grounded course answer.' };
+    },
+  });
+  const user = await app.login('course-questions@example.com');
+  const call = async (data) => {
+    const result = await app.request('/api/action', { ...user, data });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    return result.body;
+  };
+  let state = await call({ action: 'create', name: 'Geometric computing', code: 'MATH204' });
+  const account = app.workspaces.account(user.user.id), course = account.library.courses[0];
+  course.term = 'Autumn 2026';
+  course.canvasMaterials = [
+    { id: 'files:remote', kind: 'files', title: 'Remote syllabus' },
+    { id: 'assignments:locked', kind: 'assignments', title: 'Future exercise',
+      assignment: { locked: true, dueAt: '2026-11-02T10:00:00+01:00', status: 'not_submitted' } },
+  ];
+  app.store.save(account);
+  state = await call({ action: 'context', enabled: false });
+  state = await call({ action: 'send', text: 'What course is this and when is the exercise due?', owner: state.draftOwner });
+  await account.job;
+  assert.match(completions[0].context, /MATH204[\s\S]*Autumn 2026/);
+  assert.match(completions[0].context, /Future exercise \| due: 2026-11-02T10:00:00\+01:00/);
+  assert.match(completions[0].context, /Remote syllabus \| remote only; contents unavailable/);
+  state = (await app.request('/api/state', user)).body;
+  assert.equal(state.contextScope, 'course');
+  assert.equal(state.includeCourse, true, 'course scope includes available context despite the previous reading preference');
+  const courseThreadID = state.library.selectedThreadID;
+  state = await call({ action: 'draft', text: 'Keep my whole-course question', owner: state.draftOwner });
+  const reading = await app.documents.import(account.id, 'late-topic.ipynb', Buffer.from(JSON.stringify({ cells: [
+    { cell_type: 'markdown', source: ['# Introduction'] },
+    { cell_type: 'markdown', source: ['Background discussion.'] },
+    { cell_type: 'markdown', source: ['The zebraquantum result is exactly 41 units.'] },
+  ] })));
+  course.documents.push(reading);
+  const other = { id: 'other-course', name: 'Unrelated private course', documents: [], threads: [], canvasMaterials: [] };
+  other.documents.push(await app.documents.import(account.id, 'unrelated.txt', Buffer.from('Secret unrelated zebraquantum result is 999.')));
+  account.library.courses.push(other);
+  app.store.save(account);
+  state = await call({ action: 'document', id: reading.id });
+  assert.equal(state.contextScope, 'document');
+  state = await call({ action: 'draft', text: 'Separate reading question', owner: state.draftOwner });
+  const readingThreadID = state.library.selectedThreadID;
+  state = await call({ action: 'materials' });
+  assert.equal(state.library.selectedThreadID, courseThreadID);
+  assert.equal(state.draft, 'Keep my whole-course question');
+  state = await call({ action: 'assignment', courseID: course.id, id: 'assignments:locked' });
+  assert.equal(state.contextScope, 'assignment');
+  state = await call({ action: 'draft', text: 'Separate assignment question', owner: state.draftOwner });
+  const assignmentThreadID = state.library.selectedThreadID;
+  assert.notEqual(assignmentThreadID, courseThreadID);
+  state = await call({ action: 'materials' });
+  assert.equal(state.library.selectedThreadID, courseThreadID);
+  assert.equal(state.draft, 'Keep my whole-course question');
+  state = await call({ action: 'send', text: 'Explain zebraquantum', owner: state.draftOwner });
+  await account.job;
+  assert.match(completions[1].context, /zebraquantum result is exactly 41 units/);
+  assert.doesNotMatch(completions[1].context, /Secret unrelated|999/);
+  state = (await app.request('/api/state', user)).body;
+  const source = state.sources[state.messages.at(-1).id].find((entry) => entry.page === 3);
+  assert.equal(source.documentID, reading.id);
+  state = await call({ action: 'source', id: source.documentID, page: source.page });
+  assert.equal(state.library.selectedThreadID, courseThreadID);
+  assert.equal(state.contextScope, 'course');
+  state = await call({ action: 'send', text: 'How does this fit the course?', owner: state.draftOwner });
+  await account.job;
+  assert.equal(completions[2].pageTitle, course.name);
+  assert.match(completions[2].context, /COURSE INFORMATION/);
+  state = await call({ action: 'thread', id: readingThreadID });
+  assert.equal(state.contextScope, 'document');
+  assert.equal(state.draft, 'Separate reading question');
+  state = await call({ action: 'thread', id: assignmentThreadID });
+  assert.equal(state.contextScope, 'assignment');
+  assert.equal(state.draft, 'Separate assignment question');
+  assert.equal(state.library.selectedAssignmentID, 'assignments:locked');
 });
 
 test('hosted service rejects anonymous, cross-site, wrong-host and missing-CSRF requests', async (t) => {

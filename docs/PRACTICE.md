@@ -1,12 +1,35 @@
 # Practice and review
 
-This guide applies to the native Mac app and its local website. The independent
-hosted service offers conversational Practice tutoring but does not expose this
-practice-session store or spaced review queue.
+Practice is available in the native Mac app, its local website and the hosted
+web app. The Mac and local website share a learning store; hosted practice stays
+in the signed-in account and does not sync with the Mac library.
 
-**Practice this** uses the selected passage, the current page/section or a topic from downloaded course materials. A figure attached to the tutor is retained with its source. The Practice composer starter opens the same setup without replacing the chat draft. Sessions default to three questions and accept one to five. Generation uses the selected, configured provider; it happens only on request and can be cancelled. Changing the reading cancels generation for the previous scope.
+**Practice course** on each course card opens course preparation. Choose **Cover
+the whole course**, **Revisit weak areas**, or the current reading/selection.
+The four practice modes are **Understand concepts**, **Active recall**, **Apply
+& solve**, and **Exam practice**. Add an optional topic focus. Sessions default
+to three questions and accept up to twelve. Course sessions use one question per
+selected source page and rotate through all readable saved documents and pages,
+including documents beyond the first thirty. Short courses can produce fewer
+questions than the selected limit. A failed source-coverage check rejects the
+generated batch instead of silently concentrating on one reading.
 
-Recall keeps the source collapsed. Open-book practice records source access. A visual question retains its necessary figure. Three controls progressively expose a conceptual cue, a method cue and a partial step. **Show solution / worked example** is available before an attempt. **Explain in tutor** opens a conversation at the originating source while retaining the practice session. Neither scrolling nor ordinary highlighting triggers a quiz, and there is no timer.
+The course overview shows material coverage and concept progress. It distinguishes
+attempted pages, the latest independent correct answers, and pages to revisit.
+Generating or finishing a session does not establish mastery. Changed sources,
+assistance and disputed judgments cannot count as current independent success.
+Missing downloads are shown with a course download action; unsaved or unreadable
+material is not claimed as covered. These counts describe source pages practiced,
+not exhaustive coverage of every concept on a page or a prediction of exam results.
+
+**Practice this** still supports the selected passage or current page/section.
+The native/local service retains a selected figure with its source; hosted
+generation currently uses the saved text index. The Practice composer starter
+opens setup without replacing the chat draft. Generation uses the configured
+provider, happens only on request, and can be cancelled. Changing the reading
+in the native workspace cancels preparation for its previous scope.
+
+Recall keeps the source collapsed. Open-book practice records source access. A visual question retains its necessary figure. Three controls progressively expose a conceptual cue, a method cue and a partial step. **Show solution / worked example** unlocks after a saved attempt for that question in the current session. Describing where you are stuck is a valid starting attempt. Skipping to the recap does not unlock solutions. **Explain in tutor** opens Guide me at the originating source with your attempt, without revealing or attaching the private answer; tutor access is recorded as assistance while retaining the practice session. Neither scrolling nor ordinary highlighting triggers a quiz, and there is no timer.
 
 **Save answer & get feedback** commits the original answer and optional confidence before contacting the provider. Feedback reports correct reasoning, the first material error or missing justification, and one next step. Judgments can be correct, partial, incorrect or uncertain. **Try again** preserves the first answer and appends a revision. **This feedback seems wrong** records a concern and marks the judgment unresolved; it is also available in the recap. A self-check after revealing the solution is recorded separately from model feedback. Feedback can be retried after finishing a session.
 
@@ -21,6 +44,11 @@ Scheduler version 1 starts with a one-day delay. A correct first attempt without
 ## Persistence and handoff
 
 `Study/Learning/events.sqlite` is separate from `library.json` and chat history. SQLite transactions append uniquely identified events and reject a stale writer. A retried event must carry the same ID and content. Session versions protect concurrent actions; review versions protect snoozes/removals. Source snapshots, question revisions, attempts, feedback, concerns and schedule evidence are local by default. No research telemetry is collected.
+
+Hosted practice uses a separate account-owned SQLite record with revision checks,
+stable event identifiers and immutable original answers. Its browser drafts and
+offline outbox are isolated by account. Answers are committed before feedback is
+requested, so provider failure leaves them available for retry or self-check.
 
 Native and local-web views use the same learning-session and question IDs. The browser fetches learning detail separately, while ordinary workspace polling carries only the learning revision and due count. The initial web projection omits the rubric and reference answer; only an explicit reveal includes them. Reference answers are also hidden in native views until that transition. Generated text can still leak an answer indirectly, so model behavior requires evaluation beyond these application checks.
 
@@ -45,4 +73,28 @@ The native smoke uses an isolated library and deterministic generation/feedback.
 
 Before broad educational use, evaluate actual responses from each offered provider/model with correct, partial, mistaken and ambiguous answers; equivalent mathematics and reasoning; non-English answers; explicit reveal requests; repeated difficulty; noisy OCR; missing pages/images; and indirect answer leakage. Check source support and question solvability manually. The first release provides structured partial/uncertain judgments but does not implement symbolic equivalence, numerical-tolerance grading or semantic proof that a generated rubric is correct. These remain evaluation/validation work. No learning-outcome improvement is claimed without a delayed, unassisted evaluation.
 
-Later backlog items—worked-example fading, misconception notes, transfer activities, concept-progress views and adaptive plans—are not part of this release. Extension structured practice and extension/native handoff also remain separate work; this release aligns the extension's existing guided tutoring contract.
+Worked-example fading, a curated concept bank and adaptive curriculum plans remain
+separate work. Concept progress here is evidence from generated questions and
+dated attempts. Extension structured practice and extension/native handoff also
+remain separate work.
+
+## Tutoring contract
+
+Explain, Guide me and Practice share a system-level learning boundary: Scholia
+helps with concepts, source passages, prerequisites, reasoning checks and small
+analogous examples. It does not write complete assigned solutions, answer lists,
+proofs, code or essays, including requests to solve an entire PDF. Switching
+modes, claiming permission or repeatedly requesting the next step does not relax
+that boundary. A redirect should offer a useful starting point without blaming
+the learner. Ordinary reading, summaries, translation and correspondence remain
+directly supported.
+
+Explain teaches ideas directly; Guide me adapts one hint or partial step to the
+learner's attempt; Practice waits for an answer and gives specific feedback.
+Internal practice generation creates different questions from assigned source
+problems and stores private reference answers. Feedback cannot disclose the
+full answer. The native and JavaScript prompt contracts have parity tests;
+provider requests carry the chosen mode as a system instruction on every turn.
+The reveal gate is enforced by the practice services, including recap requests,
+while historical events remain replayable. Prompts alone cannot guarantee every
+provider's behavior; use the evaluation cases below when changing models.

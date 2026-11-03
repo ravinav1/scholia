@@ -12,9 +12,11 @@ let package = Package(
         .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3")
     ],
     targets: [
+        .target(name: "ScholiaSearch", cSettings: [.unsafeFlags(["-O3"])]),
         .executableTarget(
             name: "ScholiaMac",
             dependencies: [
+                "ScholiaSearch",
                 .product(name: "cmark-gfm", package: "swift-cmark"),
                 .product(name: "cmark-gfm-extensions", package: "swift-cmark"),
                 .product(name: "SwiftMath", package: "SwiftMath")

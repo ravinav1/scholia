@@ -1,15 +1,39 @@
-import hljs from 'highlight.js/lib/common';
+import hljs from 'highlight.js';
 import katex from 'katex';
 import MarkdownIt from 'markdown-it';
+import { escapeHtml } from './html-escape.js';
+export { escapeHtml } from './html-escape.js';
 
-export function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+// Streaming changes the message suffix, while most math and code blocks stay
+// identical. Reuse their expensive output without retaining an unbounded chat.
+function renderCache(maxCharacters, maxEntries) {
+  const entries = new Map();
+  let characters = 0;
+  return (key, render) => {
+    const existing = entries.get(key);
+    if (existing !== undefined) {
+      entries.delete(key);
+      entries.set(key, existing);
+      return existing;
+    }
+    const result = render();
+    const size = key.length + result.length;
+    if (size <= maxCharacters) {
+      while (entries.size && (characters + size > maxCharacters || entries.size >= maxEntries)) {
+        const oldest = entries.keys().next().value;
+        characters -= oldest.length + entries.get(oldest).length;
+        entries.delete(oldest);
+      }
+      entries.set(key, result);
+      characters += size;
+    }
+    return result;
+  };
 }
+
+const cachedMath = renderCache(1_000_000, 256);
+const cachedCode = renderCache(500_000, 64);
+const cachedMarkdown = renderCache(2_000_000, 64);
 
 function stripOuterMathDelimiters(value) {
   let source = String(value || '').trim();
@@ -89,6 +113,10 @@ function readableMathFallback(tex) {
 }
 
 function renderMath(tex, displayMode) {
+  return cachedMath(`${displayMode ? 'display' : 'inline'}:${tex}`, () => renderMathUncached(tex, displayMode));
+}
+
+function renderMathUncached(tex, displayMode) {
   for (const candidate of normalizedMathCandidates(tex)) {
     try {
       return katex.renderToString(candidate, {
@@ -260,7 +288,7 @@ function codeLanguage(info) {
 function highlightedCode(source, language) {
   if (!language || !hljs.getLanguage(language)) return escapeHtml(source);
   try {
-    return hljs.highlight(source, { language, ignoreIllegals: true }).value;
+    return cachedCode(`${language}:${source}`, () => hljs.highlight(source, { language, ignoreIllegals: true }).value);
   } catch {
     return escapeHtml(source);
   }
@@ -444,12 +472,14 @@ function createRenderer() {
 
 const renderer = createRenderer();
 
-export function renderMarkdown(value) {
+export function renderMarkdown(value, { cache = true } = {}) {
   const normalized = String(value ?? '')
     .replace(/\r\n?/g, '\n')
     .replace(/^(?:[ \t]*\n)+/, '')
     .replace(/(?:\n[ \t]*)+$/, '');
-  return normalized.trim() ? renderer.render(normalizeTablePipes(normalized)) : '';
+  if (!normalized.trim()) return '';
+  const render = () => renderer.render(normalizeTablePipes(normalized));
+  return cache ? cachedMarkdown(normalized, render) : render();
 }
 
 const REASONING_ACTIVITY_MAX_LENGTH = 72;
@@ -525,4 +555,23 @@ export function renderReasoning(value, { streaming = false } = {}) {
   if (!reasoning) return '';
   const activity = reasoningActivityLabel(reasoning);
   return `<details class="scholia-reasoning"><summary><span class="scholia-reasoning__activity">${escapeHtml(activity)}</span><span class="scholia-reasoning__hint">${streaming ? 'live · provided by model' : 'provided by model'}</span></summary><div class="scholia-reasoning__body">${renderMarkdown(reasoning)}</div></details>`;
+}
+
+export function addActivity(message, event) {
+  if (!event?.title) return;
+  const entry = { title: String(event.title).slice(0, 180), detail: String(event.detail || '').slice(0, 2000), timestamp: event.timestamp || Date.now() };
+  if (message.activity?.at(-1)?.title === entry.title && message.activity?.at(-1)?.detail === entry.detail) return;
+  message.activity = [...(message.activity || []), entry].slice(-80);
+}
+
+export function renderActivity(events = []) {
+  if (!Array.isArray(events) || !events.length) return '';
+  return `<details class="chat-activity" data-detail="activity"><summary>Activity · ${events.length} <span>${escapeHtml(events.at(-1)?.title || '')}</span></summary><ol>${events.slice(-80).map((event) => `<li><strong>${escapeHtml(event.title)}</strong>${event.detail ? `<pre>${escapeHtml(event.detail)}</pre>` : ''}</li>`).join('')}</ol></details>`;
+}
+
+export function bindActivityDisclosure(root, message) {
+  const details = root.querySelector('.chat-activity');
+  if (!details) return;
+  details.open = message.activityExpanded === true;
+  details.addEventListener('toggle', () => { message.activityExpanded = details.open; });
 }

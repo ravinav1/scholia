@@ -1,8 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canvasCourseFromUrl, canvasIndexKey, canvasNextPage, buildCanvasCourseIndex, canvasCourseContext } from '../apps/chrome/src/canvas-course.js';
+import { canvasContentLinks } from '../apps/server/canvas-content.js';
+import { DOMParser } from 'linkedom';
+import { researchLinksFromDocument } from '../apps/chrome/src/research-links.js';
 
 const course = canvasCourseFromUrl('https://school.instructure.com/courses/42/pages/overview?secret=hidden');
+
+test('Canvas preserves external module, syllabus and page links for prompt-driven research, including cached pages', async () => {
+  const options = { course, userId: 7, courseInfo: { name: 'Physics', syllabus_body: '<a href="https://wiki.test/syllabus">Syllabus</a>' },
+    htmlToText: html => html.replace(/<[^>]+>/g, ''),
+    htmlToResearchLinks: (html, url) => researchLinksFromDocument(new DOMParser().parseFromString(html, 'text/html'), url),
+    list: async path => path.endsWith('/pages') ? [{ url: 'week1', title: 'Week 1', updated_at: 'v1' }]
+      : path.includes('/modules?') ? [{ id: 1, items_count: 1, items: [{ type: 'ExternalUrl', title: 'Course website', external_url: 'https://course.test/physics' }] }] : [],
+    get: async () => ({ body: '<a href="https://wiki.test/diffusion?chapter=2">Diffusion notes</a>' }), readFile: async () => '' };
+  const first = await buildCanvasCourseIndex(options);
+  const second = await buildCanvasCourseIndex({ ...options, previous: first });
+  assert.equal(second.reused, 1);
+  assert.equal(second.researchLinks[0].url, 'https://course.test/physics');
+  assert.equal(second.documents.find(doc => doc.key === 'syllabus').researchLinks[0].url, 'https://wiki.test/syllabus');
+  assert.equal(second.documents.find(doc => doc.key === 'page:week1').researchLinks[0].url, 'https://wiki.test/diffusion?chapter=2');
+});
 
 test('Canvas identity separates course, host and account; pagination stays on its API route', () => {
   assert.deepEqual(course, { courseId: '42', origin: 'https://school.instructure.com', url: 'https://school.instructure.com/courses/42' });
@@ -78,4 +96,31 @@ test('deadline-only assignment changes refresh indexed context', async () => {
   const next = await buildCanvasCourseIndex({ ...options, previous: first });
   assert.match(next.documents[0].text, /2026-10-08/);
   assert.notEqual(first.documents[0].version, next.documents[0].version);
+});
+
+test('extension downloads and indexes nested page attachments and rediscovers them from cached pages', async () => {
+  let downloads = 0;
+  const calls = [];
+  const options = {
+    course, userId: 7, courseInfo: {}, htmlToText: (html) => html.replace(/<[^>]+>/g, ''),
+    htmlToLinks: (html, url) => canvasContentLinks(html, course.origin, course.courseId, url),
+    list: async (path) => path.endsWith('/pages') ? [{ url: 'week35', title: 'Week 35', updated_at: 'v1' }] : [],
+    get: async (path) => {
+      calls.push(path);
+      if (path.endsWith('/pages/week35')) return { body: '<a href="/courses/42/pages/more">Nested page</a><iframe src="/courses/42/files/1/preview"></iframe>' };
+      if (path.endsWith('/pages/more')) return { title: 'More', updated_at: 'v1', body: '<a href="week35">Cycle</a><a href="/files/2?wrap=1">Notebook</a>' };
+      if (path.startsWith('/api/v1/courses/42/files/')) throw Object.assign(new Error('Files tab disabled'), { status: 403 });
+      return { id: path.split('/').at(-1), updated_at: 'v1', hidden_for_user: true, filename: path.endsWith('/2') ? 'lab.ipynb' : 'notes.pdf' };
+    },
+    readFile: async (item) => { downloads++; return `Brownian diffusion from ${item.filename}`; },
+  };
+  const first = await buildCanvasCourseIndex(options);
+  assert.equal(downloads, 2);
+  assert.deepEqual(first.documents.map((doc) => doc.key).sort(), ['file:1', 'file:2', 'page:more', 'page:week35']);
+  assert.match(canvasCourseContext(first), /Brownian diffusion from lab.ipynb/);
+  assert.equal(calls.filter((path) => path.endsWith('/pages/week35')).length, 1);
+  const second = await buildCanvasCourseIndex({ ...options, previous: first });
+  assert.equal(downloads, 2, 'unchanged attachments are indexed once');
+  assert.equal(second.documents.length, 4, 'cached pages retain their attachment links');
+  assert.equal(second.reused, 4);
 });

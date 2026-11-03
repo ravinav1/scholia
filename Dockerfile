@@ -10,6 +10,8 @@ RUN npm run build:web && npm prune --omit=dev
 
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 SCHOLIA_DATA_DIR=/data
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-nor \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/dist/web dist/web

@@ -1,6 +1,10 @@
 import { copyCodeBlock, copyText } from './clipboard.js';
+import { mountResponseLanguage, renderResponseLanguage } from './response-language.js';
+import { ENTIRE_PDF_QUESTION } from '../../../packages/core/src/entire-pdf.js';
 import { canvasCourseFromUrl } from './canvas-course.js';
 import { getCanvasCourseContext, loadCanvasCourseIndex } from './canvas-index.js';
+import { getBrowserResearchContext } from './browser-research.js';
+import { researchUrl } from './research-links.js';
 import { mountFileComposer, appendFileChips } from './file-composer.js';
 import {
   COMPACT_PACKED_CONTEXT_CHARS,
@@ -30,7 +34,7 @@ import {
 import { assertPdfSize, extractPdfContext, fetchPdfBlob } from './pdf-context.js';
 import { clipboardImageFile, normalizeImageFile } from './image-input.js';
 import { currentSelectionCapture } from './page-capture.js';
-import { renderMarkdown, renderReasoning } from './render.js';
+import { renderMarkdown, renderReasoning, renderActivity, addActivity, bindActivityDisclosure } from './render.js';
 import { buildResponseLayerContext } from './response-layers.js';
 import { prepareEditedResend, replaceConversationPrefix } from './chat-edit.js';
 import {
@@ -42,6 +46,8 @@ import {
 import { dedicatedChatId, dedicatedChatUrl } from './chat-page.js';
 import { sendRuntimeMessage as sendPanelMessage } from './runtime-message.js';
 import { parseModelChoice, populateModelSelect } from './model-select.js';
+import { populateReasoningSelect } from './reasoning-select.js';
+import { RECENT_MODELS_KEY } from '../../../packages/core/src/recent-models.js';
 import {
   pageSelectionStorageKey,
   PANEL_NAVIGATION_KEY,
@@ -78,6 +84,7 @@ const embeddedPdfPanel = embeddedPdf || new URLSearchParams(location.search).get
 const PDF_LEARNING_MODE_KEY = 'scholia.pdf-learning-mode.v1';
 const elements = Object.fromEntries([
   'bridge-bar', 'bridge-status', 'bridge-start', 'bridge-copy',
+  'reasoning-select', 'chat-reasoning-select', 'context-mode-summary', 'chat-options-summary', 'composer-settings-status',
   'home-brand', 'back-home', 'expand-chat', 'chat-search-toggle', 'new-chat', 'settings', 'model-settings', 'model-select',
   'fast-mode', 'fast-mode-state', 'web-search', 'web-search-state', 'learning-mode', 'learning-mode-state', 'model-hint',
   'context-mode', 'context-full', 'context-none', 'chat-context-mode', 'chat-context-full', 'chat-context-none', 'chat-model-select', 'chat-fast-mode', 'chat-web-search', 'chat-learning-mode',
@@ -85,6 +92,8 @@ const elements = Object.fromEntries([
   'chat-history-empty', 'home-view', 'chat-view', 'source-badge',
   'current-title', 'current-url', 'context-form', 'context-question', 'context-hint', 'site-scope-row', 'site-scope',
   'deep-page-row', 'deep-page',
+  'chat-follow-links', 'chat-research-yolo', 'research-review', 'research-review-question', 'research-review-sites',
+  'research-approve', 'research-skip', 'research-review-yolo', 'research-sources', 'research-source-list',
   'pdf-viewer-actions', 'open-pdf-viewer', 'pdf-viewer-state',
   'course-index', 'course-index-status', 'course-index-refresh', 'course-index-clear', 'chat-course-refresh', 'capture', 'paste-card', 'paste-selection', 'paste-question', 'paste-cancel',
   'paste-start', 'choose-image', 'site', 'site-toggle', 'explain', 'status', 'tab-changed',
@@ -105,6 +114,8 @@ const elements = Object.fromEntries([
 ].map((id) => [id, document.getElementById(id)]));
 
 let settings = null;
+let modelSaving = false;
+let modelSave = Promise.resolve();
 let webSearchEnabled = false;
 let learningModeEnabled = false;
 let contextEnabled = true;
@@ -116,6 +127,7 @@ let activeSite = null;
 let capture = null;
 let courseController = null;
 let courseRetrieving = false;
+let researchReview = null;
 let messages = [];
 let streaming = false;
 let requestId = '';
@@ -254,6 +266,7 @@ function renderLearningModeControls() {
   elements['chat-learning-mode'].setAttribute('aria-pressed', String(active));
   elements['learning-mode-state'].textContent = active ? 'On' : 'Off';
   elements['chat-learning-mode'].textContent = active ? '◇ Learning on' : '◇ Learn';
+  renderChatOptionsSummary();
 }
 
 function toggleLearningMode() {
@@ -285,20 +298,21 @@ function renderContextHint() {
   const modeLabel = compactContextEnabled ? 'Compact mode' : 'Full mode';
   const pdf = isPdfSource(activeSource);
   elements['context-hint'].textContent = elements['site-scope'].checked
-    ? `${modeLabel} follows up to 48 same-site pages and ${compactContextEnabled ? 'sends question-relevant excerpts' : 'uses the larger full-context budget'}.`
+    ? `${modeLabel} searches Canvas and follows relevant links across approved sites. You review new sites; Stop cancels research.`
     : elements['deep-page'].checked
       ? `${modeLabel} loads the complete live page and ${compactContextEnabled ? 'ranks relevant text' : 'uses the larger full-context budget'} plus a full-page visual when supported.`
     : pdf
       ? compactContextEnabled
         ? 'The PDF is read locally, ranked for this question, and compressed to about 6,000 source characters.'
-        : 'Full mode sends the PDF source with the previous larger context budget (up to about 24,000 characters).'
+        : 'Full mode includes the entire extracted text of articles and short PDFs, up to about 120,000 characters. Larger PDFs use relevant excerpts.'
       : compactContextEnabled
         ? 'Compact mode reads this page and sends about 6,000 question-relevant source characters.'
-        : 'Full mode sends the current page with the previous larger context budget (up to about 24,000 characters).';
+        : 'Full mode includes entire articles and pages, up to about 120,000 characters. Larger pages use relevant excerpts.';
 }
 
 async function refreshSettings() {
   settings = await message({ type: 'SCHOLIA_GET_PUBLIC_SETTINGS' });
+  renderResponseLanguage(settings, root);
   if (!contextPreferenceInitialized) {
     compactContextEnabled = defaultContextMode(settings) === CONTEXT_MODE_COMPACT;
     contextEnabled = true;
@@ -310,6 +324,8 @@ async function refreshSettings() {
 
 function renderContextControls() {
   const mode = currentContextMode();
+  const label = mode === CONTEXT_MODE_NONE ? 'No page context' : mode === CONTEXT_MODE_FULL ? 'Full context' : 'Compact context';
+  elements['context-mode-summary'].textContent = label;
   const enabled = mode !== CONTEXT_MODE_NONE;
   elements['context-mode'].checked = mode === CONTEXT_MODE_COMPACT;
   elements['context-full'].checked = mode === CONTEXT_MODE_FULL;
@@ -325,6 +341,60 @@ function renderContextControls() {
     elements['deep-page'].checked = false;
   }
   renderContextHint();
+  renderResearchControls();
+}
+
+function renderResearchControls() {
+  const available = contextEnabled && supportsSiteContext(capture);
+  const following = Boolean(capture?.followLinks);
+  elements['chat-follow-links'].disabled = !available || streaming || courseRetrieving;
+  elements['chat-follow-links'].setAttribute('aria-pressed', String(available && following));
+  elements['chat-research-yolo'].hidden = !following;
+  elements['chat-research-yolo'].disabled = !available || streaming || courseRetrieving;
+  elements['chat-research-yolo'].setAttribute('aria-pressed', String(Boolean(capture?.researchYolo)));
+  renderChatOptionsSummary();
+}
+
+function renderChatOptionsSummary() {
+  const mode = currentContextMode();
+  const summary = [
+    mode === CONTEXT_MODE_NONE ? 'No page context' : mode === CONTEXT_MODE_FULL ? 'Full context' : 'Compact context',
+    settings?.fastMode && providerSupportsFastMode(settings?.provider) ? 'Fast' : '',
+    webSearchEnabled ? 'Web' : '',
+    contextEnabled && capture?.followLinks ? 'Follow links' : '',
+    learningModeAvailable() && learningModeEnabled ? 'Guided' : '',
+    settings?.language === 'en' ? 'English' : settings?.language === 'no' ? 'Norsk' : ''
+  ].filter(Boolean).join(' · ');
+  elements['chat-options-summary'].textContent = summary;
+  elements['chat-options-summary'].title = summary;
+}
+
+function reviewResearchSites(sites, question, controller) {
+  controller.signal.throwIfAborted();
+  elements['research-review-question'].textContent = `For: ${question}`;
+  elements['research-review-sites'].replaceChildren();
+  elements['research-review-yolo'].checked = false;
+  for (const site of sites) {
+    const label = document.createElement('label'); label.className = 'scope-toggle';
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = true; checkbox.value = site.origin;
+    const text = document.createElement('span');
+    const title = document.createElement('strong'); title.textContent = site.origin;
+    const detail = document.createElement('small'); detail.textContent = site.title || site.url;
+    text.append(title, detail); label.append(checkbox, text);
+    elements['research-review-sites'].append(label);
+  }
+  elements['research-review'].hidden = false;
+  showLoading('Waiting for your site choices…', 'Read selected sites, skip them, or press Stop.');
+  return new Promise((resolve, reject) => {
+    const finish = (value, error) => {
+      controller.signal.removeEventListener('abort', abort);
+      if (researchReview?.finish === finish) { researchReview = null; elements['research-review'].hidden = true; }
+      error ? reject(error) : resolve(value);
+    };
+    const abort = () => finish(null, controller.signal.reason || new DOMException('Research stopped.', 'AbortError'));
+    researchReview = { finish, controller };
+    controller.signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 function currentContextMode() {
@@ -333,7 +403,7 @@ function currentContextMode() {
 }
 
 async function setContextMode(mode) {
-  if (streaming) return;
+  if (streaming || courseRetrieving) return;
   const nextEnabled = mode !== CONTEXT_MODE_NONE;
   const nextCompact = mode === CONTEXT_MODE_NONE
     ? compactContextEnabled
@@ -377,7 +447,8 @@ async function setContextMode(mode) {
         }),
         contextEnabled: true,
         compactContextEnabled: true,
-        contextState: 'Compact context · locally repacked'
+        contextState: 'Compact context · locally repacked',
+        entirePDF: false
       };
       renderCaptureSource(capture);
       renderContextControls();
@@ -450,13 +521,19 @@ function clearPageSelection(source = capture || activeSource) {
 }
 
 function renderModelControls() {
+  elements['model-select'].disabled = modelSaving;
+  elements['chat-model-select'].disabled = modelSaving;
   populateModelSelect(elements['model-select'], settings);
   populateModelSelect(elements['chat-model-select'], settings);
+  populateReasoningSelect(elements['reasoning-select'], settings, { disabled: modelSaving });
+  populateReasoningSelect(elements['chat-reasoning-select'], settings, { disabled: modelSaving });
   const provider = providerById(settings?.provider);
   const configured = settings?.configuredProviders?.includes(provider.id);
   const supportsFastMode = providerSupportsFastMode(provider);
-  elements['fast-mode'].disabled = !supportsFastMode;
-  elements['chat-fast-mode'].disabled = !supportsFastMode;
+  elements['fast-mode'].hidden = !supportsFastMode;
+  elements['chat-fast-mode'].hidden = !supportsFastMode;
+  elements['fast-mode'].disabled = modelSaving || !supportsFastMode;
+  elements['chat-fast-mode'].disabled = modelSaving || !supportsFastMode;
   elements['fast-mode'].title = supportsFastMode
     ? `Toggle Fast mode for ${provider.name} (uses more credits)`
     : 'Fast mode is available with Codex CLI and Claude Code';
@@ -466,9 +543,9 @@ function renderModelControls() {
   elements['fast-mode-state'].textContent = supportsFastMode ? settings?.fastMode ? 'On' : 'Off' : 'Unavailable';
   elements['model-hint'].textContent = configured || !provider.keyRequired
     ? supportsFastMode
-      ? 'Model and Fast changes apply to new turns. Fast uses more provider credits.'
-      : 'Model changes apply here. Fast mode is available with Codex CLI and Claude Code.'
-    : `${provider.name} still needs an API key in Advanced settings.`;
+      ? 'Changes apply to your next message. Fast uses more credits.'
+      : 'Changes apply to your next message.'
+    : `${provider.name} still needs an API key in Settings.`;
   renderWebSearchControls();
   refreshBridgeStatus();
 }
@@ -476,6 +553,8 @@ function renderModelControls() {
 function renderWebSearchControls() {
   const provider = providerById(settings?.provider);
   const available = providerSupportsWebSearch(provider);
+  elements['web-search'].hidden = !available;
+  elements['chat-web-search'].hidden = !available;
   if (!available) webSearchEnabled = false;
   elements['web-search'].disabled = !available;
   elements['chat-web-search'].disabled = !available;
@@ -498,6 +577,7 @@ function renderWebSearchControls() {
   elements['response-window-web-search'].title = responseAvailable
     ? `${response.webSearchEnabled ? 'Disable' : 'Enable'} web search for the next explanation question`
     : title;
+  renderChatOptionsSummary();
 }
 
 function toggleWebSearch() {
@@ -616,6 +696,7 @@ function setPreparationMode(preparing) {
 }
 
 function cancelRequest() {
+  courseController?.abort();
   try { port?.postMessage({ type: 'cancel', requestId }); } catch {}
   const assistant = messages.at(-1);
   if (assistant?.role === 'assistant' && assistant.streaming) assistant.streaming = false;
@@ -631,6 +712,7 @@ function resetConversation() {
   courseController?.abort();
   courseController = null;
   courseRetrieving = false;
+  elements['research-review'].hidden = true;
   if (streaming) cancelRequest();
   closeResponseWindow({ restoreFocus: false, all: true });
   operationController?.abort();
@@ -675,6 +757,8 @@ function startNewChat() {
 }
 
 function returnHome() {
+  cancelRequest();
+  operationController?.abort();
   closeResponseWindow({ restoreFocus: false, all: true });
   persistCurrentChat().catch(() => {});
   showHome();
@@ -756,6 +840,7 @@ function persistCurrentChat() {
       role: entry.role,
       content: entry.content,
       ...(entry.reasoning ? { reasoning: entry.reasoning } : {}),
+      ...(entry.activity?.length ? { activity: entry.activity } : {}),
       ...(entry.meta ? { meta: entry.meta } : {}),
       ...(entry.error ? { error: true } : {}),
       ...(entry.attachment ? { attachment: { ...entry.attachment } } : {}),
@@ -772,7 +857,7 @@ function persistCurrentChat() {
     return saved;
   });
   historyWrite = write;
-  write.then(() => refreshChatHistory()).catch(() => {});
+  write.then(() => refreshChatHistory()).catch((error) => showStatus(`Chat could not be saved: ${error.message}. Keep this tab open to retain its attachments.`, true));
   return write;
 }
 
@@ -834,7 +919,7 @@ async function restoreSavedChat(chatId) {
 }
 
 async function syncCurrentChatFromHistory() {
-  if (!currentChatId || streaming || editingMessageIndex >= 0) return;
+  if (!currentChatId || streaming || courseRetrieving || editingMessageIndex >= 0) return;
   const chat = await getChat(currentChatId);
   if (!chat || chat.updatedAt <= currentChatUpdatedAt) return;
   const draft = elements.composer.value;
@@ -859,6 +944,16 @@ async function clearSavedChats() {
 }
 
 function renderCaptureSource(nextCapture) {
+  renderResearchControls();
+  const sources = nextCapture.researchSources || [];
+  elements['research-sources'].hidden = !sources.length;
+  elements['research-source-list'].replaceChildren();
+  for (const source of sources) {
+    const url = researchUrl(source.url); if (!url) continue;
+    const item = document.createElement('li'), link = document.createElement('a');
+    link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = source.title || url;
+    item.append(link); elements['research-source-list'].append(item);
+  }
   elements['chat-course-refresh'].hidden = !nextCapture?.canvasCourse;
   const pdf = nextCapture.sourceKind === 'pdf';
   const site = nextCapture.sourceKind === 'site';
@@ -911,7 +1006,7 @@ function canExplainCaptureDirectly() {
 }
 
 function renderComposerSubmitAction() {
-  const explainDirectly = !streaming && canExplainCaptureDirectly();
+  const explainDirectly = !streaming && !courseRetrieving && canExplainCaptureDirectly();
   elements['explain-capture'].hidden = !explainDirectly;
   elements.send.hidden = explainDirectly;
 }
@@ -1097,9 +1192,10 @@ function renderResponseWindowMessages({ restoreScroll = false, forceBottom = fal
     bubble.className = 'bubble';
     if (entry.role === 'user') appendFileChips(bubble, entry.files);
     if (entry.role === 'assistant' && !entry.error) {
-      bubble.innerHTML = renderReasoning(entry.reasoning, { streaming: entry.streaming })
+      bubble.innerHTML = renderActivity(entry.activity) + renderReasoning(entry.reasoning, { streaming: entry.streaming })
         + renderMarkdown(entry.content)
         + (entry.streaming ? '<span class="caret" aria-label="Writing"></span>' : '');
+      bindActivityDisclosure(bubble, entry);
     } else if (entry.role === 'user' && state?.editingMessageIndex === index) {
       appendTurnImage(bubble, entry);
       row.classList.add('is-editing');
@@ -1324,6 +1420,9 @@ function askResponseWindow(question, options = responseFiles.options) {
     if (event.type === 'token') {
       assistant.content += event.token || '';
       scheduleResponseWindowRender(state);
+    } else if (event.type === 'activity') {
+      addActivity(assistant, event.activity);
+      scheduleResponseWindowRender(state);
     } else if (event.type === 'reasoning') {
       assistant.reasoning = `${assistant.reasoning || ''}${event.token || ''}`;
       scheduleResponseWindowRender(state);
@@ -1427,6 +1526,7 @@ function openResponseWindow(attachment, question) {
 function baseCapture(source, { selection = '', imageDataUrl = '', context = '', contextNotice = '', contextState = '' } = {}) {
   return {
     ...(source.canvasCourse ? { canvasCourse: source.canvasCourse } : {}),
+    ...(source.pdfIndexStage ? { pdfIndexStage: source.pdfIndexStage } : {}),
     kind: source.kind === 'mail'
       ? 'mail'
       : imageDataUrl && !selection ? 'image' : /\$[^$]+\$/.test(selection) ? 'latex' : 'text',
@@ -1434,6 +1534,9 @@ function baseCapture(source, { selection = '', imageDataUrl = '', context = '', 
     context,
     contextEnabled,
     compactContextEnabled,
+    followLinks: source.followLinks === true,
+    researchYolo: source.researchYolo === true,
+    researchUrl: researchUrl(source.researchUrl || source.tabUrl || source.url),
     pageTitle: source.kind === 'mail' && source.mailSubject ? source.mailSubject : source.pageTitle || '',
     pageLanguage: source.pageLanguage || navigator.language,
     url: source.url || '',
@@ -1473,7 +1576,7 @@ async function contextDescriptor(
     correlateTabs: false,
     maxChars: contextCharacterLimit(currentContextMode())
   });
-  if (contextEnabled && detected.canvasCourse) {
+  if (contextEnabled && detected.canvasCourse && !source?.followLinks) {
     const course = await getCanvasCourseContext(detected.url || source.url, {
       question, selection, maxChars: contextCharacterLimit(currentContextMode()),
       signal: operationController?.signal,
@@ -1484,11 +1587,14 @@ async function contextDescriptor(
   if (isPdfSource(source) && (source.pdfUrl || source.fileHandleId) && detected.sourceKind !== 'pdf') {
     return { ...detected, ...source, pageLanguage: detected.pageLanguage || source.pageLanguage, sourceKind: 'pdf' };
   }
-  return detected;
+  return { ...detected, followLinks: source?.followLinks === true, researchYolo: source?.researchYolo === true,
+    researchUrl: researchUrl(source?.researchUrl || source?.tabUrl || detected.url) };
 }
 
 function updatePdfProgress(progress) {
-  if (progress.phase === 'download' || progress.phase === 'load') {
+  if (progress.phase === 'ocr') {
+    showLoading('Reading scanned text locally…', `OCR page ${progress.page} of ${progress.total}`);
+  } else if (progress.phase === 'download' || progress.phase === 'load') {
     const loaded = `${(progress.loaded / 1024 / 1024).toFixed(1)} MB`;
     const total = progress.total ? ` of ${(progress.total / 1024 / 1024).toFixed(1)} MB` : '';
     showLoading(progress.phase === 'download' ? 'Downloading PDF locally…' : 'Reading PDF data locally…', `${loaded}${total}`);
@@ -1531,6 +1637,7 @@ async function pdfCapture(source, { question, selection, imageDataUrl, pdfInput 
       context: source.context,
       outline: '',
       title: source.pageTitle,
+      ocrNotice: source.ocrNotice,
       pageCount: Math.max(0, Number(source.pageCount) || 0),
       extractedCharacters: Math.max(0, Number(source.extractedCharacters) || Number(source.rawContextCharacters) || 0),
       truncated: Number(source.extractedPageCount) > 0 && Number(source.extractedPageCount) < Number(source.pageCount)
@@ -1555,7 +1662,7 @@ async function pdfCapture(source, { question, selection, imageDataUrl, pdfInput 
     })
     : '';
   const state = extracted.extractedCharacters
-    ? `${extracted.pageCount} pages · ${countLabel(extracted.extractedCharacters)} chars${extracted.truncated ? ' · capped' : ''}`
+    ? `${extracted.pageCount} pages · ${countLabel(extracted.extractedCharacters)} chars${source.pdfIndexStage === 'basic' ? ' · indexing' : extracted.truncated ? ' · capped' : ''}`
     : 'Scanned PDF · visual context';
   return baseCapture({
     ...source,
@@ -1566,7 +1673,7 @@ async function pdfCapture(source, { question, selection, imageDataUrl, pdfInput 
     selection,
     imageDataUrl: visual,
     context: packed,
-    contextNotice: notice || (source.fileHandleId ? 'Local PDF file' : shortSourceUrl(source.url)),
+    contextNotice: [notice || (source.fileHandleId ? 'Local PDF file' : shortSourceUrl(source.url)), extracted.ocrNotice].filter(Boolean).join(' · '),
     contextState: state
   });
 }
@@ -1728,6 +1835,13 @@ async function startContextChat({
     renderCaptureSource(capture);
     if (waitForQuestion) showPreparedQuestionDraft(question);
     else ask(question || (capture.imageDataUrl ? DEFAULT_IMAGE_EXPLANATION : 'Explain this.'));
+    return;
+  }
+  if (source.followLinks && supportsSiteContext(source)) {
+    capture = baseCapture(source, { selection, imageDataUrl, contextNotice: 'Review sites to begin research.' });
+    renderCaptureSource(capture);
+    if (waitForQuestion) showPreparedQuestionDraft(question);
+    else ask(question || 'Explain this.');
     return;
   }
   setPreparationMode(true);
@@ -2002,51 +2116,72 @@ async function refreshQuickChatChatGptContext() {
   }
 }
 
-async function saveInlineModel({ select = elements['model-select'], fastMode = settings?.fastMode } = {}) {
+function saveInlineModel({ select = elements['model-select'], fastMode = settings?.fastMode, reasoningEffort } = {}) {
+  if (modelSaving) return modelSave;
   const chosen = parseModelChoice(select.value);
-  elements['model-select'].disabled = true;
-  elements['chat-model-select'].disabled = true;
-  elements['fast-mode'].disabled = true;
-  elements['chat-fast-mode'].disabled = true;
-  elements['web-search'].disabled = true;
-  elements['chat-web-search'].disabled = true;
-  try {
-    settings = await message({ type: 'SCHOLIA_SAVE_MODEL', ...chosen, fastMode });
-    renderModelControls();
-    showStatus(`Using ${providerById(chosen.provider).name} · ${chosen.model}${settings.fastMode && providerSupportsFastMode(chosen.provider) ? ' · Fast' : ''}`);
-  } catch (error) {
-    renderModelControls();
-    showStatus(error.message, true);
-  } finally {
-    elements['model-select'].disabled = false;
-    elements['chat-model-select'].disabled = false;
-    const supportsFastMode = providerSupportsFastMode(settings?.provider);
-    elements['fast-mode'].disabled = !supportsFastMode;
-    elements['chat-fast-mode'].disabled = !supportsFastMode;
-    const supportsWebSearch = providerSupportsWebSearch(settings?.provider);
-    elements['web-search'].disabled = !supportsWebSearch;
-    elements['chat-web-search'].disabled = !supportsWebSearch;
+  modelSaving = true;
+  elements['composer-settings-status'].hidden = true;
+  for (const id of ['model-select', 'chat-model-select', 'reasoning-select', 'chat-reasoning-select', 'fast-mode', 'chat-fast-mode']) {
+    elements[id].disabled = true;
   }
+  modelSave = (async () => {
+    try {
+      settings = await message({ type: 'SCHOLIA_SAVE_MODEL', ...chosen, fastMode, reasoningEffort });
+      showStatus('Preferences saved for your next message.');
+    } catch (error) {
+      showStatus(error.message, true);
+      elements['composer-settings-status'].textContent = error.message;
+      elements['composer-settings-status'].hidden = false;
+    } finally {
+      modelSaving = false;
+      renderModelControls();
+    }
+  })();
+  return modelSave;
 }
 
 async function ask(
   question,
   { attachment = composerSelection, imageDataUrl = composerImage?.imageDataUrl || fileComposer.options.imageDataUrl, files = fileComposer.options.files } = {}
 ) {
+  await modelSave;
   const cleanQuestion = String(question || '').trim();
   if (!cleanQuestion || streaming || courseRetrieving || !capture) return;
-  if (capture.canvasCourse && contextEnabled) {
+  if (contextEnabled && !capture.entirePDF && (capture.followLinks || capture.canvasCourse || (embeddedPdfPanel && capture.pdfIndexStage === 'basic'))) {
     const source = capture;
     const controller = new AbortController();
     courseController = controller;
     courseRetrieving = true;
     renderMessages();
     try {
-      const context = await getCanvasCourseContext(source.url, {
-        question: cleanQuestion, selection: attachment?.text || source.selection,
-        maxChars: contextCharacterLimit(currentContextMode()), signal: controller.signal,
-        onProgress: (detail) => showLoading('Reading Canvas course…', detail)
-      });
+      let context;
+      if (source.followLinks) {
+        context = await getBrowserResearchContext(source, {
+          question: cleanQuestion, selection: attachment?.text || source.selection,
+          maxChars: contextCharacterLimit(currentContextMode()), settings, signal: controller.signal,
+          // Read the flag for each newly discovered site so enabling YOLO in a
+          // pending review takes effect in this run, but never overrides Stop.
+          review: (sites) => source.researchYolo ? Promise.resolve(sites.map((site) => site.origin))
+            : reviewResearchSites(sites, cleanQuestion, controller),
+          readLivePage: () => message({ type: 'SCHOLIA_GET_RESEARCH_PAGE', tabId: source.tabId, url: source.researchUrl || source.url }),
+          onProgress: (detail) => showLoading('Following relevant links…', detail)
+        });
+        if (source.researchYolo) context.contextNotice = context.contextNotice.replace('approved sites', 'YOLO');
+      } else if (source.canvasCourse) {
+        context = await getCanvasCourseContext(source.url, {
+          question: cleanQuestion, selection: attachment?.text || source.selection,
+          maxChars: contextCharacterLimit(currentContextMode()), signal: controller.signal,
+          onProgress: (detail) => showLoading('Reading Canvas course…', detail)
+        });
+      } else {
+        // A conversation started with the quick index adopts newly recognized
+        // pages on its next turn without resetting messages or context mode.
+        const descriptor = await contextDescriptor(source, cleanQuestion, source.selection, false, false, false);
+        if (capture !== source || controller.signal.aborted) return;
+        context = descriptor.pdfContextReady ? await pdfCapture(descriptor, {
+          question: cleanQuestion, selection: source.selection, imageDataUrl: source.imageDataUrl
+        }) : source;
+      }
       if (capture !== source || controller.signal.aborted) return;
       Object.assign(capture, context);
       renderCaptureSource(capture);
@@ -2054,7 +2189,15 @@ async function ask(
       if (capture === source && !controller.signal.aborted) {
         elements.composer.value = cleanQuestion;
         resizeComposer();
+        capture.contextNotice = error.message;
+        renderCaptureSource(capture);
         showStatus(error.message, true);
+      } else if (capture === source) {
+        elements.composer.value = cleanQuestion;
+        resizeComposer();
+        capture.contextNotice = 'Research stopped. Your question is ready to edit or resend.';
+        renderCaptureSource(capture);
+        showStatus('Research stopped. Your question is ready to edit or resend.');
       }
       return;
     } finally {
@@ -2094,6 +2237,9 @@ async function ask(
     if (event.requestId !== currentRequestId) return;
     if (event.type === 'token') {
       assistant.content += event.token || '';
+      scheduleRender();
+    } else if (event.type === 'activity') {
+      addActivity(assistant, event.activity);
       scheduleRender();
     } else if (event.type === 'reasoning') {
       assistant.reasoning = `${assistant.reasoning || ''}${event.token || ''}`;
@@ -2149,6 +2295,7 @@ async function ask(
       kind: capture.kind,
       selection: capture.selection,
       context: capture.context,
+      entirePDF: capture.entirePDF === true,
       includeContext: contextEnabled,
       compactContext: compactContextEnabled,
       parentContext: capture.parentContext || '',
@@ -2347,9 +2494,10 @@ function renderMessages() {
     bubble.className = 'bubble';
     if (entry.role === 'user') appendFileChips(bubble, entry.files);
     if (entry.role === 'assistant' && !entry.error) {
-      bubble.innerHTML = renderReasoning(entry.reasoning, { streaming: entry.streaming })
+      bubble.innerHTML = renderActivity(entry.activity) + renderReasoning(entry.reasoning, { streaming: entry.streaming })
         + renderMarkdown(entry.content)
         + (entry.streaming ? '<span class="caret" aria-label="Writing"></span>' : '');
+      bindActivityDisclosure(bubble, entry);
     } else if (entry.role === 'user' && editingMessageIndex === index) {
       row.classList.add('is-editing');
       appendTurnImage(bubble, entry);
@@ -2416,11 +2564,11 @@ function renderMessages() {
     elements.messages.scrollTop = Math.min(previousTop, elements.messages.scrollHeight);
   }
   lastRenderedMessageCount = messages.length;
-  elements.send.textContent = streaming ? '■' : '↑';
-  elements.send.classList.toggle('is-stop', streaming);
-  elements.send.setAttribute('aria-label', streaming ? 'Stop response' : 'Send');
+  elements.send.textContent = streaming || courseRetrieving ? '■' : '↑';
+  elements.send.classList.toggle('is-stop', streaming || courseRetrieving);
+  elements.send.setAttribute('aria-label', courseRetrieving ? 'Stop research' : streaming ? 'Stop response' : 'Send');
   renderComposerSubmitAction();
-  elements.send.disabled = courseRetrieving || fileComposer.busy;
+  elements.send.disabled = fileComposer.busy && !courseRetrieving;
   elements['chat-course-refresh'].hidden = !capture?.canvasCourse;
   elements['chat-course-refresh'].disabled = streaming || courseRetrieving;
   elements['expand-chat'].disabled = streaming
@@ -2428,10 +2576,11 @@ function renderMessages() {
     || !messages.some((entry) => entry.role === 'user');
   elements['attach-files'].disabled = streaming;
   elements['attach-region'].disabled = streaming;
-  elements['chat-context-mode'].disabled = streaming;
-  elements['chat-context-full'].disabled = streaming;
-  elements['chat-context-none'].disabled = streaming;
+  elements['chat-context-mode'].disabled = streaming || courseRetrieving;
+  elements['chat-context-full'].disabled = streaming || courseRetrieving;
+  elements['chat-context-none'].disabled = streaming || courseRetrieving;
   elements['chat-learning-mode'].disabled = streaming;
+  renderResearchControls();
 }
 
 function beginQueryEdit(index) {
@@ -2839,13 +2988,31 @@ elements['context-form'].addEventListener('submit', (event) => {
   elements['context-question'].value = '';
   const siteWide = elements['site-scope'].checked;
   const deepPage = elements['deep-page'].checked && !siteWide;
-  startContextChat({ source: activeSource, question, siteWide, deepPage })
+  startContextChat({ source: { ...activeSource, followLinks: siteWide }, question, deepPage })
     .catch((error) => preparationError(error, activeSource));
 });
 elements['site-scope'].addEventListener('change', () => {
   if (elements['site-scope'].checked) elements['deep-page'].checked = false;
   renderContextHint();
 });
+elements['chat-follow-links'].addEventListener('click', () => {
+  if (!capture || streaming || courseRetrieving || !contextEnabled) return;
+  capture.followLinks = !capture.followLinks;
+  renderResearchControls();
+  persistCurrentChat().catch(() => {});
+});
+elements['chat-research-yolo'].addEventListener('click', () => {
+  if (!capture || streaming || courseRetrieving) return;
+  capture.researchYolo = !capture.researchYolo;
+  renderResearchControls();
+  persistCurrentChat().catch(() => {});
+});
+elements['research-approve'].addEventListener('click', () => {
+  if (!researchReview) return;
+  if (capture && elements['research-review-yolo'].checked) capture.researchYolo = true;
+  researchReview.finish([...elements['research-review-sites'].querySelectorAll('input:checked')].map((input) => input.value));
+});
+elements['research-skip'].addEventListener('click', () => researchReview?.finish([]));
 elements['deep-page'].addEventListener('change', () => {
   if (elements['deep-page'].checked) elements['site-scope'].checked = false;
   renderContextHint();
@@ -2919,7 +3086,7 @@ fileComposer = mountFileComposer({
     }
     if (fileComposer.options.imageDataUrl && composerImage) clearComposerImage();
     elements.composer.placeholder = composerPlaceholder();
-    elements.send.disabled = courseRetrieving || fileComposer.busy;
+    elements.send.disabled = fileComposer.busy && !courseRetrieving;
     renderComposerSubmitAction();
   }
 });
@@ -2973,12 +3140,29 @@ elements['bridge-copy'].addEventListener('click', () => {
 });
 window.addEventListener('focus', refreshBridgeStatus);
 window.addEventListener('pagehide', () => {
+  cancelRequest();
+  operationController?.abort();
+  closeResponseWindow({ restoreFocus: false, all: true });
   clearTimeout(bridgeWatchTimer);
   bridgeStatusRequest += 1;
 });
+document.addEventListener('visibilitychange', () => {
+  if (!dedicatedChatPage && ownerDocument.hidden) { cancelRequest(); operationController?.abort(); }
+});
 elements.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
 elements['model-settings'].addEventListener('click', () => chrome.runtime.openOptionsPage());
+for (const select of [elements['model-select'], elements['chat-model-select']]) {
+  select.addEventListener('scholia-model-picker-open', () => {
+    for (const provider of ['codex', 'opencode']) {
+      void message({ type: 'SCHOLIA_BRIDGE_STATUS', provider, timeoutMs: 1000 }).catch(() => {});
+    }
+  });
+}
 elements['model-select'].addEventListener('change', () => saveInlineModel());
+elements['reasoning-select'].addEventListener('change', () => saveInlineModel({ reasoningEffort: elements['reasoning-select'].value }));
+elements['chat-reasoning-select'].addEventListener('change', () => saveInlineModel({
+  select: elements['chat-model-select'], reasoningEffort: elements['chat-reasoning-select'].value
+}));
 elements['context-mode'].addEventListener('change', () => {
   if (elements['context-mode'].checked) setContextMode(CONTEXT_MODE_COMPACT);
 });
@@ -3170,6 +3354,8 @@ document.addEventListener('keydown', (event) => {
     closeResponseWindow();
   } else if (event.key === 'Escape' && embeddedPdfPanel && elements['chat-search'].hidden) {
     event.preventDefault();
+    cancelRequest();
+    operationController?.abort();
     close();
   } else if (event.key === 'Escape' && !elements['chat-search'].hidden) {
     event.preventDefault();
@@ -3184,6 +3370,8 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
     return false;
   }
   if (request?.type !== 'SCHOLIA_CLOSE_QUICK_CHAT_PANEL') return false;
+  cancelRequest();
+  operationController?.abort();
   sendResponse({ closed: true });
   queueMicrotask(() => window.close());
   return false;
@@ -3210,7 +3398,7 @@ elements.composer.addEventListener('keydown', (event) => {
 });
 elements['composer-form'].addEventListener('submit', (event) => {
   event.preventDefault();
-  if (streaming) { cancelRequest(); return; }
+  if (streaming || courseRetrieving) { cancelRequest(); return; }
   if (fileComposer.busy || courseRetrieving) return;
   const question = elements.composer.value.trim()
     || (fileComposer.files.length ? 'Explain the attached files.' : canExplainCaptureDirectly() ? DEFAULT_IMAGE_EXPLANATION : '');
@@ -3220,8 +3408,10 @@ elements['composer-form'].addEventListener('submit', (event) => {
   ask(question);
 });
 
+mountResponseLanguage({ root, message, onSettings: (value) => { settings = value; renderChatOptionsSummary(); }, onError: (error) => showStatus(error.message, true) });
+
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes[SETTINGS_KEY]) refreshSettings().catch(() => {});
+  if (area === 'local' && (changes[SETTINGS_KEY] || changes[RECENT_MODELS_KEY])) refreshSettings().catch(() => {});
   if (area === 'local' && changes[CHAT_HISTORY_KEY]) {
     refreshChatHistory().catch(() => {});
     syncCurrentChatFromHistory().catch(() => {});
@@ -3284,6 +3474,26 @@ async function boot() {
 const ready = boot().catch((error) => showStatus(error.message, true));
 return {
   ready,
+  async sendEntirePDF(source) {
+    await ready;
+    if (streaming || courseRetrieving) throw new Error('Wait for the current answer to finish before sending the entire PDF.');
+    const question = elements.composer.value.trim() || elements['context-question'].value.trim() || ENTIRE_PDF_QUESTION;
+    if (capture && !sameSource(capture, source)) resetConversation();
+    contextEnabled = true;
+    compactContextEnabled = false;
+    capture = { ...baseCapture(source, { context: source.context, contextState: source.summary,
+      contextNotice: 'Every page’s extracted text is included. Images and diagrams are included only when attached.' }),
+      entirePDF: true, pdfIndexStage: 'complete' };
+    renderCaptureSource(capture);
+    renderContextControls();
+    setPreparationMode(false);
+    showChat();
+    elements.composer.value = '';
+    elements['context-question'].value = '';
+    resizeComposer();
+    await ask(question);
+  },
+  stop() { cancelRequest(); operationController?.abort(); closeResponseWindow({ restoreFocus: false, all: true }); },
   async openChat(chatId) { await ready; await historyWrite.catch(() => {}); await restoreSavedChat(chatId); },
   async resetSource() { await ready; await historyWrite.catch(() => {}); resetConversation(); await refreshActiveSource(); showHome(); }
 };

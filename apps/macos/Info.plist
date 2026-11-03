@@ -56,6 +56,16 @@
     </array>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Scholia captures only the screen region you explicitly select so your chosen provider can explain it.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Scholia shows your notebook camera and sends only selected, readable captures to your chosen tutor when analysis is enabled or you request help.</string>
+    <key>NSCameraUseContinuityCameraDeviceType</key>
+    <true/>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Scholia finds and reads files you ask about in chat. Creating or editing text files requires Allow write access in Scholia settings.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Scholia finds and reads files you ask about in chat. Creating or editing text files requires Allow write access in Scholia settings.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Scholia finds and reads files you ask about in chat. Creating or editing text files requires Allow write access in Scholia settings.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>

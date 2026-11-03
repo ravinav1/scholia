@@ -47,7 +47,8 @@ export class AccountStore {
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, salt TEXT NOT NULL, password TEXT NOT NULL, library TEXT NOT NULL, settings TEXT NOT NULL DEFAULT '{}');
       CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, csrf TEXT NOT NULL, expires INTEGER NOT NULL, navigation TEXT NOT NULL DEFAULT '{}');
       CREATE INDEX IF NOT EXISTS sessions_user_expiry ON sessions(user_id, expires);
-      CREATE TABLE IF NOT EXISTS credentials (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(user_id,name));`);
+      CREATE TABLE IF NOT EXISTS credentials (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(user_id,name));
+      CREATE TABLE IF NOT EXISTS learning (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, revision INTEGER NOT NULL, data TEXT NOT NULL);`);
   }
   async createUser(email, password) {
     email = String(email).trim().toLowerCase();
@@ -113,6 +114,16 @@ export class AccountStore {
     this.db
       .prepare('UPDATE users SET library=?,settings=? WHERE id=?')
       .run(JSON.stringify(account.library), JSON.stringify(account.settings), account.id);
+  }
+  learning(id, state, expectedRevision = 0) {
+    if (state === undefined) {
+      const row = this.db.prepare('SELECT data FROM learning WHERE user_id=?').get(id);
+      return row ? JSON.parse(row.data) : null;
+    }
+    const result = this.db.prepare(`INSERT INTO learning(user_id,revision,data) VALUES(?,?,?)
+      ON CONFLICT(user_id) DO UPDATE SET revision=excluded.revision,data=excluded.data WHERE learning.revision=?`)
+      .run(id, state.revision, JSON.stringify(state), expectedRevision);
+    if (!result.changes) throw Object.assign(new Error('Practice changed in another process. Refresh and retry; your draft is retained.'), { status: 409 });
   }
   refreshNavigation(session) {
     const row = this.db

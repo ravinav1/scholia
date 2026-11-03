@@ -1,0 +1,4 @@
+{
+  "daily": { "start": "2026-09-28T00:00:00Z", "days": 3, "weekdays": [1, 2, 3], "predict": "2026-10-01T12:00:00Z" },
+  "weekly": { "start": "2026-09-14T00:00:00Z", "days": 15, "weekdays": [1], "predict": "2026-10-05T12:00:00Z" }
+}

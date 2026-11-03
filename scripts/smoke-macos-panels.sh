@@ -21,12 +21,14 @@ app_objects=("${(@)app_objects:#*/ScholiaMacApp.swift.o}")
 swiftc -parse-as-library -sdk "$sdk_path" -target "$(uname -m)-apple-macos14.0" \
   -interface-compiler-version "$sdk_compiler_version" \
   -I "$binary_dir/Modules" \
+  -Xcc -fmodule-map-file="$binary_dir/ScholiaSearch.build/module.modulemap" \
   -I "$package_root/.build/checkouts/swift-cmark/src/include" \
   -I "$package_root/.build/checkouts/swift-cmark/extensions/include" \
   "$script_dir/macos-panel-smoke.swift" "${app_objects[@]}" \
-  "$binary_dir/SwiftMath.build/"*.swift.o \
+  "$binary_dir/SwiftMath.build/"*.swift.o "$binary_dir/ScholiaSearch.build/"*.o \
   "$binary_dir/cmark_gfm.build/"*.o "$binary_dir/cmark_gfm_extensions.build/"*.o \
   -framework ApplicationServices -framework Carbon -framework CoreGraphics \
   -framework ImageIO -framework PDFKit -framework Security -framework ServiceManagement \
-  -lsqlite3 -o "$smoke_dir/panel-smoke"
-"$smoke_dir/panel-smoke"
+  -framework JavaScriptCore -framework WebKit -framework Vision -framework Quartz \
+  -lsqlite3 -lz -o "$smoke_dir/panel-smoke"
+"$smoke_dir/panel-smoke" "$package_root/.build/verification" "$@"

@@ -86,6 +86,18 @@ test('explanations can read a page before the full index is ready', async () => 
   assert.match(result.context, /Readable page/);
 });
 
+test('a partial basic index does not hide the selected page of a short PDF', async () => {
+  const reads = [];
+  const result = await pdfSelectionMetadata({
+    metadata: { context: 'Only page one so far', pageCount: 4, extractedPageCount: 1 },
+    pageCount: 4, selectedPages: [4],
+    readPage: (page) => { reads.push(page); return `Native text on page ${page}`; }
+  });
+  assert.deepEqual(reads, [3, 4]);
+  assert.match(result.context, /Native text on page 4/);
+  assert.equal(result.pdfLocalContext, true);
+});
+
 test('image captures without text retain the current page and adjacent context', async () => {
   const result = await pdfSelectionMetadata({
     pageCount: 100, selectedPages: pdfSelectionPages(null, 80),

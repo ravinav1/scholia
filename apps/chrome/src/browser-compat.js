@@ -21,9 +21,10 @@ export async function configurePdfMimeHandling(
     return { brave, mimeHandlerConfigured: false, mimeHandlerEnabled: false };
   }
   try {
-    // Native MIME guest frames crash the browser process on affected builds.
-    // The manifest must also omit registration: startup can run after a PDF opens.
-    const enabled = false;
+    // The reader now uses per-tab storage instead of the History API calls
+    // that crash Chromium MIME frames. Enable browsers exposing this API;
+    // browsers without it keep the standalone reader.
+    const enabled = true;
     await setOptions.call(chromeApi.mimeHandler, PDF_MIME_TYPE, { enabled });
     return { brave, mimeHandlerConfigured: true, mimeHandlerEnabled: enabled };
   } catch {

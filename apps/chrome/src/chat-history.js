@@ -1,4 +1,8 @@
 import { normalizeFileAttachments } from '../../../packages/core/src/file-attachments.js';
+import { retainBrowserFileCorpora, restoreBrowserFileCorpora } from './file-corpus.js';
+import { MAX_ENTIRE_PDF_CHARS } from '../../../packages/core/src/entire-pdf.js';
+import { FULL_CONTEXT_CHARS } from './context-mode.js';
+import { researchUrl } from './research-links.js';
 export const CHAT_HISTORY_KEY = 'scholia.chat-history.v1';
 
 export const MAX_SAVED_CHATS = 24;
@@ -6,7 +10,7 @@ const MAX_HISTORY_BYTES = 5_500_000;
 const MAX_CHAT_BYTES = 1_350_000;
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 24_000;
-const MAX_CONTEXT_CHARS = 32_000;
+const MAX_CONTEXT_CHARS = FULL_CONTEXT_CHARS;
 const MAX_SELECTION_CHARS = 12_000;
 const MAX_IMAGE_DATA_URL_CHARS = 900_000;
 
@@ -61,6 +65,12 @@ function normalizedMessages(raw) {
           ? { reasoning: text(entry.reasoning, MAX_MESSAGE_CHARS) }
           : {}),
         ...(entry.meta ? { meta: text(entry.meta, 300) } : {}),
+        ...(entry.role === 'assistant' && Array.isArray(entry.activity) ? {
+          activity: entry.activity.slice(-80).filter((event) => event?.title).map((event) => ({
+            title: text(event.title, 180), detail: text(event.detail, 2000),
+            timestamp: Number.isFinite(event.timestamp) ? event.timestamp : 0
+          }))
+        } : {}),
         ...(entry.error ? { error: true } : {}),
         ...(attachment ? { attachment } : {}),
         ...(entry.role === 'user' && entry.files?.length ? { files: normalizeFileAttachments(entry.files) } : {}),
@@ -81,7 +91,13 @@ function normalizedCapture(raw) {
   return {
     kind: ['text', 'latex', 'image', 'mail'].includes(source.kind) ? source.kind : 'text',
     selection: text(source.selection, MAX_SELECTION_CHARS),
-    context: String(source.context || '').slice(0, MAX_CONTEXT_CHARS),
+    context: String(source.context || '').slice(0, source.entirePDF ? MAX_ENTIRE_PDF_CHARS : MAX_CONTEXT_CHARS),
+    ...(source.entirePDF === true && String(source.context || '').length <= MAX_ENTIRE_PDF_CHARS ? { entirePDF: true } : {}),
+    followLinks: source.followLinks === true,
+    researchYolo: source.researchYolo === true,
+    researchUrl: researchUrl(source.researchUrl || source.url),
+    ...(Array.isArray(source.researchSources) ? { researchSources: source.researchSources.slice(0, 300)
+      .map((item) => ({ title: text(item?.title, 300), url: researchUrl(item?.url) })).filter((item) => item.url) } : {}),
     ...(source.parentContext ? { parentContext: text(source.parentContext, 12_000) } : {}),
     ...(typeof source.webSearch === 'boolean' ? { webSearch: source.webSearch } : {}),
     ...(typeof source.contextEnabled === 'boolean'
@@ -187,7 +203,10 @@ export async function listChats(storageArea) {
 
 export async function getChat(chatId, storageArea) {
   const id = text(chatId, 120);
-  return (await listChats(storageArea)).find((chat) => chat.id === id) || null;
+  const chat = (await listChats(storageArea)).find((chat) => chat.id === id) || null;
+  if (!chat) return null;
+  return { ...chat, messages: await Promise.all(chat.messages.map(async (message) => ({ ...message,
+    ...(message.files?.length ? { files: await restoreBrowserFileCorpora(message.files) } : {}) }))) };
 }
 
 // All extension surfaces send mutations to the service worker. Its queue covers
@@ -207,7 +226,9 @@ export async function mutateChatHistory(operation, value, storageArea) {
     const chats = await listChats(area);
     const meta = (await area.get(HISTORY_META_KEY))[HISTORY_META_KEY] || { deleted: {}, clearedAt: 0 };
     if (operation === 'save') {
-      const chat = normalizeChatRecord(value); if (!chat) return null;
+      const compact = { ...value, messages: await Promise.all((value?.messages || []).map(async (message) => ({ ...message,
+        ...(message.files?.length ? { files: await retainBrowserFileCorpora(message.files) } : {}) }))) };
+      const chat = normalizeChatRecord(compact); if (!chat) return null;
       if (meta.deleted[chat.id] || chat.createdAt <= meta.clearedAt) throw new Error('This chat was removed. Start a new chat to save again.');
       const previous = chats.find((item) => item.id === chat.id);
       if (previous) {

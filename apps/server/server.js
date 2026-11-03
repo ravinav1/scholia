@@ -1,8 +1,9 @@
 import http from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, open } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { resolve, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AccountStore } from './store.js';
+import { AccountStore, hash } from './store.js';
 import { Documents, documentMime } from './documents.js';
 import { Workspaces } from './workspaces.js';
 const source = dirname(fileURLToPath(import.meta.url));
@@ -26,6 +27,9 @@ const parseCookie = (request) =>
     .find((v) => v.startsWith('scholia_session='))
     ?.slice(16);
 const httpError = (status, message) => Object.assign(new Error(message), { status });
+// GET validators use weak comparison, including a client's comma-separated list.
+const matchesETag = (header, etag) => String(header || '').split(',').some((value) =>
+  value.trim() === '*' || value.trim().replace(/^W\//, '') === etag.replace(/^W\//, ''));
 async function body(request, limit = 135_000_000) {
   if (!String(request.headers['content-type'] || '').startsWith('application/json'))
     throw httpError(415, 'Use a JSON request.');
@@ -81,7 +85,7 @@ export function createHostedServer({
   const cookie = (value, expire = false) =>
     `scholia_session=${value}; Path=/; HttpOnly; SameSite=Strict; ${secure ? 'Secure; ' : ''}Max-Age=${expire ? 0 : 604800}`;
   const server = http.createServer(async (request, response) => {
-    const send = (status, data, type = 'application/json; charset=utf-8', headers = {}) => {
+    const writeHeaders = (status, type, headers = {}) => {
       response.writeHead(status, {
         'Content-Type': type,
         'Cache-Control': 'no-store',
@@ -93,8 +97,35 @@ export function createHostedServer({
         ...(secure ? { 'Strict-Transport-Security': 'max-age=31536000' } : {}),
         ...headers,
       });
+    };
+    const send = (status, data, type = 'application/json; charset=utf-8', headers = {}) => {
+      writeHeaders(status, type, headers);
       response.end(Buffer.isBuffer(data) || typeof data === 'string' ? data : JSON.stringify(data));
     };
+    const sendFile = async (file, type, headers = {}, revalidate = false) => {
+      const handle = await open(file, 'r');
+      try {
+        const info = await handle.stat();
+        if (!info.isFile()) throw httpError(404, 'Not found.');
+        if (revalidate) {
+          // Validate the same open file that will be streamed, including a
+          // rebuilt asset atomically replacing its previous pathname.
+          const etag = `W/"${info.size}-${info.mtimeMs}-${info.ctimeMs}"`;
+          headers = { ...headers, ETag: etag };
+          if (matchesETag(request.headers['if-none-match'], etag)) {
+            send(304, '', type, headers);
+            return;
+          }
+        }
+        writeHeaders(200, type, { ...headers, 'Content-Length': info.size });
+        if (request.method === 'HEAD') response.end();
+        // Backpressure bounds each transfer's buffers even for a 100 MB PDF
+        // or a disconnected client; do not materialize the whole file in RAM.
+        else await pipeline(handle.createReadStream({ autoClose: false }), response);
+      } finally { await handle.close(); }
+    };
+    const sendAsset = (file, type = types[extname(file)] || 'application/octet-stream') =>
+      sendFile(file, type, { 'Cache-Control': 'private, no-cache' }, true);
     try {
       if (closing) throw httpError(503, 'The server is restarting. Try again shortly.');
       if (request.headers.host !== publicURL.host) throw httpError(403, 'Invalid host.');
@@ -150,14 +181,15 @@ export function createHostedServer({
           return;
         }
         const file = path === '/login' ? 'login.html' : 'auth.js';
-        send(200, await readFile(resolve(source, file)), types[extname(file)]);
+        if (path === '/auth.js') await sendAsset(resolve(source, file));
+        else send(200, await readFile(resolve(source, file)), types[extname(file)]);
         return;
       }
       if (!session) {
         if (path.startsWith('/api/') || path.startsWith('/auth/'))
           throw httpError(401, 'Sign in to continue.');
         if (['/app.css', '/icon.svg'].includes(path)) {
-          send(200, await readFile(resolve(assets, path.slice(1))), types[extname(path)]);
+          await sendAsset(resolve(assets, path.slice(1)));
           return;
         }
         send(303, '', 'text/plain', { Location: '/login' });
@@ -172,7 +204,35 @@ export function createHostedServer({
           return;
         }
         if (path === '/api/state' && request.method === 'GET') {
-          send(200, await workspaces.state(session));
+          const data = JSON.stringify(await workspaces.state(session));
+          const etag = `"${hash(data)}"`;
+          const unchanged = matchesETag(request.headers['if-none-match'], etag);
+          // Keep account state out of the browser's HTTP cache. The workspace
+          // explicitly retains its last accepted validator in memory instead.
+          send(unchanged ? 304 : 200, unchanged ? '' : data, undefined, { ETag: etag });
+          return;
+        }
+        if (path === '/api/learning' && request.method === 'GET') {
+          send(200, workspaces.learning.view(workspaces.account(session.user_id), session.navigation));
+          return;
+        }
+        if (path === '/api/learning' && request.method === 'POST') {
+          send(200, await workspaces.learningAction(session, await body(request, 100_000)));
+          return;
+        }
+        if (path === '/api/search' && request.method === 'GET') {
+          const params = new URL(request.url, origin).searchParams;
+          const controller = new AbortController();
+          const disconnected = () => { if (!response.writableEnded) controller.abort(); };
+          response.once('close', disconnected);
+          try {
+            const result = await workspaces.search.search(workspaces.account(session.user_id), params.get('q') || '', {
+              courseID: params.get('courseID') || '', mode: params.get('mode') || 'all', signal: controller.signal,
+            });
+            if (!response.destroyed) send(200, result);
+          } catch (error) {
+            if (!controller.signal.aborted) throw error;
+          } finally { response.removeListener('close', disconnected); }
           return;
         }
         const match = path.match(
@@ -182,7 +242,7 @@ export function createHostedServer({
           const account = workspaces.account(session.user_id),
             doc = workspaces.doc(account, match[2]);
           if (match[1] === 'document')
-            send(200, await documents.data(account.id, doc), documentMime(doc), {
+            await sendFile(documents.originalPath(account.id, doc), documentMime(doc), {
               'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(doc.fileName)}`,
             });
           else if (match[1] === 'index') send(200, await documents.index(account.id, doc));
@@ -193,6 +253,21 @@ export function createHostedServer({
               await documents.image(account.id, doc, decodeURIComponent(match[3] || '')),
               'image/png'
             );
+          return;
+        }
+        if (path === '/api/exam-recommendation' && request.method === 'POST') {
+          if (uploads >= 8) throw httpError(503, 'The server is busy. Try again shortly.');
+          uploads++;
+          const controller = new AbortController();
+          const disconnected = () => { if (!response.writableEnded) controller.abort(); };
+          response.once('close', disconnected);
+          try {
+            const result = await workspaces.recommendExams(session, await body(request, 500_000), controller.signal);
+            if (!response.destroyed) send(200, result);
+          } finally {
+            response.removeListener('close', disconnected);
+            uploads--;
+          }
           return;
         }
         if (path === '/api/action' && request.method === 'POST') {
@@ -213,12 +288,9 @@ export function createHostedServer({
         throw httpError(404, 'Not found.');
       const file = resolve(assets, decoded === '/' ? 'index.html' : decoded.slice(1));
       if (!file.startsWith(resolve(assets) + '/')) throw httpError(404, 'Not found.');
-      const info = await stat(file);
-      if (!info.isFile()) throw httpError(404, 'Not found.');
-      let data = await readFile(file);
-      if (file.endsWith('/index.html'))
-        data = Buffer.from(
-          data
+      if (file.endsWith('/index.html')) {
+        const data = Buffer.from(
+          (await readFile(file))
             .toString()
             .replaceAll('__SCHOLIA_TOKEN__', session.csrf)
             .replace(
@@ -226,7 +298,8 @@ export function createHostedServer({
               `<meta name="scholia-account" content="${session.user_id}"><meta name="scholia-hosted" content="true"></head>`
             )
         );
-      send(200, data, types[extname(file)] || 'application/octet-stream');
+        send(200, data, types[extname(file)]);
+      } else await sendAsset(file);
     } catch (error) {
       if (!response.headersSent)
         send(error.status || (error.code === 'ENOENT' ? 404 : 400), {

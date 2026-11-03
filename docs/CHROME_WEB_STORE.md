@@ -39,6 +39,8 @@ Select text, math, or a screen region and get a contextual AI explanation.
   bounded, user-deletable sidebar chat history on the device.
 - `sidePanel`: hosts the full contextual chat separately from the compact
   toolbar popup.
+- `offscreen`: runs the bundled local OCR worker for scanned PDFs, including
+  attachments opened from pages that restrict worker execution.
 - `<all_urls>` host access: injects the selection affordance, reads explicitly
   requested page/site/PDF context, and permits direct provider requests. Users
   can disable individual sites or switch to allowlist-only access.

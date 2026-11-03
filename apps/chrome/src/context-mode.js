@@ -1,7 +1,7 @@
-import {
-  COMPACT_PACKED_CONTEXT_CHARS,
-  MAX_PACKED_CONTEXT_CHARS
-} from '../../../packages/core/src/context.js';
+import { COMPACT_PACKED_CONTEXT_CHARS } from '../../../packages/core/src/context.js';
+
+// Keep typical research articles intact, including dense 10–15 page PDFs.
+export const FULL_CONTEXT_CHARS = 120_000;
 
 export const CONTEXT_MODE_COMPACT = 'compact';
 export const CONTEXT_MODE_FULL = 'full';
@@ -40,5 +40,5 @@ export function contextIsCompact(mode) {
 export function contextCharacterLimit(mode) {
   return contextIsCompact(mode)
     ? COMPACT_PACKED_CONTEXT_CHARS
-    : MAX_PACKED_CONTEXT_CHARS;
+    : FULL_CONTEXT_CHARS;
 }

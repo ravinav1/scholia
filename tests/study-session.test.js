@@ -1,9 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { recentReadings, readingPosition, continueReadingMarkup, studyPrompt, appendStudyPrompt, readerRenderKey, studyPollDelay, studyRenderKey } from '../apps/web/study-session.js';
+import { recentReadings, readingPosition, continueReadingMarkup, studyPrompt, appendStudyPrompt, readerRenderKey, studyPollDelay, studyRenderKey, readingSourceSummary } from '../apps/web/study-session.js';
 import { courseLibraryMarkup, courseLibraryRenderKey } from '../apps/web/course-library.js';
 
 const document = (id, lastOpenedAt, lastPage = 1) => ({ id, title: id, kind: 'pdf', pageCount: 12, lastPage, lastOpenedAt });
+test('reading evidence summary reports actual included page ranges by document', () => {
+  assert.equal(readingSourceSummary([
+    ...[2, 127, 128, 129, 2].map((page) => ({ documentID: 'compendium', title: 'Compendium', page })),
+    { documentID: 'project', title: 'Project', page: 1 },
+  ]), 'Compendium · pp. 2, 127–129; Project · p. 1');
+});
 function fixture() {
   return { library: { selectedCourseID: 'a', selectedDocumentID: 'older', courseLibraryView: 'all', courses: [
     { id: 'a', name: 'Algebra', code: 'MA101', documents: [document('older', 10, 5), document('unread', undefined)], threads: [] },
@@ -19,6 +25,16 @@ test('continue reading uses actual visits, orders across courses, and excludes u
   assert.equal(readingPosition({ kind: 'notebook', pageCount: 8, lastPage: 100 }), 'Cell 8 of 8');
   assert.equal(readingPosition({ kind: 'code', pageCount: 0, lastPage: -2 }), 'Section 1 of 1');
   assert.equal(continueReadingMarkup(recentReadings([])), '');
+});
+
+test('recent reading window agrees with full chronological ordering across ties and limits', () => {
+  const courses = Array.from({ length: 7 }, (_, course) => ({ id: String(course), documents:
+    Array.from({ length: 300 }, (_, i) => document(`${course}-${i}`, i % 17 ? (i * 19 + course) % 83 : NaN)) }));
+  const expected = courses.flatMap((course) => course.documents
+    .filter((document) => Number.isFinite(document.lastOpenedAt)).map((document) => ({ course, document })))
+    .sort((a, b) => b.document.lastOpenedAt - a.document.lastOpenedAt || a.document.id.localeCompare(b.document.id));
+  for (const limit of [0, -1, 1, 3, 15, 5000])
+    assert.deepEqual(recentReadings(courses, limit), expected.slice(0, Math.max(0, limit)));
 });
 
 test('resume cards escape imported names and respect the library filter', () => {
@@ -44,6 +60,9 @@ test('chat updates and reading timestamps cannot recreate the current reading su
   state.library.courses[0].documents[0].lastOpenedAt = 40;
   state.busy = true;
   assert.equal(readerRenderKey(state), before);
+  state.library.courses[0].documents[0].classification = { categoryID: 'notes', topic: 'Linear maps' };
+  state.library.courses[0].documents[0].materialAnalysis = { categoryID: 'notes', topic: 'Linear maps' };
+  assert.equal(readerRenderKey(state), before, 'background organization must not recreate the reader');
   state.library.courses[0].documents[0] = Object.fromEntries(Object.entries(state.library.courses[0].documents[0]).reverse());
   assert.equal(readerRenderKey(state), before, 'native JSON property ordering must not redraw the document');
   state.page = 6;
@@ -75,6 +94,7 @@ test('polling backs off while idle, hidden or disconnected and speeds up for ans
   assert.ok(studyPollDelay({ streaming: true }) < 900);
   assert.ok(studyPollDelay({ loadingDocument: true }) < 900);
   assert.ok(studyPollDelay({}) > studyPollDelay({ busy: true }));
+  assert.ok(studyPollDelay({}) > studyPollDelay({ assignmentPreparing: true }));
   assert.ok(studyPollDelay({}, true) > studyPollDelay({}));
   assert.ok(studyPollDelay({}, false, true) > studyPollDelay({}));
 });

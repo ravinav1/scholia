@@ -41,7 +41,8 @@ test('workspace filters combine semester and favorites without hiding the assign
   const html = courseLibraryMarkup(state);
   assert.match(html, /class="workspace-panel"/);
   assert.match(html, /class="assignment-agenda"/);
-  assert.doesNotMatch(html, /aria-label="Course view"|data-action="assignments"|data-action="semesters"/);
+  assert.doesNotMatch(html, /aria-label="Course view"|data-action="semesters"/);
+  assert.match(html, /data-action="assignments">View all/);
 });
 
 test('semester labels and course metadata are escaped and the current shortcut uses the correct term', () => {

@@ -15,3 +15,6 @@ apps/macos/.swiftpm/
 .env
 .env.*
 !.env.example
+
+# Generated benchmark logs, screenshots, fixtures and live-model reports
+output/

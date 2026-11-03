@@ -8,6 +8,7 @@ struct StudyNavigation: Equatable {
     var assignmentFile: String?
     var thread: UUID?
     var page: Int
+    var libraryView: StudyCourseLibraryViewMode = .all
 }
 
 enum StudyCoursePreloading {

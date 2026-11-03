@@ -63,11 +63,15 @@
 .assignment-only .assignment-description {
   max-height: none;
 }
-.assignment-files h2 {
+.assignment-files > summary {
   font-size: 11px;
   margin: 12px 0 7px;
+  padding: 4px 0;
+  font-weight: 600;
+  color: var(--green);
+  cursor: pointer;
 }
-.assignment-files h2 span {
+.assignment-files > summary span {
   color: var(--muted);
   font-weight: 400;
   margin-left: 5px;

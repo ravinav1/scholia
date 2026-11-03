@@ -20,7 +20,7 @@ struct StudyNotebookReader: View {
                                 source: cell.text,
                                 registerSelectionView: {
                                     $0.identifier = NSUserInterfaceItemIdentifier("ScholiaStudyDocument")
-                                })
+                                }, onOpenLink: workspace.openCourseLink)
                             ForEach(cell.images ?? [], id: \.self) { name in
                                 if let image = NSImage(
                                     contentsOf: workspace.store.directory(for: document.id).appendingPathComponent(name)

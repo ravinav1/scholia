@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-export async function chromiumSession() {
+export async function chromiumSession({ extensionPath = '' } = {}) {
   const profile = await mkdtemp(join(tmpdir(), 'scholia-chromium-'));
   const reserve = createServer();
   await new Promise((resolve) => reserve.listen(0, '127.0.0.1', resolve));
@@ -26,6 +26,7 @@ export async function chromiumSession() {
       '--disable-gpu',
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
+      ...(extensionPath ? [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] : []),
       'about:blank',
     ],
     { stdio: 'ignore' }
@@ -77,25 +78,26 @@ export async function chromiumSession() {
         ? callback.reject(new Error(value.error.message))
         : callback.resolve(value.result);
     });
-    const send = (method, params = {}) =>
+    const send = (method, params = {}, sessionId) =>
       new Promise((resolve, reject) => {
         const id = ++next,
           timer = setTimeout(() => reject(new Error(`Chromium timed out: ${method}`)), 20000);
         pending.set(id, { resolve, reject, timer });
-        socket.send(JSON.stringify({ id, method, params }));
+        socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
       });
-    const evaluate = async (expression) => {
+    const evaluate = async (expression, sessionId) => {
       const result = await send('Runtime.evaluate', {
         expression,
         awaitPromise: true,
         returnByValue: true,
-      });
+      }, sessionId);
       if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
       return result.result.value;
     };
-    const until = async (expression) => {
-      for (let i = 0; i < 150; i++) {
-        if (await evaluate(expression)) return;
+    const until = async (expression, { timeoutMs = 15_000, sessionId } = {}) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (await evaluate(expression, sessionId)) return;
         await sleep(100);
       }
       throw new Error(`Timed out: ${expression}`);

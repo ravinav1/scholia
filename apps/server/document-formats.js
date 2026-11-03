@@ -44,7 +44,7 @@ const binaryExtensions = new Set([
   'npy',
   'npz',
 ]);
-export const textIndexVersion = 2;
+export const textIndexVersion = 3;
 
 export function safePlainText(bytes, extension) {
   if (binaryExtensions.has(extension) || bytes.length > 32_000_000) return null;
@@ -61,7 +61,7 @@ export function safePlainText(bytes, extension) {
 
 export function needsTextIndexUpgrade(document) {
   return (
-    document?.kind === 'preview' &&
+    ['preview', 'image', 'pdf'].includes(document?.kind) &&
     document.indexVersion !== textIndexVersion &&
     !binaryExtensions.has(extname(document.fileName).slice(1).toLowerCase()) &&
     (document.byteCount || 0) <= 20_000_000

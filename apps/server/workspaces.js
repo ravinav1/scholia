@@ -1,9 +1,32 @@
+import { teachingModeLabel } from '../../packages/core/src/tutoring.js';
+import { normalizeFileAttachments } from '../../packages/core/src/file-attachments.js';
+import { AttachmentCorpus } from './attachment-corpus.js';
+import { entirePdfContext } from '../../packages/core/src/entire-pdf.js';
+import { workspaceMemory, saveWorkspaceMemory, buildWorkspaceMemory } from './workspace-memory.js';
 import { randomUUID } from 'node:crypto';
-import { PROVIDERS } from '../../packages/core/src/providers.js';
+import { normalizeRecentModels, recordRecentModel } from '../../packages/core/src/recent-models.js';
+import { needsCanvasHTMLUpgrade } from '../../packages/core/src/course-documents.js';
+import { HostedLearning } from './learning.js';
+import { normalizeExamPlan, examFavoriteCourseIDs } from '../../packages/core/src/exam-planner.js';
+import { EXAM_RECOMMENDATION_INSTRUCTIONS, EXAM_ADVICE_INSTRUCTIONS, EXAM_ADVICE_CONVERSATION_INSTRUCTIONS, examRecommendationMode, examRecommendationInput, checkedExamRecommendation, checkedExamAdvice } from '../../packages/core/src/exam-recommendations.js';
+import { ntnuStudyPlans, STUDY_PLAN_INSTRUCTIONS } from '../../packages/core/src/study-plans.js';
+import { degreeCatalogue, retrieveDegreeInformation, STUDY_PLAN_RETRIEVAL_INSTRUCTIONS } from '../../packages/core/src/study-plan-retrieval.js';
+import { PROVIDERS, modelReasoning } from '../../packages/core/src/providers.js';
+import { STUDY_MODEL_MODES, normalizeStudyModelMode, routeStudyModel, studyRouteDescription } from '../../packages/core/src/study-model-routing.js';
 import { runCompletion } from '../chrome/src/provider-runtime.js';
 import { Canvas } from './canvas.js';
+import { MathWiki, mathWikiCourse, isMathWikiMaterial } from './math-wiki.js';
+import { beginPoll, observeCatalog, observePoll, pollDecision } from './content-polling.js';
+import { WorkspaceSearch } from './workspace-search.js';
+import { buildCourseContext, courseContextScope, courseContextSummary } from './course-context.js';
 import { hash } from './store.js';
 import { needsTextIndexUpgrade, unreadablePageCount } from './document-formats.js';
+import {
+  analyzeMaterial,
+  materialAnalysisVersion,
+  materialCategories,
+  materialClassification,
+} from './material-analysis.js';
 export const hostedProviders = PROVIDERS.filter((p) =>
   ['openai', 'anthropic', 'openrouter', 'groq', 'together', 'mistral', 'cohere', 'ntnu'].includes(
     p.id
@@ -13,7 +36,21 @@ const fail = (message, status = 400) => {
   throw Object.assign(new Error(message), { status });
 };
 const now = () => Date.now() / 1000;
+const reasoningEffort = (provider, model, settings) => {
+  const reasoning = modelReasoning(provider, model);
+  if (!reasoning?.efforts.length) return null;
+  const selected = settings.reasoningEfforts?.[provider.id];
+  return reasoning.efforts.includes(selected)
+    ? selected
+    : reasoning.default || reasoning.efforts[0];
+};
 const sortNames = (a, b) => a.title.localeCompare(b.title, undefined, { numeric: true });
+const sortCanvasLinks = (a, b) => {
+  const left = a.linkedOrder || [], right = b.linkedOrder || [];
+  for (let i = 0; i < Math.min(left.length, right.length); i++)
+    if (left[i] !== right[i]) return left[i] - right[i];
+  return left.length - right.length;
+};
 const newCourse = (name, code = '') => ({
   id: randomUUID(),
   name,
@@ -49,16 +86,18 @@ export function materialInventory(course) {
   if (!course) return { groups: [], files: [] };
   const groups = new Map(),
     files = [],
-    references = new Set();
+    references = new Set(),
+    savedBySource = new Map(course.documents.map((doc) => [doc.sourceKey, doc]));
   const add = (ref, doc) => {
     const title = doc?.title || ref?.title || 'Untitled';
     const id = doc ? `saved:${doc.id}` : `canvas:${ref.id}`;
+    const classification = materialClassification(doc, ref);
     const entry = {
       id,
       title,
       documentID: doc?.id,
       materialID: ref?.id,
-      sourceURL: ref?.sourceURL,
+      sourceURL: ref?.sourceURL || doc?.sourceURL,
       detail: doc
         ? `${doc.pageCount} pages · Saved to your account`
         : ref?.assignment?.locked
@@ -67,35 +106,47 @@ export function materialInventory(course) {
             ? 'Larger than 100 MB'
             : 'Download to read',
       submissionStatus: ref?.assignment?.status,
+      assignment: ref?.assignment,
       requiresSubmission:
         !ref?.assignment ||
         ref.assignment.submissionTypes?.some((type) => !['none', 'not_graded'].includes(type)) !==
           false,
       updateAvailable: !!(doc && ref?.version && doc.sourceVersion !== ref.version),
+      ...classification,
+      canvasHeading: ref?.linkedFromTitle || ref?.moduleSection,
+      canvasSubheading: ref?.linkedSection,
+      linkedPosition: ref?.linkedPosition,
+      linkedOrder: ref?.linkedOrder,
+      canvasGroupTitle: ref?.moduleTitle || ref?.linkedFromTitle || ref?.folderTitle,
     };
-    let groupID, groupTitle;
-    if (ref?.moduleID) {
+    let groupID, groupTitle, basis, order;
+    if (ref?.moduleID != null && ref.moduleTitle?.trim()) {
       groupID = `module:${ref.moduleID}`;
       groupTitle = ref.moduleTitle;
-    } else if (ref?.kind === 'assignments') {
-      groupID = 'exercises';
-      groupTitle = 'Exercises & assignments';
-    } else if (
-      /\b(icon|logo|banner|footer|header)\b/i.test(title) &&
-      /\.(png|jpg|svg|gif)$/i.test(ref?.fileName || doc?.fileName || '')
-    ) {
-      groupID = 'assets';
-      groupTitle = 'Course assets';
+      basis = 'Canvas module order';
+      order = ref.modulePosition ?? 0;
+    } else if (ref?.linkedFromID && ref.linkedFromTitle?.trim()) {
+      groupID = `canvas-page:${ref.linkedFromID}`;
+      groupTitle = ref.linkedFromTitle;
+      basis = 'Linked from Canvas';
+      order = 5000;
+    } else if (ref?.folderID != null && ref.folderTitle?.trim()) {
+      groupID = `folder:${ref.folderID}`;
+      groupTitle = ref.folderTitle;
+      basis = 'Canvas folder';
+      order = 7500;
     } else {
-      groupID = 'documents';
-      groupTitle = 'Documents';
+      groupID = classification.categoryID;
+      groupTitle = classification.categoryTitle;
+      basis = 'Document content and file metadata';
+      order = 10000 + materialCategories.findIndex(([id]) => id === groupID);
     }
     if (!groups.has(groupID))
       groups.set(groupID, {
         id: groupID,
         title: groupTitle,
-        basis: ref?.moduleID ? 'Canvas module order' : 'Course materials',
-        order: ref?.modulePosition ?? (groupID === 'assets' ? 100000 : 10000),
+        basis,
+        order,
         items: [],
       });
     groups.get(groupID).items.push({ ...entry, order: ref?.moduleItemPosition ?? 10000 });
@@ -107,16 +158,14 @@ export function materialInventory(course) {
   };
   for (const ref of course.canvasMaterials || []) {
     references.add(ref.id);
-    add(
-      ref,
-      course.documents.find((d) => d.sourceKey === ref.id)
-    );
+    add(ref, savedBySource.get(ref.id));
   }
   for (const doc of course.documents) if (!references.has(doc.sourceKey)) add(null, doc);
   return {
     groups: [...groups.values()]
-      .sort((a, b) => a.order - b.order)
-      .map((g) => ({ ...g, items: g.items.sort((a, b) => a.order - b.order || sortNames(a, b)) })),
+      .sort((a, b) => a.order - b.order || sortNames(a, b))
+      .map((g) => ({ ...g, items: g.items.sort((a, b) => a.order - b.order ||
+        sortCanvasLinks(a, b) || (a.linkedPosition ?? -1) - (b.linkedPosition ?? -1) || sortNames(a, b)) })),
     files: files.sort(sortNames),
   };
 }
@@ -124,9 +173,14 @@ export class Workspaces {
   constructor(store, documents, options = {}) {
     this.store = store;
     this.documents = documents;
+    this.attachmentCorpus = new AttachmentCorpus(store.root, options);
     this.options = options;
     this.accounts = new Map();
     this.queues = new Map();
+    this.analysisJobs = new Map();
+    this.materialCatalogs = new WeakMap();
+    this.search = new WorkspaceSearch(documents);
+    this.learning = new HostedLearning(this);
   }
   account(id) {
     const time = Date.now(),
@@ -135,6 +189,9 @@ export class Workspaces {
       if (
         key !== id &&
         !account.job &&
+        !account.assignmentRefresh &&
+        !account.analysisPending &&
+        !account.examRecommendationBusy &&
         !this.queues.has(key) &&
         time - account.lastAccess > 30 * 60_000
       )
@@ -143,7 +200,9 @@ export class Workspaces {
     if (!this.accounts.has(id)) {
       if (this.accounts.size >= limit) {
         const idle = [...this.accounts]
-          .filter(([key, account]) => !account.job && !this.queues.has(key))
+          .filter(
+            ([key, account]) => !account.job && !account.assignmentRefresh && !account.analysisPending && !account.examRecommendationBusy && !this.queues.has(key)
+          )
           .sort((a, b) => a[1].lastAccess - b[1].lastAccess);
         if (!idle.length) fail('The server is busy. Try again shortly.', 503);
         this.accounts.delete(idle[0][0]);
@@ -163,6 +222,34 @@ export class Workspaces {
   }
   assertAvailable(account) {
     if (account.busy || account.streaming) fail('Wait for the current task to finish.', 409);
+  }
+  practiceCompletion(account, purpose = 'practice-generation') {
+    const provider = hostedProviders.find((p) => p.id === account.settings.providerID) || hostedProviders[0];
+    const model = account.settings.modelID || provider.defaultModel;
+    const key = this.store.credential(account.id, `provider:${provider.id}`);
+    if (!key && !this.options.complete) fail('Add your provider API key in Account settings.');
+    return async (prompt, signal) => {
+      const result = await (this.options.complete || runCompletion)({ provider: provider.id, model,
+        reasoningEffort: reasoningEffort(provider, model, account.settings), kind: 'text', selection: '', context: '',
+        messages: [{ role: 'user', content: prompt }] },
+      { provider: provider.id, apiKeys: { [provider.id]: key } }, () => {},
+      AbortSignal.any([signal, AbortSignal.timeout(300_000)]), undefined, undefined, { purpose });
+      if (result.text?.trim() && !signal.aborted) {
+        account.settings.recentModels = recordRecentModel(account.settings.recentModels, provider.id, model);
+        this.store.save(account);
+      }
+      return { ...result, model: result.model || model };
+    };
+  }
+  async learningAction(session, command) {
+    return this.serial(session.user_id, async () => {
+      this.store.refreshNavigation(session);
+      const account = this.account(session.user_id);
+      if (command.action === 'practiceGenerate') this.learning.generate(account, session.navigation, command);
+      else if (command.action === 'practice') this.learning.command(account, command.learning);
+      else fail('Unknown practice action.');
+      return this.learning.view(account, session.navigation);
+    });
   }
   async serial(id, work) {
     if (this.stopping) fail('The server is restarting. Try again shortly.', 503);
@@ -193,6 +280,7 @@ export class Workspaces {
         id: randomUUID(),
         title: 'New conversation',
         documentID: navigation.selectedDocumentID,
+        assignmentID: navigation.selectedAssignmentID || null,
         messages: [],
         sources: {},
         draft: '',
@@ -211,7 +299,7 @@ export class Workspaces {
       threadID: thread?.id || null,
       page: nav.page || 1,
       revision: hash(
-        `${nav.selectedAssignmentID || ''}\0${thread?.draft || ''}\0${nav.mode || 'Explain'}\0${nav.selection || ''}\0${thread?.draftImage || ''}`
+        `${nav.selectedAssignmentID || ''}\0${thread?.draft || ''}\0${nav.mode || 'Explain'}\0${nav.selection || ''}\0${thread?.draftImage || ''}\0${JSON.stringify(thread?.draftFiles || [])}\0${nav.automaticContextEnabled !== false}\0${nav.includeCourse === true}\0${thread?.entirePDF === true}`
       ),
     };
   }
@@ -226,9 +314,14 @@ export class Workspaces {
   async state(session) {
     const account = this.account(session.user_id),
       nav = session.navigation;
+    void this.refreshMathWiki(account, nav.selectedCourseID);
+    void this.refreshCanvasContent(account, nav.selectedCourseID);
+    void this.refreshCanvasAssignments(account);
     const course = this.course(account, nav),
       doc = course?.documents.find((d) => d.id === nav.selectedDocumentID),
       thread = this.thread(course, nav);
+    const contextScope = courseContextScope(thread, nav);
+    void this.analyzeStoredMaterials(account, course);
     const index = doc ? await this.documents.index(account.id, doc).catch(() => null) : null;
     const assignment = course?.canvasMaterials?.find((m) => m.id === nav.selectedAssignmentID),
       instructions = course?.documents.find((d) => d.sourceKey === assignment?.id);
@@ -239,7 +332,7 @@ export class Workspaces {
       : '';
     if (assignment) await this.normalizeAssignmentIndexes(account, course, assignment, doc, index);
     const files = assignmentFileReferences(course, assignment);
-    const inventory = materialInventory(course),
+    const inventory = this.materialInventory(course),
       provider =
         hostedProviders.find((p) => p.id === account.settings.providerID) || hostedProviders[0];
     const semesters = new Map();
@@ -253,16 +346,22 @@ export class Workspaces {
     return {
       hosted: true,
       account: { email: account.email },
-      capabilities: { practiceReview: false },
+      capabilities: { practiceReview: true },
       library: {
         ...account.library,
         ...nav,
         courses: account.library.courses.map((c) => ({
           ...c,
-          threads: c.threads.map((t) => ({ id: t.id, title: t.title, documentID: t.documentID })),
+          threads: c.threads.map((t) => ({
+            id: t.id,
+            title: t.title,
+            documentID: t.documentID,
+            assignmentID: t.assignmentID,
+          })),
         })),
       },
       showingLibrary: nav.showingCourseLibrary !== false,
+      assignmentRefreshBusy: !!account.assignmentRefresh,
       selectedSemesterID: nav.selectedSemesterID || 'all',
       semesters: [...semesters.values()].sort((a, b) => b.title.localeCompare(a.title)),
       materialGroups: inventory.groups,
@@ -273,7 +372,11 @@ export class Workspaces {
       pageText: index?.pages[page - 1]?.text || '',
       draft: thread?.draft || '',
       draftImage: thread?.draftImage || null,
-      mode: nav.mode || 'Explain',
+      draftFiles: thread?.draftFiles || [],
+      automaticContextEnabled: nav.automaticContextEnabled !== false,
+      mode: teachingModeLabel(nav.mode),
+      language: account.settings.language || 'auto',
+      entirePDF: !!doc && !['image', 'preview'].includes(doc.kind) && thread?.entirePDF === true,
       editing: nav.editing || null,
       models: hostedProviders.flatMap((p) =>
         p.models.map((m) => ({
@@ -281,36 +384,69 @@ export class Workspaces {
           label: typeof m === 'string' ? m : m.label,
           providerID: p.id,
           provider: p.name,
+          lastUsedAt: normalizeRecentModels(account.settings.recentModels).find((item) =>
+            item.providerID === p.id && item.modelID === (typeof m === 'string' ? m : m.id))?.lastUsedAt,
+          reasoningEfforts: m.reasoning?.efforts || [],
+          defaultReasoningEffort: m.reasoning?.default || null,
         }))
       ),
       providerID: provider.id,
       modelID: account.settings.modelID || provider.defaultModel,
+      studyModelMode: normalizeStudyModelMode(account.settings.studyModelMode),
+      reasoningEffort: reasoningEffort(
+        provider,
+        account.settings.modelID || provider.defaultModel,
+        account.settings
+      ),
       canSend:
         !!course &&
         !account.busy &&
         !account.streaming &&
-        !!(thread?.draft?.trim() || thread?.draftImage),
+        !!(thread?.draft?.trim() || thread?.draftImage || thread?.draftFiles?.some((file) => file.enabled !== false) || nav.selection?.trim()),
       streaming: account.streaming,
+      answerStartedAt: thread?.messages.find((message) => message.isStreaming)?.createdAt || null,
       busy: account.busy,
       loadingDocument: false,
       status: account.status,
       warnings: account.library.courses.flatMap((c) => c.catalogWarnings || []),
       error: account.error,
-      context: assignment
-        ? `${assignment.title} · ${files.filter((ref) => course.documents.some((document) => document.sourceKey === ref.id && document.kind !== 'preview' && (document.unreadablePages || 0) < document.pageCount)).length} of ${files.length} files indexed for the companion`
-        : doc
-          ? `Page ${page} · ${doc.pageCount} pages indexed`
-          : 'Your private course materials',
-      includeCourse: nav.includeCourse !== false,
+      contextScope,
+      workspaceMemory: { courseID: course?.id || null,
+        assignmentID: contextScope === 'assignment' ? thread?.assignmentID || nav.selectedAssignmentID : null,
+        ...workspaceMemory(course, contextScope === 'assignment' ? thread?.assignmentID || nav.selectedAssignmentID : null) },
+      context:
+        contextScope === 'course'
+          ? courseContextSummary(course)
+          : assignment
+            ? `${assignment.title} · ${files.filter((ref) => course.documents.some((document) => document.sourceKey === ref.id && document.kind !== 'preview' && (document.unreadablePages || 0) < document.pageCount)).length} of ${files.length} files indexed for the companion`
+            : doc
+              ? `Page ${page} · ${doc.pageCount} pages indexed`
+              : 'Your private course materials',
+      includeCourse: contextScope === 'course' || nav.includeCourse === true,
       assignmentText,
       assignmentFiles: files,
       assignmentPDFs: files.filter((ref) => /\.pdf$/i.test(ref.fileName || '')),
       assignmentFileNotices: assignment ? this.assignmentNotices(course, assignment) : {},
       assignmentNotice: nav.assignmentNotice || null,
       draftOwner: this.owner(account, nav),
-      learningRevision: 0,
-      reviewDue: 0,
+      learningRevision: this.learning.state(account).revision,
+      reviewDue: this.learning.due(this.learning.state(account)).length,
     };
+  }
+  materialInventory(course) {
+    if (!course) return { groups: [], files: [] };
+    // Threads and navigation change on every chat/page interaction. They do
+    // not change material classification or sort order. In-place catalog
+    // mutations still invalidate this cache, including background downloads.
+    const key = JSON.stringify([
+      course.documents.map(({ lastPage, lastOpenedAt, ...metadata }) => metadata),
+      course.canvasMaterials,
+    ]);
+    const cached = this.materialCatalogs.get(course);
+    if (cached?.key === key) return cached.value;
+    const value = materialInventory(course);
+    this.materialCatalogs.set(course, { key, value });
+    return value;
   }
   canvas(account, signal) {
     const origin = account.library.canvasOrigin,
@@ -321,6 +457,196 @@ export class Workspaces {
       request: this.options.remoteRequest,
       signal,
     });
+  }
+  refreshMathWiki(account, selectedCourseID, time = Date.now()) {
+    if (account.mathWikiRefresh) return account.mathWikiRefresh;
+    if (this.stopping || account.busy || account.assignmentRefresh || account.streaming || account.settings.automaticallyUpdateMathWiki === false)
+      return Promise.resolve();
+    const date = new Date(time), term = `${date.getFullYear()}${date.getMonth() >= 7 ? 'h' : 'v'}`;
+    const targets = account.library.courses.filter(course => {
+      const scope = mathWikiCourse(course);
+      return scope?.terms.length && course.canvasID && course.canvasAvailable !== false &&
+        course.canvasOrigin === account.library.canvasOrigin && course.canvasUserID === account.library.canvasUserID &&
+        (course.id === selectedCourseID || (course.favorite ?? course.canvasFavorite) || scope.terms.includes(term)) &&
+        pollDecision(account, course, 'mathWiki', time);
+    });
+    if (!targets.length) return Promise.resolve();
+    const previousStatus = account.status, origin = account.library.canvasOrigin, userID = account.library.canvasUserID;
+    this.job(account, 'Checking math wiki…', async signal => {
+      const wiki = account.mathWikiClient ||= new MathWiki({ request: this.options.remoteRequest });
+      wiki.signal = signal;
+      const check = () => {
+        signal.throwIfAborted();
+        if (account.library.canvasOrigin !== origin || account.library.canvasUserID !== userID)
+          throw new DOMException('The course account changed.', 'AbortError');
+      };
+      let downloaded = 0;
+      for (const target of targets) {
+        check();
+        const course = account.library.courses.find(c => c.id === target.id);
+        if (!course) continue;
+        const reason = pollDecision(account, course, 'mathWiki', time);
+        if (!reason) continue;
+        beginPoll(course, 'mathWiki', time, reason);
+        this.store.save(account);
+        let result;
+        try { result = await wiki.catalog(course, { fileRecheckInterval: MathWiki.fileCheckInterval }); }
+        catch (error) { check(); observePoll(course, 'mathWiki', [], false, time); throw error; }
+        check();
+        if (!account.library.courses.includes(course)) continue;
+        observePoll(course, 'mathWiki', result.items, result.complete, time);
+        const previous = new Map((course.canvasMaterials || []).map(ref => [ref.id, ref]));
+        const latest = new Map(result.items.map(ref => [ref.id, ref]));
+        const changes = { added: [], updated: [], removed: [], retained: [] };
+        for (const ref of result.items) {
+          const old = previous.get(ref.id);
+          if (!old) changes.added.push(ref.id);
+          else if (ref.version !== old.version || ref.title !== old.title) changes.updated.push(ref.id);
+        }
+        for (const ref of previous.values()) if (!latest.has(ref.id)) {
+          if (isMathWikiMaterial(ref) && result.complete) changes.removed.push(ref.id);
+          else latest.set(ref.id, ref);
+        }
+        course.canvasMaterials = [...latest.values()];
+        if (changes.added.length + changes.updated.length + changes.removed.length) {
+          course.catalogChanges = changes;
+          course.catalogChangedAt = time / 1000;
+        }
+        if (result.complete) course.mathWikiCheckedAt = time / 1000;
+        const warnings = [...result.warnings];
+        const publicClient = { origin, signal, material: (ref, _course, options) => wiki.material(ref, options) };
+        for (const ref of result.items) {
+          check();
+          if (ref.unavailableReason || (ref.byteCount || 0) > 100_000_000) continue;
+          if (course.documents.some(doc => doc.sourceKey === ref.id && doc.sourceVersion === ref.version && !doc.indexUnavailable)) continue;
+          try { await this.fetchMaterial(account, course, ref, publicClient); downloaded++; }
+          catch (error) { check(); warnings.push(`Math wiki ${ref.title}: ${error.message}`); }
+        }
+        const oldWarnings = new Set(course.mathWikiWarnings || []);
+        course.catalogWarnings = (course.catalogWarnings || []).filter(warning => !oldWarnings.has(warning)).concat(warnings);
+        course.mathWikiWarnings = warnings;
+        this.store.save(account);
+      }
+      account.status = downloaded ? `Math wiki: ${downloaded} materials downloaded or updated.` : previousStatus;
+    });
+    account.mathWikiRefresh = account.job.finally(() => { account.mathWikiRefresh = null; });
+    return account.mathWikiRefresh;
+  }
+
+  refreshCanvasContent(account, selectedCourseID, time = Date.now()) {
+    if (account.contentRefresh) return account.contentRefresh;
+    if (this.stopping || account.busy || account.assignmentRefresh || account.streaming || account.settings.automaticallyUpdateCanvasContent !== true)
+      return Promise.resolve();
+    const date = new Date(time), year = date.getFullYear(), autumn = date.getMonth() >= 7;
+    const targets = account.library.courses.filter(course => course.canvasID && course.canvasAvailable !== false &&
+      course.canvasOrigin === account.library.canvasOrigin && course.canvasUserID === account.library.canvasUserID &&
+      (course.id === selectedCourseID || (course.favorite ?? course.canvasFavorite) ||
+        // Match an explicit semester; an undated course isn't assumed current.
+        new RegExp(`${String(year).slice(-2)}${autumn ? 'h' : 'v'}(?:\\b|-)`, 'i').test(course.code || '') ||
+        (String(course.term || '').includes(String(year)) && (autumn ? /høst|autumn|fall/i : /vår|spring/i).test(course.term))) &&
+      pollDecision(account, course, 'canvas', time));
+    if (!targets.length) return Promise.resolve();
+    const origin = account.library.canvasOrigin, userID = account.library.canvasUserID;
+    this.job(account, 'Checking course content…', async signal => {
+      const check = () => {
+        signal.throwIfAborted();
+        if (account.settings.automaticallyUpdateCanvasContent !== true || account.library.canvasOrigin !== origin || account.library.canvasUserID !== userID)
+          throw new DOMException('Course updates stopped.', 'AbortError');
+      };
+      let canvas, downloaded = 0;
+      for (const target of targets) {
+        check();
+        const course = account.library.courses.find(c => c.id === target.id);
+        if (!course) continue;
+        const reason = pollDecision(account, course, 'canvas', time);
+        if (!reason) continue;
+        beginPoll(course, 'canvas', time, reason);
+        this.store.save(account);
+        let observed = false;
+        try {
+          canvas ||= this.canvas(account, signal);
+          const catalog = await canvas.catalog(course, { includePublic: reason !== 'predicted' });
+          check();
+          if (!account.library.courses.includes(course)) continue;
+          observeCatalog(course, catalog, time, reason !== 'predicted');
+          observed = true;
+          course.canvasMaterials = catalog.items;
+          course.catalogWarnings = catalog.warnings;
+          course.catalogChanges = catalog.changes;
+          course.catalogUpdatedAt = time / 1000;
+          for (const ref of catalog.items) {
+            check();
+            if (reason === 'predicted' && /^(math-wiki|course-web):/.test(ref.id)) continue;
+            if (ref.assignment?.locked || (ref.byteCount || 0) > 100_000_000 ||
+              course.documents.some(doc => doc.sourceKey === ref.id && doc.sourceVersion === ref.version && !doc.indexUnavailable)) continue;
+            try { await this.fetchMaterial(account, course, ref, canvas); downloaded++; }
+            catch (error) { check(); course.catalogWarnings.push(`${ref.title}: ${error.message}`); }
+          }
+        } catch (error) {
+          check();
+          if (!observed) observePoll(course, 'canvas', [], false, time);
+          course.catalogWarnings = [`Course content: ${error.message}`];
+        }
+        this.store.save(account);
+      }
+      account.status = downloaded ? `${downloaded} course materials downloaded or updated.` : 'Course content checked.';
+    });
+    account.contentRefresh = account.job.finally(() => { account.contentRefresh = null; });
+    return account.contentRefresh;
+  }
+
+  refreshCanvasAssignments(account, time = Date.now(), force = false) {
+    if (account.assignmentRefresh) return account.assignmentRefresh;
+    if (this.stopping || account.busy || !account.library.canvasOrigin ||
+        (!force && time - (account.assignmentRefreshAttempt || 0) < 120_000)) return Promise.resolve();
+    const targets = account.library.courses.filter((course) => course.canvasID &&
+      course.canvasOrigin === account.library.canvasOrigin && course.canvasUserID === account.library.canvasUserID &&
+      course.canvasAvailable !== false);
+    if (!targets.length) return Promise.resolve();
+    account.assignmentRefreshAttempt = time;
+    const controller = new AbortController();
+    account.assignmentRefreshController = controller;
+    const origin = account.library.canvasOrigin, userID = account.library.canvasUserID;
+    account.assignmentRefresh = (async () => {
+      const canvas = this.canvas(account, controller.signal);
+      let failures = 0;
+      for (const target of targets) {
+        if (account.busy || this.stopping) return;
+        try {
+          const records = await canvas.list(`/api/v1/courses/${target.canvasID}/assignments?include[]=submission`);
+          controller.signal.throwIfAborted();
+          await this.serial(account.id, () => {
+            if (account.busy || account.library.canvasOrigin !== origin || account.library.canvasUserID !== userID) return;
+            const course = account.library.courses.find((course) => course.id === target.id);
+            if (!course) return;
+            course.canvasMaterials ||= [];
+            for (const record of records) {
+              if (record.published === false || record.hidden_for_user) continue;
+              const update = canvas.reference('assignments', record, target.canvasID);
+              const existing = course.canvasMaterials.find((item) => item.id === update.id);
+              // Keep module placement and downloaded files; only metadata changes.
+              if (existing) Object.assign(existing, update);
+              else course.canvasMaterials.push(update);
+            }
+            this.store.save(account);
+          });
+        } catch (error) {
+          controller.signal.throwIfAborted();
+          failures++;
+        }
+      }
+      if (account.library.canvasOrigin !== origin || account.library.canvasUserID !== userID) return;
+      if (!failures) account.library.canvasAssignmentsCheckedAt = time / 1000;
+      account.library.canvasAssignmentsError = failures ? 'Some Canvas statuses could not be refreshed. Retrying automatically.' : null;
+      this.store.save(account);
+    })().catch((error) => {
+      if (!controller.signal.aborted && !this.stopping)
+        account.library.canvasAssignmentsError = error.message;
+    }).finally(() => {
+      account.assignmentRefresh = null;
+      account.assignmentRefreshController = null;
+    });
+    return account.assignmentRefresh;
   }
   job(account, label, work, streaming = false) {
     this.assertAvailable(account);
@@ -368,7 +694,7 @@ export class Workspaces {
     )
       fail('Reconnect the Canvas account that owns this workspace.');
     const existing = course.documents.find((d) => d.sourceKey === ref.id);
-    if (existing && existing.sourceVersion === ref.version && !existing.indexUnavailable)
+    if (existing && existing.sourceVersion === ref.version && !existing.indexUnavailable && !needsCanvasHTMLUpgrade(existing))
       return existing;
     const item = await canvas.material(ref, course, options);
     canvas.signal?.throwIfAborted();
@@ -397,8 +723,14 @@ export class Workspaces {
       sourceURL: ref.sourceURL,
       sourceVersion: ref.version,
     });
-    if (existing && !existing.locallyEditedAt)
-      course.documents = course.documents.filter((d) => d.id !== existing.id);
+    if (existing && !existing.locallyEditedAt) {
+      // Keep citations, conversations and learning history attached to the same
+      // document while atomically switching to the newly imported original.
+      course.documents = course.documents.filter((d) => d.id !== doc.id);
+      Object.assign(existing, doc, { id: existing.id, storageID: doc.id,
+        lastPage: Math.min(existing.lastPage || 1, doc.pageCount), lastOpenedAt: existing.lastOpenedAt });
+      return existing;
+    }
     return doc;
   }
   assignmentNotices(course, assignment) {
@@ -410,6 +742,7 @@ export class Workspaces {
       (document) =>
         document.sourceKey === ref.id &&
         document.sourceVersion === ref.version &&
+        !needsCanvasHTMLUpgrade(document) &&
         !document.indexUnavailable
     );
   }
@@ -431,8 +764,9 @@ export class Workspaces {
       }
     }
   }
-  async upgradeCachedDocument(account, document) {
-    const indexed = await this.documents.reindex(account.id, document);
+  async upgradeCachedDocument(account, document, signal) {
+    const indexed = await this.documents.reindex(account.id, document, { signal });
+    signal?.throwIfAborted();
     for (const key of [
       'kind',
       'pageCount',
@@ -440,10 +774,70 @@ export class Workspaces {
       'contentNotice',
       'contentHash',
       'indexVersion',
+      'materialAnalysis',
     ])
       document[key] = indexed[key];
     document.indexUnavailable = false;
     this.store.save(account);
+  }
+  async analyzeStoredMaterials(account, course) {
+    if (!course) return;
+    const key = `${account.id}:${course.id}`;
+    if (this.analysisJobs.has(key)) return this.analysisJobs.get(key);
+    const missing = course.documents
+      .filter((doc) => doc.materialAnalysis?.version !== materialAnalysisVersion)
+      .slice(0, 6);
+    if (!missing.length) return;
+    // Upgrade existing libraries a bounded batch at a time using their saved text.
+    // OCR runs only on import/open, never on a state poll.
+    account.analysisPending = (account.analysisPending || 0) + 1;
+    const revision = (doc) =>
+      JSON.stringify([doc.contentHash, doc.indexVersion, doc.storageID, doc.fileName, doc.title]);
+    const task = (async () => {
+      let changed = false;
+      for (const doc of missing) {
+        const before = revision(doc);
+        const index = await this.documents.index(account.id, doc).catch(() => ({ pages: [] }));
+        if (
+          !course.documents.includes(doc) ||
+          revision(doc) !== before ||
+          doc.materialAnalysis?.version === materialAnalysisVersion
+        )
+          continue;
+        doc.materialAnalysis = analyzeMaterial({
+          name: doc.fileName,
+          title: doc.title,
+          kind: doc.kind,
+          pages: index.pages,
+        });
+        changed = true;
+      }
+      if (changed) this.store.save(account);
+    })()
+      .catch(() => {})
+      .finally(() => {
+        account.analysisPending--;
+        this.analysisJobs.delete(key);
+      });
+    this.analysisJobs.set(key, task);
+    return task;
+  }
+  upgradeOpenedDocument(account, document) {
+    if (needsCanvasHTMLUpgrade(document) && !account.busy && !account.streaming) {
+      const course = account.library.courses.find((c) => c.documents.includes(document));
+      const ref = course?.canvasMaterials?.find((m) => m.id === document.sourceKey);
+      if (ref) {
+        this.job(account, 'Restoring the original course page and links…', async (signal) => {
+          await this.fetchMaterial(account, course, ref, this.canvas(account, signal));
+          account.status = 'Original course page and links restored.';
+        });
+        return;
+      }
+    }
+    if (needsTextIndexUpgrade(document) && !account.busy && !account.streaming)
+      this.job(account, 'Improving the document text index…', (signal) =>
+        this.upgradeCachedDocument(account, document, signal)
+      );
   }
   async openAssignment(account, nav, command) {
     const course =
@@ -462,12 +856,11 @@ export class Workspaces {
     } else {
       this.selectCourse(account, nav, course.id);
       nav.selectedAssignmentID = assignment.id;
+      nav.selectedThreadID =
+        course.threads.findLast((thread) => thread.assignmentID === assignment.id)?.id || null;
+      nav.mode = teachingModeLabel(this.thread(course, nav)?.mode);
     }
     nav.assignmentNotice = null;
-    if (assignment.assignment?.locked) {
-      nav.assignmentNotice = 'Locked in Canvas.';
-      return;
-    }
     const notices = this.assignmentNotices(course, assignment);
     let canvas,
       downloadedBytes = 0;
@@ -482,6 +875,20 @@ export class Workspaces {
         fail('Reconnect the Canvas account that owns this workspace.');
       return canvas;
     };
+    try {
+      const client = connected();
+      const { value } = await client.api(`/api/v1/courses/${course.canvasID}/assignments/${encodeURIComponent(assignment.remoteID)}?include[]=submission`);
+      if (value.published === false || value.hidden_for_user)
+        fail('This assignment is no longer available in Canvas.');
+      Object.assign(assignment, client.reference('assignments', value, course.canvasID));
+      this.store.save(account);
+    } catch (error) {
+      nav.assignmentNotice = `Deadline may be out of date. Could not refresh Canvas: ${error.message}`;
+    }
+    if (assignment.assignment?.locked) {
+      nav.assignmentNotice = [nav.assignmentNotice, 'Locked in Canvas.'].filter(Boolean).join(' ');
+      return;
+    }
     if (!this.cachedMaterial(course, assignment)) {
       try {
         await this.fetchMaterial(account, course, assignment, connected());
@@ -501,9 +908,7 @@ export class Workspaces {
       for (const ref of files.slice(0, 50).filter((file) => !file.fileName)) {
         try {
           const client = connected();
-          const item = (
-            await client.api(`/api/v1/courses/${course.canvasID}/files/${ref.remoteID}`)
-          ).value;
+          const item = await client.fileMetadata(ref.remoteID, course.canvasID);
           const resolved = client.reference('files', item, course.canvasID);
           course.canvasMaterials.push(resolved);
           delete notices[ref.id];
@@ -566,9 +971,10 @@ export class Workspaces {
         const cached = this.cachedMaterial(course, ref);
         if (cached) {
           try {
-            await this.upgradeCachedDocument(account, cached);
+            await this.upgradeCachedDocument(account, cached, signal);
             delete notices[ref.id];
           } catch (error) {
+            signal.throwIfAborted();
             notices[ref.id] = `${error.message} Open this file to retry.`;
           }
           continue;
@@ -604,7 +1010,7 @@ export class Workspaces {
         : 'Assignment files are ready.';
     });
   }
-  async assignmentContext(account, course, assignment, question, selectedDocument, selectedPage) {
+  async assignmentContext(account, course, assignment, question, selectedDocument, selectedPage, previousQuestions = [], signal) {
     const files = assignmentFileReferences(course, assignment),
       documents = [];
     const instructions = course.documents.find((document) => document.sourceKey === assignment.id);
@@ -629,47 +1035,19 @@ export class Workspaces {
       if (readable) documents.push({ document, label: ref.fileName || ref.title });
     }
     if (!instructions) manifest.push('Assignment instructions have not been downloaded.');
-    let context = manifest.join('\n').slice(0, 8000) + '\n\n',
-      sources = [];
-    const keywords = [...new Set(question.toLowerCase().match(/[\p{L}\p{N}_]{3,}/gu) || [])].slice(
-      0,
-      40
-    );
-    for (const [position, entry] of documents.entries()) {
-      const allowance = Math.floor((48_000 - context.length) / (documents.length - position));
-      if (allowance <= 100) break;
-      try {
-        const index = await this.documents.index(account.id, entry.document);
-        const pages = index.pages
-          .filter((page) => page.text.trim())
-          .map((page) => {
-            const lower = page.text.toLowerCase();
-            return {
-              ...page,
-              score:
-                keywords.reduce((score, term) => score + Number(lower.includes(term)), 0) +
-                (entry.document.id === selectedDocument?.id && page.number === selectedPage
-                  ? 100
-                  : 0),
-            };
-          })
-          .sort((a, b) => b.score - a.score || a.number - b.number);
-        let excerpt = '';
-        for (const page of pages) {
-          const heading = `[${entry.label}, page ${page.number}]\n`,
-            remaining = allowance - excerpt.length - heading.length - 2;
-          if (remaining <= 0) break;
-          excerpt += heading + page.text.slice(0, remaining) + '\n\n';
-          sources.push({ documentID: entry.document.id, title: entry.label, page: page.number });
-        }
-        context += excerpt || `[${entry.label}: no readable text available]\n`;
-      } catch {
-        context += `[${entry.label}: saved text is currently unavailable]\n`;
-      }
-    }
+    const manifestText = manifest.join('\n').slice(0, 8000) + '\n\n';
+    const projectDocuments = documents.map(({ document, label }) => ({ ...document, title: label }));
+    const packed = await buildCourseContext({
+      course: { ...course, documents: projectDocuments }, question, previousQuestions,
+      selectedDocument: projectDocuments.find((document) => document.id === selectedDocument?.id),
+      selectedPage, includeCourse: true, includeMetadata: false,
+      requiredDocumentIDs: new Set(projectDocuments.map((document) => document.id)),
+      readIndex: (document) => this.documents.index(account.id, document), signal,
+      maxChars: 48_000 - manifestText.length,
+    });
     return {
-      context: context.slice(0, 48_000),
-      sources,
+      context: manifestText + packed.context,
+      sources: packed.sources,
       documentIDs: new Set(documents.map(({ document }) => document.id)),
     };
   }
@@ -680,12 +1058,14 @@ export class Workspaces {
       selectedCourseID: id,
       selectedDocumentID: null,
       selectedAssignmentID: null,
-      selectedThreadID: course.threads.findLast((t) => !t.documentID)?.id || null,
+      selectedThreadID:
+        course.threads.findLast((t) => !t.documentID && !t.assignmentID)?.id || null,
       showingCourseLibrary: false,
       page: 1,
       selection: '',
       assignmentNotice: null,
     });
+    nav.mode = teachingModeLabel(this.thread(course, nav)?.mode);
     return course;
   }
   selectDocument(course, nav, id, keepAssignment = false) {
@@ -696,13 +1076,75 @@ export class Workspaces {
       selectedDocumentID: id,
       selectedAssignmentID: keepAssignment ? nav.selectedAssignmentID : null,
       showingCourseLibrary: false,
-      selectedThreadID: course.threads.findLast((t) => t.documentID === id)?.id || null,
+      selectedThreadID:
+        course.threads.findLast((t) =>
+          keepAssignment
+            ? t.assignmentID === nav.selectedAssignmentID
+            : t.documentID === id && !t.assignmentID
+        )?.id || null,
       page: doc.lastPage || 1,
       selection: '',
     });
     doc.lastOpenedAt = now();
+    nav.mode = teachingModeLabel(this.thread(course, nav)?.mode);
     return doc;
   }
+  async recommendExams(session, command, signal) {
+    const account = this.account(session.user_id);
+    if (account.examRecommendationBusy) fail('An exam recommendation is already running.', 409);
+    const exams = normalizeExamPlan(command?.exams);
+    const baseline = JSON.stringify(exams);
+    const current = () => JSON.stringify(normalizeExamPlan(account.library.examPlan || []));
+    if (baseline !== current()) fail('Your exam plan changed. Reload it before requesting a recommendation.', 409);
+    const mode = examRecommendationMode(command.mode);
+    let input = examRecommendationInput(exams, command.interests, account.library.courses, mode, command.history);
+    const catalogue = mode === 'advice' ? degreeCatalogue(ntnuStudyPlans, command.degreeSelections) : null;
+    const provider = hostedProviders.find((p) => p.id === account.settings.providerID) || hostedProviders[0];
+    const model = account.settings.modelID || provider.defaultModel;
+    const key = this.store.credential(account.id, `provider:${provider.id}`);
+    if (!key && !this.options.complete) fail('Add your provider API key in Account settings.');
+    const timeout = AbortSignal.timeout(300_000);
+    const responseSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    account.examRecommendationBusy = true;
+    try {
+      const reply = async (instructions, context) => {
+        responseSignal.throwIfAborted();
+        if (baseline !== current()) fail('Your exam dates or selections changed. Request a fresh recommendation.', 409);
+        let streamed = '';
+        const result = await (this.options.complete || runCompletion)({
+        provider: provider.id, model, reasoningEffort: reasoningEffort(provider, model, account.settings),
+        // Structured plan data must bypass the 12,000-character chat-message
+        // limit. Keep the student's request in the question, with the complete
+        // validated plan in the provider's reference-context channel.
+        kind: 'text', includeContext: true, compactContext: false, context,
+        messages: [{ role: 'user', content: `${instructions}\n\nStudent ${mode === 'advice' ? 'question' : 'interests and goals'}:\n${command.interests.trim()}\n\nUse the supplied exam plan as reference data.` }],
+      }, { provider: provider.id, apiKeys: { [provider.id]: key } },
+      (text) => { if (streamed.length <= 200000) streamed += text; }, responseSignal, () => {});
+        responseSignal.throwIfAborted();
+        if (baseline !== current()) fail('Your exam dates or selections changed. Request a fresh recommendation.', 409);
+        return result.text || streamed;
+      };
+      let degreePlans = null;
+      if (catalogue) {
+        let correction = '';
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const selection = await reply(STUDY_PLAN_RETRIEVAL_INSTRUCTIONS + correction,
+            JSON.stringify({ ...JSON.parse(input), degreeCatalogue: catalogue }));
+          try { degreePlans = retrieveDegreeInformation(ntnuStudyPlans, selection, command.degreeSelections); break; }
+          catch (error) {
+            if (attempt) throw error;
+            correction = '\nThe previous lookup was rejected: ' + error.message;
+          }
+        }
+        input = JSON.stringify({ ...JSON.parse(input), degreePlans });
+      }
+      const instructions = (mode === 'advice' ? EXAM_ADVICE_INSTRUCTIONS + '\n' + EXAM_ADVICE_CONVERSATION_INSTRUCTIONS : EXAM_RECOMMENDATION_INSTRUCTIONS)
+        + (degreePlans ? '\n' + STUDY_PLAN_INSTRUCTIONS : '');
+      const result = await reply(instructions, input);
+      return mode === 'advice' ? checkedExamAdvice(result) : checkedExamRecommendation(exams, result);
+    } finally { account.examRecommendationBusy = false; }
+  }
+
   async action(session, command) {
     return this.serial(session.user_id, async () => {
       this.store.refreshNavigation(session);
@@ -716,6 +1158,32 @@ export class Workspaces {
       if (['draft', 'send', 'page'].includes(command.action))
         this.validateOwner(account, nav, command.owner);
       switch (command.action) {
+        case 'examPlan': {
+          let exams, baseline;
+          try {
+            exams = normalizeExamPlan(command.exams);
+            baseline = normalizeExamPlan(command.baseExams);
+          } catch (error) {
+            fail(error.message);
+          }
+          if (
+            JSON.stringify(baseline) !==
+            JSON.stringify(normalizeExamPlan(account.library.examPlan || []))
+          )
+            fail('Your exam plan changed elsewhere. Reload the saved plan before saving.', 409);
+          account.library.examPlan = exams;
+          const favorites = new Set(examFavoriteCourseIDs(exams, account.library.courses));
+          for (const course of account.library.courses) {
+            if (favorites.has(course.id) && !course.favorite) {
+              course.favorite = true;
+              course.examFavorite = true;
+            } else if (!favorites.has(course.id) && course.examFavorite) {
+              course.favorite = false;
+              course.examFavorite = false;
+            }
+          }
+          break;
+        }
         case 'create': {
           if (!String(command.name || '').trim()) fail('Enter a workspace name.');
           if (account.library.courses.length >= 500)
@@ -730,7 +1198,16 @@ export class Workspaces {
         }
         case 'library':
           nav.showingCourseLibrary = true;
+          if (nav.courseLibraryView === 'assignments') nav.courseLibraryView = 'all';
           nav.selectedAssignmentID = null;
+          break;
+        case 'assignments':
+          nav.showingCourseLibrary = true;
+          nav.courseLibraryView = 'assignments';
+          nav.selectedAssignmentID = null;
+          break;
+        case 'refreshAssignments':
+          void this.refreshCanvasAssignments(account, Date.now(), true);
           break;
         case 'libraryView':
           nav.courseLibraryView = command.id === 'favorites' ? 'favorites' : 'all';
@@ -746,20 +1223,22 @@ export class Workspaces {
             account.library.courses.find((c) => c.id === command.id) ||
             fail('Workspace not found.', 404);
           c.favorite = !c.favorite;
+          c.examFavorite = false;
           break;
         }
+        case 'askCourse':
         case 'materials':
           this.selectCourse(account, nav, nav.selectedCourseID);
           break;
         case 'document':
-          this.selectDocument(course, nav, command.id);
+          this.upgradeOpenedDocument(account, this.selectDocument(course, nav, command.id));
           break;
         case 'resume': {
           const c =
             account.library.courses.find((c) => c.documents.some((d) => d.id === command.id)) ||
             fail('Document not found.', 404);
           this.selectCourse(account, nav, c.id);
-          this.selectDocument(c, nav, command.id);
+          this.upgradeOpenedDocument(account, this.selectDocument(c, nav, command.id));
           break;
         }
         case 'page': {
@@ -784,8 +1263,10 @@ export class Workspaces {
                 (ref) => ref.id === source?.sourceKey
               ));
           const threadID = nav.selectedThreadID;
+          const mode = nav.mode;
           const target = this.selectDocument(course, nav, command.id, !!related);
           nav.selectedThreadID = threadID;
+          nav.mode = mode;
           nav.page = Math.max(1, Math.min(target.pageCount, Number(command.page) || 1));
           break;
         }
@@ -795,16 +1276,42 @@ export class Workspaces {
             fail('Conversation not found.', 404);
           nav.selectedThreadID = thread.id;
           nav.selectedDocumentID = thread.documentID;
-          nav.selectedAssignmentID = null;
+          nav.selectedAssignmentID = thread.assignmentID || null;
+          nav.mode = teachingModeLabel(thread.mode);
           break;
         }
-        case 'newThread':
+        case 'newThread': {
+          const scope = courseContextScope(this.thread(course, nav), nav);
           nav.selectedThreadID = null;
-          this.thread(course, nav, true);
+          const thread = this.thread(course, nav, true);
+          if (scope === 'course') thread.documentID = thread.assignmentID = null;
+          break;
+        }
+        case 'automaticContext':
+          nav.automaticContextEnabled = command.enabled !== false;
           break;
         case 'context':
           nav.includeCourse = !!command.enabled;
           break;
+        case 'studyModelMode':
+          if (!STUDY_MODEL_MODES.includes(command.text)) fail('Unknown study model mode.');
+          account.settings.studyModelMode = command.text;
+          break;
+        case 'reasoning': {
+          const provider =
+            hostedProviders.find((provider) => provider.id === account.settings.providerID) ||
+            hostedProviders[0];
+          const model = account.settings.modelID || provider.defaultModel;
+          if (command.providerID !== provider.id || command.id !== model)
+            fail('The model changed. Select a reasoning mode for the current model.', 409);
+          if (!modelReasoning(provider, model)?.efforts.includes(command.text))
+            fail('This reasoning mode is unavailable for the selected model.');
+          account.settings.reasoningEfforts = {
+            ...account.settings.reasoningEfforts,
+            [provider.id]: command.text,
+          };
+          break;
+        }
         case 'model': {
           const provider =
             hostedProviders.find((p) => p.id === command.providerID) ||
@@ -891,7 +1398,13 @@ export class Workspaces {
               if (requested && requested !== c.id) continue;
               signal.throwIfAborted();
               account.status = `Checking ${c.code || c.name}…`;
-              const catalog = await canvas.catalog(c);
+              const checkedAt = Date.now();
+              beginPoll(c, 'canvas', checkedAt, 'regular');
+              this.store.save(account);
+              let catalog;
+              try { catalog = await canvas.catalog(c); }
+              catch (error) { signal.throwIfAborted(); observePoll(c, 'canvas', [], false, checkedAt); throw error; }
+              observeCatalog(c, catalog, checkedAt);
               c.canvasMaterials = catalog.items;
               c.catalogWarnings = catalog.warnings;
               c.catalogChanges = catalog.changes;
@@ -920,7 +1433,7 @@ export class Workspaces {
             course?.canvasMaterials.find((r) => r.id === command.id) ||
             fail('Material not found.', 404);
           const cached = course.documents.find(
-            (d) => d.sourceKey === ref.id && d.sourceVersion === ref.version
+            (d) => d.sourceKey === ref.id && d.sourceVersion === ref.version && !needsCanvasHTMLUpgrade(d)
           );
           if (!cached) this.assertAvailable(account);
           const doc =
@@ -952,31 +1465,51 @@ export class Workspaces {
           if (index < 0 || account.streaming) fail('Message cannot be edited.');
           nav.editing = command.id;
           thread.draft = thread.messages[index].content;
+          thread.draftImage = thread.messages[index].imageData || null;
+          thread.draftFiles = normalizeFileAttachments(thread.messages[index].files);
           break;
         }
         case 'cancelEdit':
           nav.editing = null;
           break;
+        case 'workspaceMemory': {
+          const target = account.library.courses.find((item) => item.id === command.courseID);
+          if (!target) fail('Workspace not found.', 404);
+          saveWorkspaceMemory(target, command.assignmentID || null, command.text, command.documentIDs);
+          break;
+        }
+        case 'language': {
+          if (!['auto', 'en', 'no'].includes(command.text)) fail('Unknown response language.');
+          account.settings.language = command.text;
+          break;
+        }
         case 'draft':
         case 'send': {
           if (!course) fail('Open a workspace first.');
           const thread = this.thread(course, nav, true);
           thread.draft = String(command.text || '').slice(0, 200000);
+          if (Array.isArray(command.files)) thread.draftFiles = await this.attachmentCorpus.retain(account, command.files,
+            [...thread.messages.flatMap((message) => message.files || []), ...(thread.draftFiles || [])]);
+          if (typeof command.automaticContextEnabled === 'boolean') nav.automaticContextEnabled = command.automaticContextEnabled;
           nav.selection = String(command.selection || '').slice(0, 16000);
-          if (['Explain', 'Guide me', 'Practice'].includes(command.mode)) nav.mode = command.mode;
+          if (command.mode) nav.mode = teachingModeLabel(command.mode);
+          thread.mode = nav.mode || 'Explain';
+          if (typeof command.entirePDF === 'boolean') thread.entirePDF = command.entirePDF;
           if (command.image) {
             if (command.image.length > 14_000_000 || !/^[A-Za-z0-9+/=\s]+$/.test(command.image))
               fail('Invalid question image.');
             thread.draftImage = command.image;
           } else if (command.clearImage) thread.draftImage = null;
           if (command.action === 'send') {
-            if (!thread.draft.trim() && !thread.draftImage) fail('Enter a question.');
+            if (!thread.draft.trim() && !thread.draftImage && !thread.draftFiles?.some((file) => file.enabled) && !nav.selection.trim()) fail('Enter a question, attach a file, or select a passage.');
             this.assertAvailable(account);
             if (thread.messages.length >= 400) fail('Start a new conversation to continue.');
             const provider =
               hostedProviders.find((p) => p.id === account.settings.providerID) ||
               hostedProviders[0];
-            const model = account.settings.modelID || provider.defaultModel;
+            const selectedModel = account.settings.modelID || provider.defaultModel;
+            const selectedEffort = reasoningEffort(provider, selectedModel, account.settings);
+            const studyMode = normalizeStudyModelMode(account.settings.studyModelMode);
             const key = this.store.credential(account.id, `provider:${provider.id}`);
             if (!key && !this.options.complete)
               fail('Add your provider API key in Account settings.');
@@ -986,89 +1519,181 @@ export class Workspaces {
               thread.messages.splice(at);
               nav.editing = null;
             }
-            const question = thread.draft,
+            const question = thread.draft.trim() || (nav.selection.trim()
+                ? `Explain this passage in its document context:\n\n> ${nav.selection.replaceAll('\n', '\n> ')}`
+                : thread.draftFiles?.some((file) => file.enabled) ? 'Help me understand the attached files. Ask for any missing information needed to explain the project accurately.' : 'Explain this image in its document context.'),
               image = thread.draftImage,
+              files = normalizeFileAttachments((thread.draftFiles || []).filter((file) => file.enabled !== false)),
+              automaticContextEnabled = nav.automaticContextEnabled !== false,
               selection = nav.selection,
               page = nav.page || 1,
-              includeCourse = nav.includeCourse !== false,
+              contextScope = courseContextScope(thread, nav),
+              includeCourse = contextScope === 'course' || nav.includeCourse === true,
               mode = nav.mode,
+              language = account.settings.language || 'auto',
+              entirePDF = automaticContextEnabled && thread.entirePDF === true,
               doc = course.documents.find((d) => d.id === nav.selectedDocumentID),
               assignment = course.canvasMaterials.find(
-                (ref) => ref.kind === 'assignments' && ref.id === nav.selectedAssignmentID
+                (ref) =>
+                  ref.kind === 'assignments' &&
+                  ref.id === (thread.assignmentID || nav.selectedAssignmentID)
               );
+            if (entirePDF && (!doc || ['image', 'preview'].includes(doc.kind) || contextScope === 'course')) fail('Open a readable document conversation to send the whole document.');
             thread.messages.push({
               id: randomUUID(),
               role: 'user',
               content: question,
               imageData: image,
+              files,
               createdAt: now(),
             });
             if (thread.messages.length === 1)
               thread.title = question.slice(0, 60) || 'Image question';
             thread.draft = '';
             thread.draftImage = null;
+            thread.draftFiles = [];
             const reply = {
               id: randomUUID(),
               role: 'assistant',
               content: '',
               isStreaming: true,
+              metadata: 'Finding relevant course sources…',
               createdAt: now(),
+              activity: [],
             };
+            const activity = (title, detail) => {
+              if (reply.activity.at(-1)?.title === title && reply.activity.at(-1)?.detail === detail) return;
+              reply.activity.push({ id: randomUUID(), timestamp: now(), title: String(title).slice(0, 180), ...(detail ? { detail: String(detail).slice(0, 2000) } : {}) });
+              if (reply.activity.length > 80) reply.activity.shift();
+            };
+            activity('Finding relevant course sources…');
             thread.messages.push(reply);
             this.job(
               account,
-              'Thinking…',
+              'Finding relevant course sources…',
               async (signal) => {
                 try {
-                  const assigned = assignment
-                    ? await this.assignmentContext(account, course, assignment, question, doc, page)
-                    : { context: '', sources: [], documentIDs: new Set() };
-                  const refs = doc && !assigned.documentIDs.has(doc.id) ? [{ doc, page }] : [];
-                  if (includeCourse)
-                    for (const d of course.documents
-                      .filter((d) => d.id !== doc?.id && !assigned.documentIDs.has(d.id))
-                      .slice(0, 20))
-                      refs.push({ doc: d, page: 1 });
-                  let context = assigned.context,
-                    sources = assigned.sources,
-                    courseContext = '';
-                  for (const ref of refs) {
-                    const index = await this.documents.index(account.id, ref.doc),
-                      text = index.pages.find((p) => p.number === ref.page)?.text || '';
-                    if (courseContext.length >= 45000) break;
-                    courseContext += `\n[${ref.doc.title}, page ${ref.page}]\n${text.slice(0, 12000)}\n`;
-                    sources.push({ documentID: ref.doc.id, title: ref.doc.title, page: ref.page });
+                  const assigned =
+                    automaticContextEnabled && contextScope === 'assignment' && assignment && !entirePDF
+                      ? await this.assignmentContext(
+                          account,
+                          course,
+                          assignment,
+                          question,
+                          doc,
+                          page,
+                          thread.messages.filter((message) => message.role === 'user').slice(0, -1).map((message) => message.content),
+                          signal
+                        )
+                      : { context: '', sources: [], documentIDs: new Set() };
+                  const memory = automaticContextEnabled && (includeCourse || contextScope === 'assignment') ? await buildWorkspaceMemory({ course, assignmentID: contextScope === 'assignment' ? assignment?.id : null,
+                    question, readIndex: (document) => this.documents.index(account.id, document), signal }) : { context: '', sources: [] };
+                  let fullPDF;
+                  if (entirePDF) {
+                    activity('Reading whole document', `${doc.title} · ${doc.pageCount} pages`);
+                    const index = await this.documents.index(account.id, doc);
+                    const pages = new Map(index.pages.map((page) => [page.number, page.text]));
+                    fullPDF = entirePdfContext({ title: doc.title, kind: doc.kind, pageCount: doc.pageCount,
+                      pages: Array.from({ length: doc.pageCount }, (_, index) => pages.get(index + 1)) });
+                    fullPDF.sources = index.pages.map((page) => ({ documentID: doc.id, title: doc.title, page: page.number }));
+                    activity(fullPDF.summary);
                   }
-                  context += courseContext;
+                  const supplemental = fullPDF || (
+                    automaticContextEnabled && (includeCourse || (doc && !assigned.documentIDs.has(doc.id)))
+                      ? await buildCourseContext({
+                          course,
+                          question,
+                          previousQuestions: thread.messages.filter((message) => message.role === 'user').slice(0, -1).map((message) => message.content),
+                          readIndex: (document) => this.documents.index(account.id, document),
+                          selectedDocument: contextScope === 'course' ? null : doc,
+                          selectedPage: page,
+                          includeCourse,
+                          includeMetadata: includeCourse,
+                          excludedIDs: assigned.documentIDs,
+                          signal,
+                          maxChars: assigned.context ? 24_000 : 48_000,
+                        })
+                      : { context: '', sources: [] });
+                  const context = memory.context + assigned.context + supplemental.context,
+                    sources = [...new Map([...memory.sources, ...assigned.sources, ...supplemental.sources]
+                      .map((source) => [`${source.documentID}:${source.page}`, source])).values()];
+                  signal.throwIfAborted();
+                  const route = routeStudyModel({
+                    mode: studyMode, providerID: provider.id, selectedModel,
+                    reasoningEffort: selectedEffort, availableModels: provider.models,
+                    question, previousQuestions: thread.messages.filter((m) => m.role === 'user').slice(0, -1).map((m) => m.content),
+                    contextCharacters: context.length + thread.messages.reduce((total, message) => total + message.content.length, 0),
+                    hasImages: thread.messages.some((m) => !!m.imageData),
+                  });
+                  const model = route.modelID, effort = route.reasoningEffort;
+                  if (studyMode !== 'manual') {
+                    reply.modelRouting = route;
+                    activity('Study model selected', studyRouteDescription(route));
+                  }
                   thread.sources[reply.id] = sources;
+                  for (const source of sources) activity('Read saved file', `${source.title} · page ${source.page}`);
+                  const requestMessages = [];
+                  let attachmentBudget = 96_000;
+                  const previousQuestions = thread.messages.filter((message) => message.role === 'user').slice(0, -1).map((message) => message.content);
+                  for (const message of [...thread.messages].reverse()) {
+                    if (message === reply) continue;
+                    const selectedFiles = message.files?.length
+                      ? await this.attachmentCorpus.select(account.id, message.files, { question, previousQuestions, budget: attachmentBudget }) : [];
+                    attachmentBudget = Math.max(0, attachmentBudget - selectedFiles.reduce((sum, file) => sum + file.text.length, 0));
+                    for (const file of selectedFiles) activity('Read attached file', `${file.name} · ${file.contextCoverage || `All ${file.text.length} saved text characters supplied.`}`);
+                    requestMessages.unshift({ role: message.role, content: message.content,
+                      ...(selectedFiles.length ? { files: selectedFiles } : {}),
+                      ...(message.imageData ? { imageDataUrl: `data:image/jpeg;base64,${message.imageData}` } : {}) });
+                  }
+                  reply.metadata = `Sources ready · Waiting for ${model}…`;
+                  activity(reply.metadata);
                   const payload = {
                     provider: provider.id,
                     model,
+                    reasoningEffort: effort,
                     kind: image ? 'image' : 'text',
                     selection,
                     context,
-                    pageTitle: doc?.title || course.name,
+                    pageTitle: automaticContextEnabled ? contextScope === 'course' ? course.name : doc?.title || course.name : '',
                     learningMode: mode,
-                    messages: thread.messages
-                      .filter((m) => m !== reply)
-                      .map((m) => ({
-                        role: m.role,
-                        content: m.content,
-                        ...(m.imageData
-                          ? { imageDataUrl: `data:image/jpeg;base64,${m.imageData}` }
-                          : {}),
-                      })),
+                    language,
+                    entirePDF,
+                    entireDocument: entirePDF && doc?.kind !== 'pdf',
+                    messages: requestMessages,
                   };
+                  const responseSignal = AbortSignal.any([signal, AbortSignal.timeout(300_000)]);
                   const result = await (this.options.complete || runCompletion)(
                     payload,
                     { provider: provider.id, apiKeys: { [provider.id]: key } },
                     (text) => {
+                      if (responseSignal.aborted) return;
                       reply.content += text;
+                      reply.metadata = 'Writing answer…';
+                      activity(reply.metadata);
                     },
-                    signal
+                    responseSignal,
+                    () => {
+                      if (!responseSignal.aborted && !reply.content) { reply.metadata = 'Model is reasoning…'; activity(reply.metadata); }
+                    },
+                    (event) => { if (!responseSignal.aborted) activity(event.title, event.detail); }
                   );
+                  responseSignal.throwIfAborted();
                   reply.content = result.text || reply.content;
+                  if (!reply.content.trim())
+                    throw new Error(
+                      'The model returned an empty response. Try again or select another model.'
+                    );
+                  reply.reasoning = result.reasoning || undefined;
+                  account.settings.recentModels = recordRecentModel(account.settings.recentModels, provider.id, model);
+                  reply.metadata = `${model} · ${sources.length} source pages`;
                   account.status = 'Answer saved.';
+                  activity('Answer complete', model);
+                } catch (error) {
+                  reply.metadata = signal.aborted ? 'Stopped' : 'Response interrupted';
+                  activity(reply.metadata);
+                  if (error.name === 'TimeoutError')
+                    throw new Error('The model timed out after 5 minutes. Try again, reduce reasoning effort, or choose another model.');
+                  throw error;
                 } finally {
                   reply.isStreaming = false;
                 }
@@ -1152,9 +1777,13 @@ export class Workspaces {
   }
   async stop() {
     this.stopping = true;
+    for (const account of this.accounts.values()) account.assignmentRefreshController?.abort();
+    await Promise.allSettled([...this.accounts.values()].map((account) => account.assignmentRefresh));
     for (const account of this.accounts.values()) account.controller?.abort();
     await Promise.allSettled([...this.queues.values()]);
     for (const account of this.accounts.values()) account.controller?.abort();
     await Promise.allSettled([...this.accounts.values()].map((account) => account.job));
+    await Promise.allSettled([...this.analysisJobs.values()]);
+    await this.search.close();
   }
 }

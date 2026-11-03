@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ignoredDirectories = new Set(['.git', '.swiftpm', '.build', 'dist', 'node_modules', '.data']);
+const ignoredDirectories = new Set(['.git', '.swiftpm', '.build', 'dist', 'node_modules', '.data', 'output', '.release']);
 
 function projectFiles(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

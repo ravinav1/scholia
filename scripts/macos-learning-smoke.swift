@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import Combine
 @testable import ScholiaMac
 
 extension StudyWorkspaceSmoke {
@@ -22,6 +23,27 @@ extension StudyWorkspaceSmoke {
     }
 
     static func checkLearning() async throws {
+        for language in ["en", "no"] {
+            for mode in StudyTeachingMode.allCases {
+                let prepared = PreparedConversation(language: language, messages: [], teachingMode: mode)
+                precondition(prepared.systemPrompt.contains(TutoringPolicy.learningBoundary) == (mode != .chat))
+                precondition(prepared.systemPrompt.contains(mode.instruction))
+            }
+        }
+        precondition(PreparedConversation(language: "en", messages: [], purpose: .practiceGeneration)
+            .systemPrompt.contains("do not reproduce or solve the source problems"))
+        var settings = AppSettings()
+        for n in 1...15 {
+            settings.recordModelUse(providerID: "codex", modelID: "model-\(n)", endpoint: settings.endpoints["codex"]!, at: Date(timeIntervalSince1970: Double(n)))
+        }
+        settings.recordModelUse(providerID: "openai", modelID: "model-14", endpoint: settings.endpoints["openai"]!, at: Date(timeIntervalSince1970: 20))
+        settings.recordModelUse(providerID: "codex", modelID: "model-14", endpoint: settings.endpoints["codex"]!, at: Date(timeIntervalSince1970: 21))
+        let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        precondition(restored.recentModels.count == 12 && restored.recentModels.prefix(2).map(\.providerID) == ["codex", "openai"])
+        settings.endpoints["codex"] = "http://localhost:9999/v1/chat/completions"
+        precondition(settings.recentModels.map(\.providerID) == ["openai"])
+        let catalog = try CodexModelCatalog.models(from: Data(#"{"data":[{"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","reasoning":{"efforts":["low","high","future"],"default":"future"},"supportsImages":false},{"id":"gpt-6.1-sol"}]}"#.utf8))
+        precondition(catalog.count == 1 && catalog[0].defaultReasoningEffort == "future" && catalog[0].supportsImages == false)
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-learning-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let libraryStore = StudyLibraryStore(root: root)
@@ -30,6 +52,27 @@ extension StudyWorkspaceSmoke {
         var library = StudyLibrary(courses: [course], selectedCourseID: course.id, selectedDocumentID: document.id)
         try libraryStore.save(library)
         let model = StudyWorkspaceModel(store: libraryStore)
+        // Let the initial document load and classification finish before
+        // measuring notifications caused by editor input.
+        try await Task.sleep(for: .milliseconds(500))
+        model.newThread()
+        var workspaceChanges = 0
+        let subscription = model.objectWillChange.sink { workspaceChanges += 1 }
+        for n in 0..<250 { model.draft = "An unfinished thought \(n)" }
+        precondition(workspaceChanges == 0, "Typing must not publish changes to the reader and conversation")
+        precondition(model.thread?.draft == "", "The library copy waits for a typing pause")
+        try await Task.sleep(for: .milliseconds(500))
+        precondition(workspaceChanges == 1 && model.thread?.draft == model.draft, "A typing burst coalesces into one library change (got \(workspaceChanges))")
+        subscription.cancel()
+        let draftedThread = model.thread!.id
+        model.draft = "Saved immediately on navigation"
+        model.newThread()
+        model.selectThread(draftedThread)
+        precondition(model.draft == "Saved immediately on navigation")
+        model.draft = "Saved immediately on flush"
+        model.flush()
+        let flushedLibrary = try libraryStore.load()
+        precondition(flushedLibrary.courses[0].threads.first(where: { $0.id == draftedThread })?.draft == "Saved immediately on flush")
         let learning = model.learning
         model.preparePractice(count: 2, scope: "Eigenvectors", openBook: false, configuration: practiceConfiguration, complete: practiceCompletion)
         for _ in 0..<100 where learning.state.session == nil { try await Task.sleep(for: .milliseconds(30)) }
@@ -47,6 +90,8 @@ extension StudyWorkspaceSmoke {
         func rejects(_ body: () throws -> Void) {
             do { try body(); preconditionFailure("Expected a conflict") } catch {}
         }
+        rejects { try learning.perform(cmd("reveal")) }
+        precondition(learning.view(library: library).question?.referenceAnswer == nil)
         let attempt = cmd("attempt", text: "The magnitude remains constant.")
         try learning.perform(attempt); try learning.perform(attempt)
         precondition(learning.state.attempts.count == 1 && learning.state.attempts[0].independent)
@@ -95,7 +140,9 @@ extension StudyWorkspaceSmoke {
         try learning.perform(cmd("next"))
         precondition(learning.state.session?.hintCount == 0 && learning.state.session?.revealed == false)
         try learning.perform(cmd("finish"))
+        rejects { try learning.perform(cmd("revealSaved")) }
         try learning.perform(LearningCommand(action: "review", questionID: first))
+        rejects { try learning.perform(cmd("reveal")) }
         let recall = cmd("attempt", text: "Av is collinear with v; its magnitude need not stay fixed.")
         try learning.perform(recall)
         let correct = LearningAssessment(verdict: "correct", correct: "Equivalent valid reasoning", issue: "None", nextStep: "Try another context", model: "fixture")
@@ -177,6 +224,6 @@ extension StudyWorkspaceSmoke {
         rejects { try learning.commit(LearningEvent(command: LearningCommand(action: "create"), questions: [learning.state.questions[first]!], session: LearningSession(id: UUID(), courseID: course.id, questionIDs: [first]))) }
         precondition(learning.state.questions[first] == unchanged)
 
-        print("PASS: learning generation, hidden solutions, immutable revisions, hints, reveal, self-check, disputes, restart, idempotent events/schedules, competing writers, source versions and draft ownership")
+        print("PASS: tutoring boundaries, recent models, dynamic catalog, isolated/debounced typing, draft persistence, hidden solutions, attempt-first reveal and recap, learning events and restart")
     }
 }

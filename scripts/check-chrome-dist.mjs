@@ -16,8 +16,9 @@ if (!manifest.action?.default_popup) throw new Error('Chrome build does not decl
 if (manifest.action.default_popup === manifest.side_panel?.default_path) {
   throw new Error('The toolbar popup and side panel must remain separate surfaces.');
 }
-if (manifest.mime_types_handler) {
-  throw new Error('Do not register native MIME handlers: affected browsers crash when opening a PDF.');
+if (manifest.mime_types_handler?.['application/pdf']?.handler_url !== 'pdf-viewer.html'
+    || manifest.mime_types_handler['application/pdf'].can_embed !== true) {
+  throw new Error('Register the PDF MIME reader so supported Chromium versions retain the original address.');
 }
 for (const command of ['capture-region', 'quick-chat']) {
   if (!manifest.commands?.[command]) throw new Error(`Chrome build is missing the ${command} command.`);
@@ -39,6 +40,9 @@ const required = [
   'options.js', 'options.css', 'panel.js', 'panel.css', 'file-attachments.css',
   'chat.html', 'chat.css', 'chat-bootstrap.js',
   'popup.js', 'popup.css', 'pdf-viewer.html', 'pdf-viewer.js', 'pdf-viewer.css',
+  'ocr-offscreen.html', 'ocr-offscreen.js', 'vendor/ocr/worker.min.js',
+  ...['lstm', 'simd-lstm', 'relaxedsimd-lstm'].map((variant) => `vendor/ocr/tesseract-core-${variant}.wasm.js`),
+  'vendor/ocr/lang/eng.traineddata.gz', 'vendor/ocr/lang/nor.traineddata.gz',
   'vendor/katex/katex.min.css', 'vendor/katex/LICENSE',
   'vendor/licenses/markdown-it.txt', 'vendor/licenses/highlight.js.txt',
   'vendor/pdfjs/pdf.min.mjs', 'vendor/pdfjs/pdf.worker.min.mjs',
@@ -47,14 +51,14 @@ const required = [
 
 for (const relative of required) await access(join(dist, relative));
 
-for (const htmlFile of [manifest.options_page, manifest.action.default_popup, manifest.side_panel.default_path, 'chat.html', 'pdf-viewer.html']) {
+for (const htmlFile of [manifest.options_page, manifest.action.default_popup, manifest.side_panel.default_path, 'chat.html', 'pdf-viewer.html', 'ocr-offscreen.html']) {
   const html = await readFile(join(dist, htmlFile), 'utf8');
   const remoteScript = /<script[^>]+src=["']https?:\/\//i.exec(html);
   if (remoteScript) throw new Error(`${htmlFile} loads remotely hosted code.`);
   if (/\son\w+\s*=/.test(html)) throw new Error(`${htmlFile} contains an inline event handler.`);
 }
 
-for (const jsFile of ['content.js', 'chatgpt-probe.js', 'service-worker.js', 'options.js', 'panel.js', 'chat-bootstrap.js', 'popup.js', 'pdf-viewer.js']) {
+for (const jsFile of ['content.js', 'chatgpt-probe.js', 'service-worker.js', 'options.js', 'panel.js', 'chat-bootstrap.js', 'popup.js', 'pdf-viewer.js', 'ocr-offscreen.js']) {
   const source = await readFile(join(dist, jsFile), 'utf8');
   if (/\b(?:eval|Function)\s*\(/.test(source)) throw new Error(`${jsFile} contains dynamic code execution.`);
   if (/\bimport\s*\(\s*["']https?:\/\//.test(source)) throw new Error(`${jsFile} imports remote code.`);

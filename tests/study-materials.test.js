@@ -69,3 +69,39 @@ test('saved instructions and submitted assignments have independent indicators',
   assert.match(html, /class="submission-badge handed-in"/);
   assert.match(html, /Download on demand/);
 });
+
+test('Canvas page headings replace inferred categories inside modules and preserve link order', () => {
+  const classified = [{ ...groups[0], items: [
+    { title: 'First', materialID: 'files:1', categoryTitle: 'Lecture notes', topic: 'Linear algebra', canvasHeading: 'Week 35', canvasSubheading: 'Attachments' },
+    { title: 'Second', materialID: 'files:2', categoryTitle: 'Exercises & assignments', canvasHeading: 'Week 35', canvasSubheading: 'Attachments' },
+    { title: 'Third', materialID: 'files:3', categoryTitle: 'Lecture notes', canvasHeading: 'Week 35', canvasSubheading: 'Extra material' },
+    { title: 'Fourth', materialID: 'files:4' },
+  ] }];
+  const html = materialGroupsMarkup(classified);
+  assert.deepEqual([...html.matchAll(/class="material-subheader">([^<]+)/g)].map((match) => match[1]),
+    ['Week 35', 'Attachments', 'Extra material']);
+  assert.ok(html.indexOf('>First<') < html.indexOf('>Second<'));
+  assert.ok(html.indexOf('>Second<') < html.indexOf('>Third<'));
+  assert.match(materialGroupsMarkup(classified, { query: 'linear algebra' }), />First</);
+  assert.doesNotMatch(materialGroupsMarkup(classified, { query: 'linear algebra' }), />Second</);
+  assert.match(materialGroupsMarkup(classified, { query: 'Week 35' }), />Second</);
+  assert.doesNotMatch(html, /Lecture notes|Exercises &amp; assignments|Other materials/);
+});
+
+test('unstructured courses retain content topics and Canvas groups without sections stay flat', () => {
+  const items = [{ title: 'Notes', materialID: 'files:1', topic: 'Eigenvectors', categoryTitle: 'Lecture notes' }];
+  assert.match(materialGroupsMarkup([{ id: 'lectures', title: 'Lecture notes', items }]), /material-subheader">Eigenvectors/);
+  for (const id of ['module:1', 'folder:1'])
+    assert.doesNotMatch(materialGroupsMarkup([{ id, title: 'Teaching', items }]), /material-subheader/);
+});
+
+test('file search uses content topics and exposes safely escaped OCR evidence', () => {
+  const file = { title: 'scan-004.pdf', materialID: 'files:4', topic: 'Eigenvectors <basis>',
+    categoryTitle: 'Notes', extractionMethod: 'ocr', classificationBasis: 'Heading: "Eigenvectors"' };
+  const html = materialFilesMarkup([file], { query: 'eigenvectors' });
+  assert.match(html, /scan-004.pdf/);
+  assert.match(html, /Eigenvectors &lt;basis&gt;/);
+  assert.match(html, /Includes OCR text/);
+  assert.match(html, /title="Heading: &quot;Eigenvectors&quot;"/);
+  assert.doesNotMatch(html, /<basis>|<details/);
+});

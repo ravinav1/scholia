@@ -32,6 +32,7 @@ struct ComposerTextView: View {
     var onSubmit: () -> Void
     var onPasteAttachment: (() -> Bool)? = nil
     var onPasteImage: ((NSImage) -> Void)? = nil
+    var onDropAttachment: ((NSPasteboard) -> Bool)? = nil
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -50,14 +51,16 @@ struct ComposerTextView: View {
                 maximumUTF16Units: maximumUTF16Units,
                 onSubmit: onSubmit,
                 onPasteAttachment: onPasteAttachment,
-                onPasteImage: onPasteImage
+                onPasteImage: onPasteImage,
+                onDropAttachment: onDropAttachment
             )
         }
+        .frame(minWidth: 0, maxWidth: .infinity)
         .frame(height: height)
         .contentShape(Rectangle())
         .help(onPasteAttachment == nil && onPasteImage == nil
             ? "Return sends · Shift-Return inserts a new line"
-            : "Paste an image, PDF, or text file with Command-V · Return sends · Shift-Return inserts a new line")
+            : "Drop or paste files with Command-V · Return sends · Shift-Return inserts a new line")
     }
 }
 
@@ -70,6 +73,7 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
     var onSubmit: () -> Void
     var onPasteAttachment: (() -> Bool)?
     var onPasteImage: ((NSImage) -> Void)?
+    var onDropAttachment: ((NSPasteboard) -> Bool)?
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -89,6 +93,8 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
         editor.onSubmit = onSubmit
         editor.onPasteAttachment = onPasteAttachment
         editor.onPasteImage = onPasteImage
+        editor.onDropAttachment = onDropAttachment
+        editor.registerForDraggedTypes(AttachmentDropReader.draggedTypes)
 
         let bounded = TextInputPolicy.bounded(text, maximumUTF16Units: maximumUTF16Units)
         if bounded != text {
@@ -104,15 +110,17 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
             editor.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
             context.coordinator.isSynchronizing = false
         }
-        scrollView.wantsEditorFocus = isFocused && isEnabled
+        if scrollView.wantsEditorFocus != (isFocused && isEnabled) {
+            scrollView.wantsEditorFocus = isFocused && isEnabled
+        }
     }
 
     private func configure(_ editor: BoundedComposerTextView) {
-        editor.font = font
-        editor.textColor = .labelColor
-        editor.insertionPointColor = .labelColor
-        editor.isEditable = isEnabled
-        editor.isSelectable = isEnabled
+        if editor.font != font { editor.font = font }
+        if editor.textColor != .labelColor { editor.textColor = .labelColor }
+        if editor.insertionPointColor != .labelColor { editor.insertionPointColor = .labelColor }
+        if editor.isEditable != isEnabled { editor.isEditable = isEnabled }
+        if editor.isSelectable != isEnabled { editor.isSelectable = isEnabled }
         editor.setAccessibilityLabel("Message")
     }
 
@@ -228,8 +236,66 @@ final class BoundedComposerTextView: NSTextView {
     var onSubmit: (() -> Void)?
     var onPasteAttachment: (() -> Bool)?
     var onPasteImage: ((NSImage) -> Void)?
+    var onDropAttachment: ((NSPasteboard) -> Bool)?
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if onDropAttachment != nil, AttachmentDropReader.canRead(sender.draggingPasteboard, allowPathStrings: true) {
+            return isEditable ? .copy : []
+        }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if onDropAttachment != nil, AttachmentDropReader.canRead(sender.draggingPasteboard, allowPathStrings: true) {
+            return isEditable ? .copy : []
+        }
+        return super.draggingUpdated(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if onDropAttachment != nil, AttachmentDropReader.canRead(sender.draggingPasteboard, allowPathStrings: true) { return isEditable }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if isEditable, let onDropAttachment, AttachmentDropReader.canRead(sender.draggingPasteboard, allowPathStrings: true) {
+            return onDropAttachment(sender.draggingPasteboard)
+        }
+        return super.performDragOperation(sender)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleEditingShortcut(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    private func handleEditingShortcut(_ event: NSEvent) -> Bool {
+        // A nonactivating Quick Ask panel may be key while another app owns
+        // the menu bar. Route editing commands to this focused editor instead
+        // of relying on that app's Edit menu or a SwiftUI scene's commands.
+        guard window?.firstResponder === self, isSelectable else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let key = event.charactersIgnoringModifiers?.lowercased()
+        if modifiers == [.command] {
+            switch key {
+            case "a": selectAll(nil)
+            case "c": copy(nil)
+            case "x" where isEditable: cut(nil)
+            case "v" where isEditable: paste(nil)
+            case "z" where isEditable: undoManager?.undo()
+            default: return false
+            }
+            return true
+        }
+        if modifiers == [.command, .shift], key == "z", isEditable {
+            undoManager?.redo()
+            return true
+        }
+        return false
+    }
 
     override func keyDown(with event: NSEvent) {
+        if handleEditingShortcut(event) { return }
         guard !hasMarkedText() else {
             super.keyDown(with: event)
             return

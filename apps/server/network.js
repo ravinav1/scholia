@@ -44,7 +44,7 @@ export function publicAddress(address) {
 // Resolve once and pin that public address to the socket, including every redirect.
 export async function remoteRequest(
   value,
-  { headers = {}, limit = 100_000_000, redirects = false, signal, depth = 0 } = {}
+  { headers = {}, limit = 100_000_000, redirects = false, signal, depth = 0, method = 'GET' } = {}
 ) {
   const url = new URL(value);
   const deadline = AbortSignal.timeout(45000);
@@ -66,6 +66,7 @@ export async function remoteRequest(
     const request = https.request(
       url,
       {
+        method,
         headers,
         signal,
         lookup: (_name, options, callback) =>
@@ -85,6 +86,7 @@ export async function remoteRequest(
             redirects,
             signal,
             depth: depth + 1,
+            method,
           }).then(resolve, reject);
           return;
         }

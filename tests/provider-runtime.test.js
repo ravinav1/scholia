@@ -12,7 +12,7 @@ const basePayload = {
 
 test('GPT-6 requests preserve supported reasoning without unsupported temperature', () => {
   const settings = mergeSettings({ apiKeys: { openai: 'test-key' } });
-  for (const model of ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']) {
+  for (const model of ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
     for (const webSearch of [false, true]) {
       const request = buildProviderRequest({ ...basePayload, provider: 'openai', model, reasoningEffort: 'high', webSearch }, settings);
       const body = JSON.parse(request.fetchOptions.body);
@@ -96,8 +96,8 @@ test('PDF guided learning mode reaches the provider system instruction', () => {
   }, settings);
   const body = JSON.parse(request.fetchOptions.body);
 
-  assert.match(body.messages[0].content, /Guided learning mode is active/);
-  assert.match(body.messages[0].content, /completed solution when explicitly requested/);
+  assert.match(body.messages[0].content, /Explain mode:/);
+  assert.match(body.messages[0].content, /never produce a complete submission/);
 });
 
 test('an initial highlight question includes the fetched page context', () => {
@@ -118,7 +118,7 @@ test('an initial highlight question includes the fetched page context', () => {
   assert.ok(question.endsWith('Question: Explain this.'));
 });
 
-test('Auto preserves a detected non-English document language in instructions and metadata', () => {
+test('Auto follows the prompt while retaining document language as reference metadata', () => {
   const settings = mergeSettings({ apiKeys: { openai: 'secret' }, language: 'auto' });
   const request = buildProviderRequest({
     ...basePayload,
@@ -128,8 +128,19 @@ test('Auto preserves a detected non-English document language in instructions an
   }, settings);
   const body = JSON.parse(request.fetchOptions.body);
 
-  assert.match(body.messages[0].content, /BCP-47 code "fr"/);
+  assert.match(body.messages[0].content, /language of the user’s latest question on every turn/);
   assert.match(body.messages[1].content, /Detected document language: fr-FR/);
+});
+
+test('a selected response language reaches providers and can be reset to Auto', () => {
+  const settings = mergeSettings({ apiKeys: { openai: 'secret' }, language: 'no' });
+  for (const [language, rule] of [
+    [undefined, /Svar på norsk bokmål/], ['en', /Reply in English/],
+    ['auto', /language of the user’s latest question on every turn/]
+  ]) {
+    const request = buildProviderRequest({ ...basePayload, provider: 'openai', language }, settings);
+    assert.match(JSON.parse(request.fetchOptions.body).messages[0].content, rule);
+  }
 });
 
 test('a per-chat context toggle omits automatic source and account context but keeps explicit selection', () => {
@@ -514,10 +525,12 @@ test('OpenAI web-search streaming preserves citations as clickable sources', asy
 
   try {
     const tokens = [];
+    const activity = [];
     const settings = mergeSettings({ apiKeys: { openai: 'secret' } });
     const result = await runCompletion({
       ...basePayload, provider: 'openai', webSearch: true
-    }, settings, (token) => tokens.push(token));
+    }, settings, (token) => tokens.push(token), undefined, () => {}, (event) => activity.push(event));
+    assert.ok(activity.some((event) => event.title === 'Web search complete'));
     assert.equal(requestedUrl, 'https://api.openai.com/v1/responses');
     assert.deepEqual(requestBody.tools, [{ type: 'web_search' }]);
     assert.equal(result.webSearch, true);

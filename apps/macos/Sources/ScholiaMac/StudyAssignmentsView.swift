@@ -1,89 +1,195 @@
 import SwiftUI
 
-struct StudySubmissionBadge: View {
-    var status: CanvasSubmissionStatus?
+struct StudyAssignmentsPageView: View {
+    @ObservedObject var workspace: StudyWorkspaceModel
     var body: some View {
-        let value = status ?? .unknown
-        Label(
-            value.submissionLabel,
-            systemImage: value.isHandedIn
-                ? "checkmark.circle.fill"
-                : value == .excused ? "minus.circle" : value == .unknown ? "questionmark.circle" : "circle"
-        )
-        .font(.system(size: 10, weight: .medium))
-        .foregroundStyle(value.isHandedIn ? Color.green : Color.secondary)
-        .padding(.horizontal, 7).padding(.vertical, 4)
-        .background((value.isHandedIn ? Color.green : Color.secondary).opacity(0.08), in: Capsule())
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Assignments").font(.system(size: 29, design: .serif))
+                    Text("Every workspace. Upcoming work, submissions, grades, and feedback.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await workspace.refreshCanvasAssignmentsIfNeeded(force: true) }
+                } label: {
+                    Label(workspace.assignmentRefreshBusy ? "Refreshing…" : "Refresh status", systemImage: "arrow.clockwise")
+                }.disabled(workspace.canvasBusy || workspace.assignmentRefreshBusy)
+            }
+            StudyAssignmentAgendaView(workspace: workspace, initialFilter: .all, dedicated: true).equatable()
+        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
-struct StudyAssignmentAgendaView: View {
-    @ObservedObject var workspace: StudyWorkspaceModel
+struct StudySubmissionBadge: View {
+    var status: CanvasSubmissionStatus?
+    var grade: String? = nil
+    var feedback = false
+    var corrected = false
+    var body: some View {
+        let value = status ?? .unknown
+        let color = value == .graded ? Color.green : value == .submitted ? Color.blue : Color.secondary
+        Label(
+            value.submissionLabel + (grade.map { " · Grade: \($0)" } ?? "") + (feedback ? " · Feedback available" : ""),
+            systemImage: value == .graded ? "checkmark.seal.fill" : value == .submitted ? "clock"
+                : value == .excused ? "minus.circle" : value == .unknown ? "questionmark.circle" : "circle"
+        )
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(color)
+        .padding(.horizontal, 7).padding(.vertical, 4)
+        .background(color.opacity(0.08), in: Capsule())
+        .help(corrected ? "Status set in Scholia. Choose Use Canvas status to resume automatic status updates."
+            : value == .submitted ? "Submitted in Canvas; a grade for this attempt is not available yet." : value.submissionLabel)
+    }
+}
+
+struct StudyAssignmentStatusMenu: View {
+    // The owning row already observes workspace changes. Passing its small
+    // display value avoids a subscriber and a full course scan for every menu.
+    let workspace: StudyWorkspaceModel
+    let courseID: UUID
+    let assignmentID: String
+    let progress: StudyAssignmentProgress?
+
+    var body: some View {
+        Menu {
+            Button {
+                workspace.setAssignmentProgress(nil, id: assignmentID, courseID: courseID)
+            } label: {
+                Label("Use Canvas status", systemImage: progress == nil ? "checkmark" : "arrow.triangle.2.circlepath")
+            }
+            Divider()
+            ForEach(StudyAssignmentProgress.allCases) { value in
+                Button {
+                    workspace.setAssignmentProgress(value, id: assignmentID, courseID: courseID)
+                } label: {
+                    Label(value.title, systemImage: progress == value ? "checkmark" : "circle")
+                }
+            }
+        } label: {
+            Label(progress == nil ? "Status" : "Status set in Scholia", systemImage: "slider.horizontal.3")
+                .foregroundStyle(.secondary)
+        }
+        .font(.system(size: 10)).menuStyle(.borderlessButton).tint(.primary).fixedSize()
+        .help("Correct the status in Scholia without changing Canvas")
+        .accessibilityLabel("Assignment status")
+    }
+}
+
+struct StudyAssignmentAgendaView: View, Equatable {
+    let workspace: StudyWorkspaceModel
+    @StateObject private var agenda: StudyAssignmentAgendaState
     @State private var query = ""
-    @State private var filter = StudyAssignmentFilter.due
+    @State private var filter: StudyAssignmentFilter
+    private let initialFilter: StudyAssignmentFilter
+    let dedicated: Bool
     @Environment(\.colorScheme) private var scheme
 
-    private var incomplete: Bool {
-        workspace.library.courses.contains { course in
-            course.canvasID != nil
-                && (course.catalogUpdatedAt == nil
-                    || (course.catalogWarnings ?? []).contains { $0.localizedCaseInsensitiveContains("assignments:") }
-                    || course.materials.contains {
-                        $0.kind == .assignments && ($0.assignment == nil || $0.assignment?.status == .unknown)
-                    })
-        }
+    init(workspace: StudyWorkspaceModel, initialFilter: StudyAssignmentFilter = .due, dedicated: Bool = false) {
+        self.workspace = workspace
+        self.dedicated = dedicated
+        self.initialFilter = initialFilter
+        _agenda = StateObject(wrappedValue: StudyAssignmentAgendaState(workspace: workspace))
+        _filter = State(initialValue: initialFilter)
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.workspace === rhs.workspace && lhs.initialFilter == rhs.initialFilter && lhs.dedicated == rhs.dedicated
     }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
+            let courses = agenda.input.courses.map(\.studyCourse)
             let groups = StudyAssignmentGroup.make(
-                courses: workspace.library.courses, query: query, filter: filter, now: context.date)
+                courses: courses, query: query, filter: filter, now: context.date)
             let count = groups.reduce(0) { $0 + $1.items.count }
-            let handedIn = StudyAssignment.list(courses: workspace.library.courses, includeCompleted: true).filter {
-                $0.details?.status.isHandedIn == true
-            }.count
-            VStack(alignment: .leading, spacing: 15) {
+            let assignments = StudyAssignment.list(courses: courses, includeCompleted: true)
+            let handedIn = assignments.filter { $0.details?.status == .submitted }.count
+            let graded = assignments.filter { $0.details?.status == .graded }.count
+            let timeline = StudyAssignmentTimeline(groups: groups)
+            let showTimeline = filter != .all && (filter == .due || !timeline.past.isEmpty || !timeline.upcoming.isEmpty)
+            let sections: [StudyAssignmentTimeframe] = filter == .all
+                ? [.upcoming, .overdue, .handedIn, .graded, .excused, .undated]
+                : [.undated, .handedIn, .graded, .excused, .archive]
+            ScrollViewReader { scroll in
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 9) {
-                    Text("Assignments").font(.system(size: 23, design: .serif))
+                    Text(dedicated ? "Your assignments" : "Assignments").font(.system(size: 21, design: .serif))
                     Text("\(count)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
-                    Image(systemName: "calendar.badge.clock").font(.system(size: 19, weight: .light)).foregroundStyle(
-                        Color.accentColor)
+                    if !dedicated {
+                        Button("View all", action: workspace.showAssignments)
+                            .font(.system(size: 11)).scholiaButtonStyle(.plain)
+                    }
+                    if showTimeline {
+                        Button("Today") { scrollToToday(scroll) }
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(Color.accentColor)
+                            .scholiaButtonStyle(.plain).help("Jump to today in assignments")
+                            .accessibilityLabel("Jump to today in assignments")
+                    } else {
+                        Image(systemName: "calendar.badge.clock").font(.system(size: 19, weight: .light))
+                            .foregroundStyle(Color.accentColor)
+                    }
                 }
-                HStack {
-                    Text("All workspaces").font(.system(size: 10)).foregroundStyle(.secondary)
-                    Spacer(minLength: 4)
-                    Picker("Assignment filter", selection: $filter) {
-                        ForEach(StudyAssignmentFilter.allCases) { Text($0.rawValue).tag($0) }
-                    }.labelsHidden().pickerStyle(.menu).scholiaPointingCursor().fixedSize().accessibilityLabel(
-                        "Assignment filter")
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        submissionCounts(handedIn: handedIn, graded: graded)
+                        Spacer(minLength: 4)
+                        assignmentFilter
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        submissionCounts(handedIn: handedIn, graded: graded)
+                        assignmentFilter
+                    }
                 }
-                Button {
-                    filter = .handedIn
-                } label: {
-                    Label("\(handedIn) handed in", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .medium)).foregroundStyle(Color.green)
-                }.scholiaButtonStyle(.plain).help("Show handed-in assignments")
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Find an assignment", text: $query).textFieldStyle(.plain)
+                        .accessibilityLabel("Find an assignment")
+                    if !query.isEmpty {
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .scholiaButtonStyle(.plain).foregroundStyle(.secondary)
+                            .help("Clear assignment search").accessibilityLabel("Clear assignment search")
+                    }
                 }.font(.system(size: 12)).padding(10)
                     .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-                if incomplete {
+                if agenda.input.incomplete {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "arrow.triangle.2.circlepath").padding(.top, 1)
                         Text("Sync Canvas to refresh deadlines and submission status.").fixedSize(
                             horizontal: false, vertical: true)
                         Spacer(minLength: 0)
-                        Button("Connect") { workspace.canvasPresented = true }.scholiaButtonStyle(.plain)
+                        Button("Canvas…") { workspace.canvasPresented = true }.scholiaButtonStyle(.plain)
                             .foregroundStyle(Color.accentColor)
                     }.font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 Divider()
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 22) {
+                    // Measure day groups before jumping to Today. Lazy height estimates
+                    // leave large gaps in long timelines with rows of different heights.
+                    VStack(alignment: .leading, spacing: 22) {
+                        Color.clear.frame(height: 0).id("assignment-start")
+                        if showTimeline {
+                            agendaDays(timeline.past, isPast: true)
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("Today").font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                Spacer(minLength: 8)
+                                Text(context.date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).year()))
+                                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 11)
+                            .overlay(alignment: .top) { Rectangle().fill(Color.accentColor).frame(height: 2) }
+                            .overlay(alignment: .bottom) { Divider() }
+                            .id("assignment-today")
+                            agendaDays(timeline.upcoming)
+                            if timeline.upcoming.isEmpty && count > 0 {
+                                Text("No upcoming deadlines.").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                        }
                         if groups.isEmpty { emptyState }
-                        ForEach(StudyAssignmentTimeframe.allCases) { timeframe in
+                        ForEach(sections) { timeframe in
                             let sections = groups.filter { $0.timeframe == timeframe }
                             if !sections.isEmpty {
                                 VStack(alignment: .leading, spacing: 14) {
@@ -99,13 +205,7 @@ struct StudyAssignmentAgendaView: View {
                                         VStack(alignment: .leading, spacing: 8) {
                                             Text(group.semester.title.uppercased()).tracking(1)
                                                 .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-                                            ForEach(StudyAssignmentDateGroup.make(group.items)) { day in
-                                                VStack(alignment: .leading, spacing: 6) {
-                                                    Text(day.title).font(.system(size: 11, weight: .semibold))
-                                                        .foregroundStyle(.secondary).padding(.top, 7)
-                                                    ForEach(day.items) { item in agendaRow(item) }
-                                                }
-                                            }
+                                            agendaDays(StudyAssignmentDateGroup.make(group.items))
                                         }
                                     }
                                 }
@@ -113,16 +213,68 @@ struct StudyAssignmentAgendaView: View {
                         }
                     }.padding(.trailing, 3).padding(.vertical, 3)
                 }
+                .onAppear {
+                    if filter == .due && query.isEmpty { scrollToToday(scroll) }
+                }
+                .onChange(of: "\(filter.id):\(query)") { _, _ in
+                    if filter == .due && query.isEmpty {
+                        scrollToToday(scroll)
+                    } else {
+                        scroll.scrollTo("assignment-start", anchor: .top)
+                    }
+                }
                 Text(
-                    "\(filter == .hidden ? "Unhide assignments to show them in other lists" : filter == .due ? "Next deadlines, then newest overdue" : filter == .handedIn ? "Submitted & graded in Canvas" : filter == .all ? "Complete list, including hidden assignments" : "Undated & completed") · \(TimeZone.current.identifier)"
+                    "\(filter == .hidden ? "Unhide assignments to show them in other lists" : filter == .due ? "Earlier deadlines above · Upcoming below" : filter == .handedIn ? "Handed in · awaiting a grade" : filter == .graded ? "Graded work · feedback marked when available" : filter == .all ? "Complete list, including hidden assignments" : "Undated & completed") · \(TimeZone.current.identifier)"
                 )
-                .font(.system(size: 9)).foregroundStyle(.tertiary)
-            }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                if agenda.input.hasCanvasCourses {
+                    Text(agenda.input.error ?? "Canvas status refreshes automatically every 2 minutes.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    if agenda.input.error != nil {
+                        Button("Reconnect Canvas") { workspace.canvasPresented = true }.font(.caption)
+                    }
+                }
+            }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(
                     scheme == .dark ? Color.white.opacity(0.02) : Color.accentColor.opacity(0.035),
                     in: RoundedRectangle(cornerRadius: 16)
                 )
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.065), lineWidth: 1))
+            }
+        }
+    }
+
+    private func scrollToToday(_ scroll: ScrollViewProxy) {
+        scroll.scrollTo("assignment-today", anchor: UnitPoint(x: 0, y: 0.18))
+    }
+
+    private func submissionCounts(handedIn: Int, graded: Int) -> some View {
+        HStack(spacing: 12) {
+            Button { filter = .handedIn } label: {
+                Label("\(handedIn) awaiting grade", systemImage: "clock")
+                    .foregroundStyle(Color.blue)
+            }.scholiaButtonStyle(.plain).help("Show handed-in assignments awaiting a grade")
+            Button { filter = .graded } label: {
+                Label("\(graded) graded", systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(Color.green)
+            }.scholiaButtonStyle(.plain).help("Show graded assignments")
+        }.font(.system(size: 11, weight: .medium)).fixedSize()
+    }
+
+    private var assignmentFilter: some View {
+        Picker("Assignment filter", selection: $filter) {
+            ForEach(StudyAssignmentFilter.allCases) { Text($0.rawValue).tag($0) }
+        }.labelsHidden().pickerStyle(.menu).scholiaPointingCursor().fixedSize()
+            .accessibilityLabel("Assignment filter")
+    }
+
+    private func agendaDays(_ days: [StudyAssignmentDateGroup], isPast: Bool = false) -> some View {
+        ForEach(days) { day in
+            VStack(alignment: .leading, spacing: 6) {
+                Text(day.title).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isPast ? Color.orange : Color.secondary).padding(.top, 7)
+                ForEach(day.items) { item in agendaRow(item) }
+            }
         }
     }
 
@@ -134,8 +286,8 @@ struct StudyAssignmentAgendaView: View {
                     ? "No matching assignments."
                     : filter == .hidden
                         ? "No hidden assignments."
-                        : filter == .handedIn
-                            ? "No handed-in assignments yet."
+                        : filter == .handedIn || filter == .graded
+                            ? (filter == .graded ? "No graded assignments yet." : "No submissions awaiting a grade.")
                             : filter == .all
                                 ? "No assignments yet."
                                 : filter == .archive ? "Nothing in the archive." : "No outstanding deadlines."
@@ -146,7 +298,7 @@ struct StudyAssignmentAgendaView: View {
                     ? "Try an assignment title or course code."
                     : filter == .hidden
                         ? "Assignments you hide remain available here and in All assignments."
-                        : filter == .handedIn || filter == .all
+                        : filter == .handedIn || filter == .graded || filter == .all
                             ? "Sync Canvas to refresh submission status."
                             : filter == .archive
                                 ? "Undated and completed assignments will be kept here."
@@ -180,7 +332,8 @@ struct StudyAssignmentAgendaView: View {
                             }
                         }.font(.system(size: 10))
                         HStack(spacing: 6) {
-                            StudySubmissionBadge(status: item.details?.status)
+                            StudySubmissionBadge(status: item.details?.status, grade: item.details?.gradeLabel,
+                                feedback: item.details?.hasFeedback == true, corrected: item.details?.progressOverride != nil)
                             if item.isHidden {
                                 Label("Hidden", systemImage: "eye.slash")
                                     .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -201,6 +354,11 @@ struct StudyAssignmentAgendaView: View {
                         .help("Open \(item.material.title) in Canvas")
                 }
             }
+            HStack {
+            StudyAssignmentStatusMenu(workspace: workspace, courseID: item.course.id, assignmentID: item.material.id,
+                progress: item.course.assignmentProgress?[item.material.id])
+                .disabled(item.details == nil)
+            Spacer(minLength: 8)
             Button {
                 workspace.setAssignmentHidden(item.material.id, courseID: item.course.id, hidden: !item.isHidden)
             } label: {
@@ -209,11 +367,12 @@ struct StudyAssignmentAgendaView: View {
                     systemImage: item.isHidden ? "eye" : "eye.slash"
                 )
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-            }.scholiaButtonStyle(.plain).padding(.horizontal, 10).padding(.bottom, 9)
+            }.scholiaButtonStyle(.plain)
                 .help(
                     item.isHidden
                         ? "Show this assignment in other lists"
                         : "Hide this assignment. It remains in All assignments and Hidden.")
+            }.padding(.horizontal, 10).padding(.bottom, 9)
         }.frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 scheme == .dark ? Color.white.opacity(0.025) : .white.opacity(0.8),
@@ -227,13 +386,13 @@ struct StudyAssignmentsView: View {
     var query = ""
     var showCourse = true
     var dashboard = false
-    @State private var includeCompleted = false
+    @State private var includeCompleted = true
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let assignments = StudyAssignment.list(
                 courses: courses, query: query, includeCompleted: !dashboard && includeCompleted, dueOnly: dashboard,
-                includeHidden: !dashboard && includeCompleted)
+                includeHidden: !dashboard && includeCompleted, includeNonSubmission: !dashboard && includeCompleted)
             VStack(alignment: .leading, spacing: 14) {
                 ViewThatFits(in: .horizontal) {
                     HStack {
@@ -319,7 +478,8 @@ struct StudyAssignmentsView: View {
                 }
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 5) {
-                    StudySubmissionBadge(status: item.details?.status)
+                    StudySubmissionBadge(status: item.details?.status, grade: item.details?.gradeLabel,
+                                feedback: item.details?.hasFeedback == true, corrected: item.details?.progressOverride != nil)
                     if item.isHidden {
                         Label("Hidden", systemImage: "eye.slash")
                             .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -344,6 +504,9 @@ struct StudyAssignmentsView: View {
                 if let url = URL(string: item.material.sourceURL), url.scheme == "https" {
                     Link("Open Canvas ↗", destination: url)
                 }
+                StudyAssignmentStatusMenu(workspace: workspace, courseID: item.course.id, assignmentID: item.material.id,
+                    progress: item.course.assignmentProgress?[item.material.id])
+                    .disabled(item.details == nil)
             }.font(.system(size: 11)).controlSize(.small)
         }.padding(16).background(.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12))
     }

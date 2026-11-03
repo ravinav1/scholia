@@ -8,7 +8,7 @@
   max-width: none;
   display: flex;
   flex-direction: column;
-  gap: 26px;
+  gap: 18px;
 }
 .dashboard-heading {
   display: flex;
@@ -23,7 +23,7 @@
   margin: 0 0 8px;
 }
 .dashboard-heading p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--muted);
 }
@@ -39,10 +39,34 @@
   min-height: 0;
   flex: 1;
 }
+.assignments-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  height: 100%;
+  min-height: 0;
+}
+.assignments-overview .assignment-agenda {
+  flex: 1;
+}
+.assignments-overview .agenda-day ol {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  gap: 12px;
+}
+.assignments-overview .agenda-item {
+  margin-bottom: 0;
+}
+.agenda-timeframe.handedIn {
+  color: var(--green);
+}
+.dashboard-panel-switch {
+  display: none;
+}
 .workspace-panel {
   display: flex;
   flex-direction: column;
-  gap: 17px;
+  gap: 14px;
   min-width: 0;
   min-height: 0;
 }
@@ -60,7 +84,7 @@
 }
 .dashboard-section-heading h2 span {
   font:
-    11px -apple-system,
+    12px -apple-system,
     sans-serif;
   color: var(--muted);
   margin-left: 8px;
@@ -68,14 +92,15 @@
 .dashboard-section-heading select,
 .agenda-scope select {
   max-width: 145px;
-  padding: 5px 7px;
-  font-size: 11px;
+  padding: 8px;
+  font-size: 12px;
   background: transparent;
   border: 0;
 }
 .workspace-filters {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto;
+  align-items: center;
   gap: 10px;
   flex: none;
 }
@@ -88,9 +113,9 @@
   width: 100%;
   min-width: 0;
   background: var(--soft);
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
   padding: 11px 12px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .dashboard-search input:focus {
   background: var(--white);
@@ -101,22 +126,23 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .workspace-semester label {
   min-width: 0;
 }
 .workspace-semester select {
-  font-size: 11px;
-  padding: 6px 8px;
-  background: transparent;
+  font-size: 12px;
+  padding: 10px 8px;
+  background: var(--white);
   max-width: 220px;
-  border: 0;
+  border: 1px solid var(--line);
 }
 .text-button {
   color: var(--green);
-  padding: 0;
+  padding: 6px 0;
   border: 0;
-  font-size: 10px;
+  font-size: 11px;
   white-space: nowrap;
 }
 .workspace-scroll {
@@ -125,6 +151,7 @@
   overscroll-behavior: contain;
   padding-right: 4px;
   flex: 1;
+  scrollbar-gutter: stable;
 }
 .workspace-panel .cards {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
@@ -139,15 +166,18 @@
   transform: translateY(-2px);
 }
 .workspace-panel .card-top {
-  padding: 15px 16px 0;
+  padding: 10px 12px 0 16px;
 }
 .workspace-panel .favorite {
-  padding: 0;
+  padding: 6px;
+  min-width: 32px;
+  min-height: 32px;
   font-size: 17px;
 }
 .workspace-panel .card-code {
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.6px;
+  margin-bottom: 0;
 }
 .workspace-panel .card-open {
   padding: 10px 17px 16px;
@@ -171,7 +201,7 @@
   display: none;
 }
 .workspace-panel .card-footer {
-  font-size: 10px;
+  font-size: 11px;
   padding-top: 11px;
   margin-top: 12px;
 }
@@ -192,10 +222,11 @@
   gap: 12px;
 }
 .workspace-panel .recent-reading {
-  padding: 14px 16px;
+  padding: 12px 14px;
+  gap: 7px;
 }
 .workspace-panel .recent-reading strong {
-  font-size: 12px;
+  font-size: 13px;
   min-height: 0;
   overflow-wrap: anywhere;
 }
@@ -214,7 +245,7 @@
 .assignment-agenda {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 12px;
   min-height: 0;
   min-width: 0;
   padding: 20px;
@@ -234,7 +265,7 @@
   gap: 8px;
 }
 .agenda-scope > span {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
 }
 .assignment-agenda .dashboard-search input {
@@ -246,7 +277,7 @@
   gap: 10px;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.6;
 }
 .agenda-scroll {
@@ -256,6 +287,7 @@
   overscroll-behavior: contain;
   border-top: 1px solid var(--line);
   padding: 16px 3px 0 0;
+  scrollbar-gutter: stable;
 }
 .agenda-group {
   margin-bottom: 23px;
@@ -281,7 +313,7 @@
   justify-content: space-between;
   gap: 8px;
   font:
-    600 9px -apple-system,
+    600 10px -apple-system,
     sans-serif;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -298,12 +330,51 @@
   background: var(--green);
   opacity: 0.65;
 }
-.agenda-group ol {
+.agenda-group ol,
+.agenda-timeline ol {
   list-style: none;
   padding: 0;
   margin: 0;
   display: grid;
   gap: 7px;
+}
+.agenda-today-button {
+  color: var(--green);
+  font-size: 11px;
+  padding: 5px 8px;
+}
+.agenda-timeline {
+  margin-bottom: 23px;
+}
+.agenda-day {
+  margin-bottom: 18px;
+}
+.agenda-past .agenda-date {
+  color: #99602c;
+}
+.agenda-today {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 22px 0 16px;
+  padding: 11px 0;
+  border-top: 2px solid var(--green);
+  border-bottom: 1px solid var(--line);
+  color: var(--green);
+}
+.agenda-today strong {
+  font-size: 13px;
+}
+.agenda-today time,
+.agenda-no-upcoming {
+  font-size: 11px;
+  color: var(--muted);
+}
+.agenda-scroll:focus-visible,
+.agenda-today:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 3px;
 }
 .agenda-item {
   position: relative;
@@ -321,7 +392,7 @@
   text-align: left;
 }
 .agenda-title {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   font-weight: 550;
   padding-right: 25px;
@@ -346,7 +417,7 @@
   background: var(--soft);
 }
 .agenda-item .assignment-course {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--green);
   border: 0;
   padding: 0;
@@ -373,12 +444,13 @@
 }
 .agenda-item time,
 .agenda-item small {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   line-height: 1.5;
 }
 .agenda-timezone {
-  font-size: 9px;
+  font-size: 11px;
+  line-height: 1.5;
   color: var(--muted);
 }
 .agenda-empty {
@@ -410,15 +482,23 @@
   .dashboard-section-heading h2 {
     font-size: 22px;
   }
+  .workspace-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 @media (max-width: 700px) {
   .library {
     overflow: auto;
     padding: 22px 18px;
   }
-  .study-dashboard {
+  .study-dashboard,
+  .assignments-overview {
     height: auto;
     gap: 22px;
+  }
+  .assignments-overview .assignment-agenda,
+  .assignments-overview .agenda-scroll {
+    flex: none;
   }
   .dashboard-heading {
     align-items: flex-start;
@@ -439,13 +519,40 @@
     flex-direction: column;
     gap: 24px;
   }
+  .dashboard-panel-switch {
+    display: flex;
+    padding: 4px;
+    gap: 4px;
+    border-radius: 10px;
+    background: var(--soft);
+    border: 1px solid var(--line);
+  }
+  .dashboard-panel-switch button {
+    flex: 1;
+    min-height: 40px;
+    border: 0;
+    font-weight: 600;
+  }
+  .dashboard-panel-switch button[aria-pressed='true'] {
+    color: var(--green);
+    background: var(--white);
+    box-shadow: var(--shadow);
+  }
+  .study-dashboard:not([data-panel='assignments']) .assignment-agenda,
+  .study-dashboard[data-panel='assignments'] .workspace-panel {
+    display: none;
+  }
   .workspace-panel {
-    height: 52dvh;
-    min-height: 340px;
+    min-height: 0;
   }
   .assignment-agenda {
-    height: 65dvh;
-    min-height: 380px;
+    min-height: 0;
+  }
+  .workspace-scroll,
+  .agenda-scroll {
+    overflow: visible;
+    scrollbar-gutter: auto;
+    padding-right: 0;
   }
   .workspace-panel .cards {
     grid-template-columns: 1fr;
@@ -459,7 +566,7 @@
   color: var(--green);
   font-size: 11px;
   align-self: flex-start;
-  padding: 2px 0;
+  padding: 5px 0;
 }
 
 .agenda-date {
@@ -472,3 +579,4 @@
   margin: 0 10px 9px;
   font-size: 10px;
 }
+.course-practice-entry { margin-top: 10px; width: 100%; text-align: left; color: #32684e; background: transparent; border: 0; padding: 6px 0; font-size: 12px; }

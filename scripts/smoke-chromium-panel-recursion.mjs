@@ -797,6 +797,23 @@ smoke: try {
   await client.send('Page.navigate', { url: `http://127.0.0.1:${staticPort}/dist/chrome/popup.html` });
   await waitFor(client, "document.readyState === 'complete' && document.querySelector('#quick-input')", 'toolbar Quick Chat boot');
   await waitFor(client, "document.querySelector('#quick-context-state')?.textContent === 'Compact'", 'toolbar compact-context default');
+  await waitFor(client, "document.activeElement === document.querySelector('#quick-input')", 'toolbar Quick Chat keyboard focus');
+  await client.send('Input.insertText', { text: 'Explain this screen from the toolbar.' });
+  if (await evaluate(client, "document.querySelector('#quick-input').value") !== 'Explain this screen from the toolbar.') {
+    throw new Error('Quick Chat must accept actual browser text entry, not only programmatically assigned drafts.');
+  }
+  if (await evaluate(client, `(() => {
+    const input = document.querySelector('#quick-input');
+    const clipboard = new DataTransfer();
+    clipboard.setData('text/plain', ' Pasted text remains editable.');
+    const event = new ClipboardEvent('paste', { clipboardData: clipboard, bubbles: true, cancelable: true });
+    input.dispatchEvent(event);
+    return event.defaultPrevented;
+  })()`)) throw new Error('Quick Chat must allow normal text pastes.');
+  await client.send('Input.insertText', { text: ' Pasted text remains editable.' });
+  if (!await evaluate(client, "document.querySelector('#quick-input').value.endsWith(' Pasted text remains editable.')")) {
+    throw new Error('Quick Chat must accept pasted text insertion without losing focus.');
+  }
   await evaluate(client, "document.querySelector('#quick-compact').click()");
   await waitFor(client, `document.querySelector('#quick-context-state').textContent === 'Full'
     && document.querySelector('#quick-compact').getAttribute('aria-pressed') === 'false'`, 'toolbar full-context mode');
@@ -807,7 +824,7 @@ smoke: try {
     document.querySelector('#quick-none').click();
     document.querySelector('#quick-compact').click();
     const input = document.querySelector('#quick-input');
-    input.value = 'Explain this screen from the toolbar.';
+    input.focus();
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
   })()`);
   if (await evaluate(client, 'Boolean(globalThis.__scholiaLastChatPayload)')) {
@@ -856,14 +873,14 @@ smoke: try {
     && document.querySelector('#chat-context-mode').getAttribute('aria-pressed') === 'true'`, 'enabled compact context controls');
   const sortedModelState = JSON.parse(await evaluate(client, `JSON.stringify(
     [...document.querySelectorAll('#model-select optgroup')].map((group) => {
-      const labels = [...group.querySelectorAll('option')].map((option) => option.textContent);
-      const sorted = labels.toSorted((left, right) => left.localeCompare(right, 'en', { numeric: true, sensitivity: 'base' }));
-      return { provider: group.label, sorted: labels.join('|') === sorted.join('|') };
+      return { provider: group.label, ids: [...group.querySelectorAll('option')].map((option) => option.value.split('::').slice(1).join('::')) };
     })
   )`));
-  if (sortedModelState.some((group) => !group.sorted)) {
-    throw new Error(`The model picker was not alphabetical: ${JSON.stringify(sortedModelState)}`);
-  }
+  const openAIOrder = sortedModelState.find((group) => /OpenAI$/.test(group.provider))?.ids || [];
+  const anthropicOrder = sortedModelState.find((group) => /Anthropic$/.test(group.provider))?.ids || [];
+  if (openAIOrder[0] !== 'gpt-6-astra' || openAIOrder.indexOf('gpt-6-sol') > openAIOrder.indexOf('gpt-6-luna')
+      || anthropicOrder.indexOf('claude-opus-4-8') > anthropicOrder.indexOf('claude-opus-4-7'))
+    throw new Error(`The model picker did not prioritize capacity and newest versions: ${JSON.stringify(sortedModelState)}`);
   await evaluate(client, "document.querySelector('#model-select').closest('.model-picker').querySelector('.model-picker-button').click()");
   await waitFor(client, `!document.querySelector('#model-select').closest('.model-picker').querySelector('.model-picker-popover').hidden
     && document.activeElement === document.querySelector('#model-select').closest('.model-picker').querySelector('.model-picker-search input')`, 'searchable model picker');

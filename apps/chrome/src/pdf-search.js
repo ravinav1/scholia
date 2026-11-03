@@ -257,12 +257,17 @@ function escapedLiteral(value) {
 }
 
 function queryPattern(rawQuery) {
-  return String(rawQuery || '')
-    .trim()
+  const query = String(rawQuery || '');
+  const phrase = query.trim()
     .split(/\s+/u)
     .filter(Boolean)
     .map(escapedLiteral)
     .join('\\s+');
+  if (!phrase) return '';
+  // Edge spaces constrain the match instead of being discarded. Assertions
+  // let adjacent matches share a separator (" ry ry "), without highlighting
+  // or consuming the surrounding whitespace. PDF line breaks/NBSP count too.
+  return `${/^\s/u.test(query) ? '(?<=\\s)' : ''}${phrase}${/\s$/u.test(query) ? '(?=\\s)' : ''}`;
 }
 
 export function findPdfMatches(pageTexts, rawQuery, limit = MAX_PDF_SEARCH_RESULTS) {
@@ -285,15 +290,72 @@ export function findPdfMatches(pageTexts, rawQuery, limit = MAX_PDF_SEARCH_RESUL
   return { matches, truncated: false };
 }
 
-export function pdfMatchItemSegments(items, start, length) {
+/** Cooperatively scan large documents; a superseded query stops at the next slice. */
+export async function findPdfMatchesAsync(pageTexts, rawQuery, {
+  limit = MAX_PDF_SEARCH_RESULTS, signal,
+  yieldTask = () => new Promise((resolve) => setTimeout(resolve, 0))
+} = {}) {
+  const pattern = queryPattern(rawQuery);
+  if (!pattern || !Array.isArray(pageTexts) || limit <= 0) return { matches: [], truncated: false };
+  const expression = new RegExp(pattern, 'giu');
+  const matches = [];
+  let started = performance.now();
+  for (const [pageIndex, value] of pageTexts.entries()) {
+    signal?.throwIfAborted();
+    expression.lastIndex = 0;
+    let match;
+    while ((match = expression.exec(String(value || ''))) !== null) {
+      matches.push({ pageIndex, start: match.index, length: match[0].length });
+      if (matches.length >= limit) return { matches, truncated: true };
+      if (matches.length % 256 === 0 && performance.now() - started >= 8) {
+        await yieldTask();
+        signal?.throwIfAborted();
+        started = performance.now();
+      }
+    }
+    if (performance.now() - started >= 8) {
+      await yieldTask();
+      signal?.throwIfAborted();
+      started = performance.now();
+    }
+  }
+  return { matches, truncated: false };
+}
+
+/** Preserve PDF line separators while keeping offsets into the selectable spans. */
+export function pdfSearchTextContent(items = []) {
+  const parts = [], itemStarts = [];
+  let offset = 0;
+  for (const item of items) {
+    if (typeof item?.str !== 'string') continue;
+    itemStarts.push(offset);
+    const text = item.str + (item.hasEOL ? '\n' : '');
+    parts.push(text);
+    offset += text.length;
+  }
+  return { text: parts.join(''), itemStarts };
+}
+
+export function pdfMatchItemSegments(items, start, length, itemStarts) {
   const matchStart = Math.max(0, Number(start) || 0);
   const matchEnd = matchStart + Math.max(0, Number(length) || 0);
   if (!Array.isArray(items) || matchEnd <= matchStart) return [];
 
   const segments = [];
-  let itemStart = 0;
-  for (const [itemIndex, value] of items.entries()) {
-    const text = String(value || '');
+  // A cached offset table avoids rescanning every earlier span for every hit.
+  let first = 0;
+  if (itemStarts?.length) {
+    let high = itemStarts.length;
+    while (first < high) {
+      const middle = (first + high) >>> 1;
+      if (itemStarts[middle] + String(items[middle] || '').length <= matchStart) first = middle + 1;
+      else high = middle;
+    }
+  }
+  let itemStart = itemStarts?.[first] || 0;
+  for (let itemIndex = first; itemIndex < items.length; itemIndex += 1) {
+    if (itemStarts) itemStart = itemStarts[itemIndex];
+    const text = String(items[itemIndex] || '');
     const itemEnd = itemStart + text.length;
     if (matchEnd <= itemStart) break;
     if (matchStart < itemEnd && matchEnd > itemStart) {

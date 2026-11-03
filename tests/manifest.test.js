@@ -19,8 +19,10 @@ test('selection content script is injected into embedded PDF viewer frames', () 
   assert.equal(selectionScript?.match_origin_as_fallback, true);
 });
 
-test('PDFs use the standalone reader without crash-prone native MIME registration', () => {
-  assert.equal(manifest.mime_types_handler, undefined);
+test('PDFs register an original-URL handler for top-level and embedded documents', () => {
+  assert.deepEqual(manifest.mime_types_handler, {
+    'application/pdf': { handler_url: 'pdf-viewer.html', can_embed: true }
+  });
 });
 
 test('PDF chat stays in the reader without a browser-specific sidebar redirect', () => {

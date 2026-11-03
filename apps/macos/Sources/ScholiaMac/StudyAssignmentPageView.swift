@@ -4,6 +4,8 @@ struct StudyAssignmentPageView: View {
     @ObservedObject var workspace: StudyWorkspaceModel
     let assignment: CanvasMaterialReference
     @State private var instructionsExpanded = true
+    @State private var collapsedFiles: Set<String> = []
+    @State private var feedbackExpanded = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -17,14 +19,29 @@ struct StudyAssignmentPageView: View {
                     Text(assignment.assignment == nil ? "Deadline not synced" : "No due date")
                 }
                 if assignment.assignment?.requiresSubmission != false {
-                    StudySubmissionBadge(status: assignment.assignment?.status)
+                    StudySubmissionBadge(status: assignment.assignment?.status, grade: assignment.assignment?.gradeLabel,
+                                feedback: assignment.assignment?.hasFeedback == true, corrected: assignment.assignment?.progressOverride != nil)
                 }
             }.font(.system(size: 11)).foregroundStyle(.secondary)
+            HStack {
+                if let courseID = workspace.course?.id {
+                    StudyAssignmentStatusMenu(workspace: workspace, courseID: courseID, assignmentID: assignment.id,
+                        progress: workspace.course?.assignmentProgress?[assignment.id])
+                        .disabled(assignment.assignment == nil)
+                }
+            }
+            if let courseID = workspace.course?.id,
+                assignment.assignment?.status.isHandedIn == true || assignment.assignment?.feedback?.isEmpty == false {
+                DisclosureGroup(isExpanded: $feedbackExpanded) {
+                    StudyAssignmentFeedbackView(workspace: workspace, courseID: courseID, assignmentID: assignment.id, showsTitle: false)
+                        .frame(maxHeight: workspace.document == nil ? 320 : 180).padding(.vertical, 8)
+                } label: { Text("Feedback").font(.system(size: 12, weight: .semibold)) }
+            }
             DisclosureGroup("Instructions", isExpanded: $instructionsExpanded) {
                 ScrollView {
                     if workspace.assignmentText.isEmpty {
                         Text(
-                            workspace.canvasBusy
+                            workspace.assignmentPreparing
                                 ? "Loading instructions…"
                                 : assignment.unavailableReason
                                     ?? "No saved instructions. Retry to load this assignment."
@@ -33,15 +50,13 @@ struct StudyAssignmentPageView: View {
                             maxWidth: .infinity, alignment: .leading
                         ).padding(.vertical, 8)
                     } else {
-                        RichMarkdownView(source: workspace.assignmentText)
+                        RichMarkdownView(source: workspace.assignmentText, onOpenLink: workspace.openCourseLink)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
                     }
                 }.frame(maxHeight: workspace.document == nil ? .infinity : 90)
             }.font(.system(size: 12))
             if !workspace.assignmentFiles.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Included files · \(workspace.assignmentFiles.count)")
-                        .font(.system(size: 11, weight: .semibold))
+                DisclosureGroup("Included files · \(workspace.assignmentFiles.count)", isExpanded: filesExpanded) {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 7) {
                             ForEach(workspace.assignmentFiles) { file in
@@ -61,18 +76,18 @@ struct StudyAssignmentPageView: View {
                                     Button(workspace.document?.sourceKey == file.id ? "Reading" : "Open") {
                                         workspace.openAssignmentFile(file.id)
                                     }.disabled(
-                                        workspace.canvasBusy || workspace.document?.sourceKey == file.id
+                                        workspace.document?.sourceKey == file.id
                                             || file.unavailableReason != nil
                                     )
                                     .help(
                                         file.unavailableReason
-                                            ?? "Read \(file.fileName ?? file.title) with this assignment")
+                                            ?? "Download and open \(file.fileName ?? file.title) before other Canvas downloads")
                                 }.padding(.vertical, 3)
                             }
                         }.padding(.trailing, 4)
                     }.frame(height: min(170, CGFloat(workspace.assignmentFiles.count) * 48))
-                }.controlSize(.small)
-            } else if !workspace.canvasBusy && assignment.assignment?.linkedFileIDs != nil
+                }.font(.system(size: 11, weight: .semibold)).controlSize(.small)
+            } else if !workspace.assignmentPreparing && assignment.assignment?.linkedFileIDs != nil
                 && workspace.assignmentNotice == nil
             {
                 Text("No files are linked to this assignment.").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -88,14 +103,23 @@ struct StudyAssignmentPageView: View {
                                 workspace.openAssignment(assignment, courseID: course.id)
                             }
                         }
-                        .controlSize(.small).disabled(workspace.canvasBusy)
+                        .controlSize(.small).disabled(workspace.assignmentPreparing)
                     }
                 }
-            } else if workspace.canvasBusy {
+            } else if workspace.assignmentPreparing {
                 ProgressView("Preparing assignment files for the companion…").controlSize(.small).font(
                     .system(size: 11))
             }
         }.padding(20).frame(
             maxWidth: .infinity, maxHeight: workspace.document == nil ? .infinity : nil, alignment: .topLeading)
+    }
+
+    private var filesExpanded: Binding<Bool> {
+        let key = "\(workspace.course?.id.uuidString ?? ""):\(assignment.id)"
+        return Binding(
+            get: { !collapsedFiles.contains(key) },
+            set: { expanded in
+                if expanded { collapsedFiles.remove(key) } else { collapsedFiles.insert(key) }
+            })
     }
 }

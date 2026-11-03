@@ -8,9 +8,9 @@
 .dedicated-chat.is-chat-open .history-card { height:100%;display:flex;flex-direction:column;margin:0;padding:12px;overflow:hidden;box-shadow:none; }
 .dedicated-chat.is-chat-open .chat-history-list { min-height:0;overflow:auto;padding-right:2px; }
 .dedicated-chat.is-chat-open .chat-view { grid-column:2;grid-row:2; }
-.dedicated-chat .notice,.dedicated-chat .chat-controls,.dedicated-chat .chat-source,.dedicated-chat .loading-card,.dedicated-chat .pdf-fallback,.dedicated-chat .chat-search { width:min(980px,calc(100% - 40px));margin-left:auto;margin-right:auto; }
+.dedicated-chat .notice,.dedicated-chat .chat-source,.dedicated-chat .loading-card,.dedicated-chat .pdf-fallback,.dedicated-chat .chat-search { width:min(980px,calc(100% - 40px));margin-left:auto;margin-right:auto; }
 .dedicated-chat .messages { padding:24px max(24px,calc((100% - 980px) / 2)) 30px; }
-.dedicated-chat .composer { padding:12px max(24px,calc((100% - 980px) / 2)) 16px; }
+.dedicated-chat .composer { width:min(980px,calc(100% - 40px));margin:0 auto 18px;padding:12px; }
 .dedicated-chat .message--user .bubble { max-width:min(76%,46rem); }
 .dedicated-chat .response-window { width:min(1120px,calc(100vw - 32px));height:min(880px,calc(100vh - 32px)); }
 .dedicated-chat-loading,.dedicated-chat-failure { min-height:100vh;display:grid;place-content:center;justify-items:center;gap:12px;padding:32px;color:var(--muted); }
@@ -21,11 +21,10 @@
   .dedicated-chat { min-width:0; }
   .dedicated-chat .shell { grid-template-columns:minmax(190px,230px) minmax(0,1fr); }
   .dedicated-chat .messages { padding-inline:18px; }
-  .dedicated-chat .composer { padding-inline:18px; }
 }
 
 @media (max-width:680px) {
   .dedicated-chat .shell { display:flex; }
   .dedicated-chat.is-chat-open .home-view { display:none!important; }
-  .dedicated-chat .notice,.dedicated-chat .chat-controls,.dedicated-chat .chat-source,.dedicated-chat .loading-card,.dedicated-chat .pdf-fallback,.dedicated-chat .chat-search { width:auto;margin-left:var(--panel-gutter);margin-right:var(--panel-gutter); }
+  .dedicated-chat .notice,.dedicated-chat .chat-source,.dedicated-chat .loading-card,.dedicated-chat .pdf-fallback,.dedicated-chat .chat-search,.dedicated-chat .composer { width:auto;margin-left:var(--panel-gutter);margin-right:var(--panel-gutter); }
 }

@@ -8,6 +8,8 @@ struct RichMarkdownView: View {
     let source: String
     var compact = false
     var registerSelectionView: ((SelfSizingTextView) -> Void)?
+    var onOpenLink: ((URL) -> Bool)?
+    var references: ChatReferenceContext?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -15,7 +17,7 @@ struct RichMarkdownView: View {
             source: source,
             compact: compact,
             colorScheme: colorScheme,
-            registerSelectionView: registerSelectionView
+            registerSelectionView: registerSelectionView, onOpenLink: onOpenLink, references: references
         )
         .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -51,6 +53,41 @@ struct ProviderReasoningView: View {
                 .stroke(Color.accentColor.opacity(0.24), lineWidth: 1)
         )
         .accessibilityHint("Shows reasoning content returned by the model")
+    }
+}
+
+struct ConversationActivityView: View {
+    let events: [ConversationActivity]
+    @State private var expanded = false
+    var body: some View {
+        if !events.isEmpty {
+            DisclosureGroup(isExpanded: $expanded) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(events) { event in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "circle.fill").font(.system(size: 5)).padding(.top, 5)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(event.title).font(.caption.weight(.medium))
+                                    if let detail = event.detail, !detail.isEmpty {
+                                        Text(detail).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                                    }
+                                }
+                                Spacer(minLength: 3)
+                                Text(event.timestamp, format: .dateTime.hour().minute().second())
+                                    .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                            }
+                        }
+                    }.padding(.top, 7)
+                }.frame(maxHeight: 190)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "list.bullet.rectangle")
+                    Text("Activity · \(events.count)").font(.caption.weight(.semibold))
+                    Text(events.last?.title ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }.padding(9).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 }
 
@@ -320,6 +357,8 @@ private struct SelectableMarkdownDocument: NSViewRepresentable {
     var compact: Bool
     var colorScheme: ColorScheme
     var registerSelectionView: ((SelfSizingTextView) -> Void)?
+    var onOpenLink: ((URL) -> Bool)?
+    var references: ChatReferenceContext?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -329,6 +368,9 @@ private struct SelectableMarkdownDocument: NSViewRepresentable {
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = true
+        // Keep the native link cursor for Copy code and source links while
+        // letting the renderer supply their text styling.
+        textView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         textView.drawsBackground = false
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
@@ -345,27 +387,11 @@ private struct SelectableMarkdownDocument: NSViewRepresentable {
     }
 
     func updateNSView(_ textView: SelfSizingTextView, context: Context) {
+        context.coordinator.onOpenLink = onOpenLink
+        textView.onOpenSourceLink = onOpenLink
         registerSelectionView?(textView)
-        let width = max(280, textView.bounds.width)
-        let widthKey = Int(width.rounded())
-        let isDark = colorScheme == .dark
-        guard textView.renderedSource != source
-                || textView.renderedCompact != compact
-                || textView.renderedDarkMode != isDark
-                || textView.renderedWidth != widthKey else { return }
-        textView.renderedSource = source
-        textView.renderedCompact = compact
-        textView.renderedDarkMode = isDark
-        textView.renderedWidth = widthKey
-        let selection = textView.selectedRange()
-        let document = RichMarkdownDocumentRenderer(
-            compact: compact,
-            colorScheme: colorScheme,
-            availableWidth: width
-        ).render(source)
-        textView.textStorage?.setAttributedString(document)
-        if NSMaxRange(selection) <= document.length { textView.setSelectedRange(selection) }
-        textView.invalidateIntrinsicContentSize()
+        textView.updateMarkdown(source, compact: compact, colorScheme: colorScheme,
+            width: max(280, textView.bounds.width), references: references)
     }
 
     func sizeThatFits(
@@ -378,9 +404,18 @@ private struct SelectableMarkdownDocument: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        var onOpenLink: ((URL) -> Bool)?
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             let url = link as? URL ?? (link as? String).flatMap(URL.init(string:))
-            guard let url, RichMarkdownPolicy.canOpen(url) else { return true }
+            if url?.scheme == "scholia-copy-code", let storage = textView.textStorage, charIndex < storage.length,
+                let source = storage.attribute(.scholiaCodeSource, at: charIndex, effectiveRange: nil) as? String {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(source, forType: .string)
+                return true
+            }
+            guard let url else { return true }
+            if onOpenLink?(url) == true { return true }
+            guard RichMarkdownPolicy.canOpen(url) else { return true }
             NSWorkspace.shared.open(url)
             return true
         }
@@ -389,13 +424,99 @@ private struct SelectableMarkdownDocument: NSViewRepresentable {
 
 private extension NSAttributedString.Key {
     static let scholiaMathSource = NSAttributedString.Key("ScholiaMathSource")
+    static let scholiaCodeSource = NSAttributedString.Key("ScholiaCodeSource")
+    static let scholiaCodeBlock = NSAttributedString.Key("ScholiaCodeBlock")
+    static let scholiaInlineCode = NSAttributedString.Key("ScholiaInlineCode")
 }
 
 final class SelfSizingTextView: NSTextView {
-    var renderedSource = ""
-    var renderedCompact: Bool?
-    var renderedDarkMode: Bool?
-    var renderedWidth: Int?
+    var onOpenSourceLink: ((URL) -> Bool)?
+    private var renderedSource = ""
+    private var renderedCompact: Bool?
+    private var renderedDarkMode: Bool?
+    private var mathLayoutWidth: CGFloat?
+    private var renderedReferences: ChatReferenceContext?
+
+    /// Window and split-pane resizing should only reflow existing text. Parsing,
+    /// highlighting, and equation typesetting are needed when content changes.
+    func updateMarkdown(_ source: String, compact: Bool, colorScheme: ColorScheme, width: CGFloat, references: ChatReferenceContext? = nil) {
+        let isDark = colorScheme == .dark
+        guard renderedSource != source || renderedCompact != compact || renderedDarkMode != isDark || renderedReferences != references else {
+            resizeDisplayMath(for: width)
+            return
+        }
+        renderedSource = source
+        renderedCompact = compact
+        renderedDarkMode = isDark
+        renderedReferences = references
+        let selection = selectedRange()
+        let document = RichMarkdownDocumentRenderer(compact: compact, colorScheme: colorScheme,
+            availableWidth: width, references: references).render(source)
+        textStorage?.setAttributedString(document)
+        mathLayoutWidth = width
+        if NSMaxRange(selection) <= document.length { setSelectedRange(selection) }
+        invalidateIntrinsicContentSize()
+    }
+
+    private func resizeDisplayMath(for width: CGFloat) {
+        guard mathLayoutWidth.map({ abs($0 - width) > 0.5 }) ?? true, let storage = textStorage else { return }
+        mathLayoutWidth = width
+        // Only attachments change their attributes. Keeping the same text
+        // storage also preserves selection and native code/link interactions.
+        storage.beginEditing()
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let attachment = value as? NativeMathTextAttachment,
+                attachment.resize(for: width) else { return }
+            storage.edited(.editedAttributes, range: range, changeInLength: 0)
+        }
+        storage.endEditing()
+    }
+
+    /// AppKit's link delegate is not consistently invoked for custom-scheme
+    /// links in text-table cells. Handle the actual code-control glyphs as a
+    /// button before NSTextView starts selecting text.
+    func codeSource(at point: NSPoint) -> String? {
+        guard let textContainer, let layoutManager, let storage = textStorage, storage.length > 0 else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
+        let origin = textContainerOrigin
+        let location = NSPoint(x: point.x - origin.x, y: point.y - origin.y)
+        let index = layoutManager.characterIndex(for: location, in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+        guard index < storage.length else { return nil }
+        var range = NSRange()
+        guard let source = storage.attribute(.scholiaCodeSource, at: index, effectiveRange: &range) as? String else { return nil }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let bounds = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+        // characterIndex returns the nearest character, even in whitespace.
+        guard bounds.contains(location) else { return nil }
+        return source
+    }
+
+    func sourceLink(at point: NSPoint) -> URL? {
+        guard let textContainer, let layoutManager, let storage = textStorage, storage.length > 0 else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
+        let location = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let index = layoutManager.characterIndex(for: location, in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+        guard index < storage.length, let url = storage.attribute(.link, at: index, effectiveRange: nil) as? URL,
+              url.scheme == "scholia-source" else { return nil }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+        guard layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer).contains(location) else { return nil }
+        return url
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        if let event, codeSource(at: convert(event.locationInWindow, from: nil)) != nil { return true }
+        return super.acceptsFirstMouse(for: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if let source = codeSource(at: convert(event.locationInWindow, from: nil)) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(source, forType: .string)
+            return
+        }
+        if let url = sourceLink(at: convert(event.locationInWindow, from: nil)), onOpenSourceLink?(url) == true { return }
+        super.mouseDown(with: event)
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(
@@ -407,6 +528,7 @@ final class SelfSizingTextView: NSTextView {
     func requiredHeight(for width: CGFloat) -> CGFloat {
         guard let textContainer, let layoutManager else { return 1 }
         let contentWidth = max(1, width - textContainerInset.width * 2)
+        resizeDisplayMath(for: contentWidth)
         if abs(textContainer.containerSize.width - contentWidth) > 0.5 {
             textContainer.containerSize = NSSize(
                 width: contentWidth,
@@ -528,12 +650,14 @@ final class RichMarkdownDocumentRenderer {
     private let compact: Bool
     private let colorScheme: ColorScheme
     private let availableWidth: CGFloat
+    private let references: ChatReferenceContext?
     private let output = NSMutableAttributedString()
 
-    init(compact: Bool, colorScheme: ColorScheme, availableWidth: CGFloat) {
+    init(compact: Bool, colorScheme: ColorScheme, availableWidth: CGFloat, references: ChatReferenceContext? = nil) {
         self.compact = compact
         self.colorScheme = colorScheme
         self.availableWidth = availableWidth
+        self.references = references
     }
 
     func render(_ source: String) -> NSAttributedString {
@@ -544,7 +668,25 @@ final class RichMarkdownDocumentRenderer {
         while output.string.hasSuffix("\n\n") {
             output.deleteCharacters(in: NSRange(location: output.length - 1, length: 1))
         }
+        linkSavedReferences()
         return output.copy() as? NSAttributedString ?? output
+    }
+
+    private func linkSavedReferences() {
+        guard let references else { return }
+        for link in references.links(in: output.string) {
+            var excluded = false
+            output.enumerateAttributes(in: link.range) { attributes, _, stop in
+                if attributes[.link] != nil || attributes[.scholiaCodeBlock] != nil
+                    || attributes[.scholiaMathSource] != nil || (link.isPage && attributes[.scholiaInlineCode] != nil) {
+                    excluded = true
+                    stop.pointee = true
+                }
+            }
+            guard !excluded else { continue }
+            output.addAttributes([.link: link.url, .foregroundColor: NSColor.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue, .toolTip: link.help], range: link.range)
+        }
     }
 
     private var bodySize: CGFloat { compact ? 13 : 14 }
@@ -583,8 +725,8 @@ final class RichMarkdownDocumentRenderer {
 
     private var codeBlockBorderColor: NSColor {
         colorScheme == .dark
-            ? NSColor(srgbRed: 0.31, green: 0.40, blue: 0.37, alpha: 1)
-            : NSColor(srgbRed: 0.36, green: 0.46, blue: 0.42, alpha: 1)
+            ? NSColor(srgbRed: 0.23, green: 0.30, blue: 0.27, alpha: 1)
+            : NSColor(srgbRed: 0.80, green: 0.84, blue: 0.82, alpha: 1)
     }
 
     private func renderBlock(_ node: MarkdownNode, listDepth: Int = 0) {
@@ -703,15 +845,8 @@ final class RichMarkdownDocumentRenderer {
         let start = output.length
         let info = cmark_node_get_fence_info(node).map(String.init(cString:))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !info.isEmpty {
-            append(info.lowercased() + "\n", style: InlineStyle(
-                size: compact ? 9 : 10,
-                bold: true,
-                monospaced: true,
-                color: codeBlockLabelColor
-            ), to: output)
-        }
-        let code = MarkdownParser.literal(of: node).trimmingCharacters(in: .newlines)
+        let literal = MarkdownParser.literal(of: node)
+        let code = literal.hasSuffix("\n") ? String(literal.dropLast()) : literal
         var fenceLength: Int32 = 0
         var fenceOffset: Int32 = 0
         var fenceCharacter: CChar = 0
@@ -724,21 +859,71 @@ final class RichMarkdownDocumentRenderer {
             finishParagraph(from: start, spacing: compact ? 8 : 10)
             return
         }
+        let language = info.split(whereSeparator: \.isWhitespace).first.map(String.init)?.lowercased() ?? ""
+        let table = NSTextTable()
+        table.numberOfColumns = 2
+        table.layoutAlgorithm = .fixedLayoutAlgorithm
+        table.collapsesBorders = true
+        table.setContentWidth(100, type: .percentageValueType)
+        func block(row: Int, column: Int = 0) -> NSTextTableBlock {
+            let cell = NSTextTableBlock(table: table, startingRow: row, rowSpan: 1, startingColumn: column, columnSpan: row == 0 ? 1 : 2)
+            cell.setContentWidth(row == 0 ? 50 : 100, type: .percentageValueType)
+            cell.setWidth(0.5, type: .absoluteValueType, for: .border)
+            cell.setWidth(compact ? 8 : 11, type: .absoluteValueType, for: .padding)
+            cell.setBorderColor(codeBlockBorderColor)
+            if row == 0 {
+                cell.setWidth(0, type: .absoluteValueType, for: .border, edge: column == 0 ? .maxX : .minX)
+                cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .minY)
+                cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .maxY)
+            }
+            cell.backgroundColor = row == 0
+                ? (colorScheme == .dark ? NSColor(srgbRed: 0.13, green: 0.18, blue: 0.16, alpha: 1)
+                    : NSColor(srgbRed: 0.89, green: 0.92, blue: 0.90, alpha: 1))
+                : codeBlockBackgroundColor
+            return cell
+        }
+        let labelStyle = InlineStyle(size: compact ? 9 : 10, bold: true, color: codeBlockLabelColor)
+        append((language.isEmpty ? "Plain text" : language) + "\n", style: labelStyle, to: output)
+        let header = NSMutableParagraphStyle()
+        header.textBlocks = [block(row: 0)]
+        output.addAttribute(.paragraphStyle, value: header, range: NSRange(location: start, length: output.length - start))
+        let copyStart = output.length
+        append("Copy code", style: labelStyle, to: output)
+        output.addAttributes([.link: URL(string: "scholia-copy-code:copy")!, .scholiaCodeSource: code],
+            range: NSRange(location: copyStart, length: output.length - copyStart))
+        append("\n", style: labelStyle, to: output)
+        let copyHeader = NSMutableParagraphStyle()
+        copyHeader.textBlocks = [block(row: 0, column: 1)]
+        copyHeader.alignment = .right
+        output.addAttribute(.paragraphStyle, value: copyHeader, range: NSRange(location: copyStart, length: output.length - copyStart))
+        let codeStart = output.length
         append(code, style: InlineStyle(
             size: compact ? 11 : 12,
             monospaced: true,
             color: codeBlockTextColor
         ), to: output)
-        let block = NSTextBlock()
-        block.setWidth(1, type: .absoluteValueType, for: .border)
-        block.setWidth(compact ? 8 : 10, type: .absoluteValueType, for: .padding)
-        block.setBorderColor(codeBlockBorderColor)
-        block.backgroundColor = codeBlockBackgroundColor
-        finishParagraph(
-            from: start,
-            spacing: compact ? 10 : 12,
-            textBlocks: [block]
-        )
+        for run in NativeCodeHighlight.runs(code, language: language) {
+            guard let location = run["location"] as? Int, let length = run["length"] as? Int,
+                let scope = run["scope"] as? String, location >= 0, length > 0,
+                location + length <= code.utf16.count else { continue }
+            output.addAttribute(.foregroundColor, value: NativeCodeHighlight.color(scope, dark: colorScheme == .dark),
+                range: NSRange(location: codeStart + location, length: length))
+        }
+        append("\n", style: InlineStyle(size: compact ? 11 : 12, monospaced: true, color: codeBlockTextColor), to: output)
+        let body = NSMutableParagraphStyle()
+        body.textBlocks = [block(row: 1)]
+        body.lineSpacing = 2
+        body.paragraphSpacing = 0
+        body.lineBreakMode = .byCharWrapping
+        body.defaultTabInterval = (compact ? 11 : 12) * 2.4
+        output.addAttribute(.paragraphStyle, value: body, range: NSRange(location: codeStart, length: output.length - codeStart))
+        output.addAttribute(.scholiaCodeBlock, value: true, range: NSRange(location: start, length: output.length - start))
+        // Space belongs after the whole panel, not after each source-code line.
+        let spacer = output.length
+        append("\n", style: InlineStyle(size: 4), to: output)
+        let spacing = NSMutableParagraphStyle()
+        spacing.paragraphSpacing = compact ? 5 : 7
+        output.addAttribute(.paragraphStyle, value: spacing, range: NSRange(location: spacer, length: 1))
     }
 
     private func renderTable(_ node: MarkdownNode) {
@@ -846,7 +1031,9 @@ final class RichMarkdownDocumentRenderer {
             codeStyle.monospaced = true
             codeStyle.size *= 0.9
             codeStyle.backgroundColor = .separatorColor.withAlphaComponent(0.16)
+            let start = target.length
             append(MarkdownParser.literal(of: node), style: codeStyle, to: target)
+            target.addAttribute(.scholiaInlineCode, value: true, range: NSRange(location: start, length: target.length - start))
         case "emph":
             var next = style
             next.italic = true
@@ -861,9 +1048,10 @@ final class RichMarkdownDocumentRenderer {
             renderInlineChildren(of: node, style: next, into: target)
         case "link":
             var next = style
-            if let url = MarkdownParser.url(of: node), RichMarkdownPolicy.canOpen(url) {
-                next.link = url
-                next.color = .linkColor
+            if let url = MarkdownParser.url(of: node) {
+                if let local = references?.localURL(for: url) { next.link = local }
+                else if RichMarkdownPolicy.canOpen(url) { next.link = url }
+                if next.link != nil { next.color = .linkColor }
             }
             renderInlineChildren(of: node, style: next, into: target)
         case "image":
@@ -917,8 +1105,7 @@ final class RichMarkdownDocumentRenderer {
             latex: expression.latex,
             display: display,
             fontSize: size,
-            colorScheme: colorScheme,
-            maximumWidth: display ? max(120, availableWidth - 20) : nil
+            colorScheme: colorScheme
         ) else {
             let fences = display ? "$$" : "$"
             return NSAttributedString(
@@ -926,14 +1113,7 @@ final class RichMarkdownDocumentRenderer {
                 attributes: attributes(for: InlineStyle(size: inlineFontSize, monospaced: true))
             )
         }
-        let attachment = NSTextAttachment()
-        attachment.image = image
-        attachment.bounds = NSRect(
-            x: 0,
-            y: display ? -4 : -max(1, image.size.height * 0.18),
-            width: image.size.width,
-            height: image.size.height
-        )
+        let attachment = NativeMathTextAttachment(image: image, display: display, availableWidth: availableWidth)
         let value = NSMutableAttributedString(attachment: attachment)
         let fences = display ? "$$" : "$"
         value.addAttribute(
@@ -1051,32 +1231,50 @@ final class RichMarkdownDocumentRenderer {
 }
 
 @MainActor
-private enum NativeMathImageRenderer {
-    private struct CacheKey: Hashable {
-        var latex: String
-        var display: Bool
-        var fontSize: Int
-        var dark: Bool
-        var maximumWidth: Int?
-    }
+private final class NativeMathTextAttachment: NSTextAttachment {
+    private let display: Bool
 
-    private static var cache: [CacheKey: NSImage] = [:]
+    init(image: NSImage, display: Bool, availableWidth: CGFloat) {
+        self.display = display
+        super.init(data: nil, ofType: nil)
+        self.image = image
+        bounds = NSRect(x: 0, y: display ? -4 : -max(1, image.size.height * 0.18),
+            width: image.size.width, height: image.size.height)
+        resize(for: availableWidth)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @discardableResult
+    func resize(for availableWidth: CGFloat) -> Bool {
+        guard display, let image else { return false }
+        let scale = min(1, max(120, availableWidth - 20) / image.size.width)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        guard bounds.size != size else { return false }
+        bounds.size = size
+        return true
+    }
+}
+
+@MainActor
+private enum NativeMathImageRenderer {
+    // Images retain SwiftMath's display lists and AppKit may rasterize them at
+    // Retina resolution. Bound their estimated backing cost as well as count,
+    // and let AppKit evict them under pressure instead of retaining a dictionary.
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 256
+        cache.totalCostLimit = 16 * 1_024 * 1_024
+        return cache
+    }()
 
     static func image(
         latex: String,
         display: Bool,
         fontSize: CGFloat,
-        colorScheme: ColorScheme,
-        maximumWidth: CGFloat?
+        colorScheme: ColorScheme
     ) -> NSImage? {
-        let key = CacheKey(
-            latex: latex,
-            display: display,
-            fontSize: Int((fontSize * 10).rounded()),
-            dark: colorScheme == .dark,
-            maximumWidth: maximumWidth.map { Int($0.rounded()) }
-        )
-        if let cached = cache[key] { return cached }
+        let key = "\(display)|\(Int((fontSize * 10).rounded()))|\(colorScheme == .dark)|\(latex)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
 
         let renderer = MTMathImage(
             latex: latex,
@@ -1096,12 +1294,10 @@ private enum NativeMathImageRenderer {
         guard let image = renderedImage, image.size.width > 0, image.size.height > 0 else {
             return nil
         }
-        if let maximumWidth, image.size.width > maximumWidth {
-            let scale = maximumWidth / image.size.width
-            image.size = NSSize(width: maximumWidth, height: image.size.height * scale)
+        let estimatedCost = ceil(image.size.width) * ceil(image.size.height) * 16 + CGFloat(latex.utf8.count * 8)
+        if estimatedCost.isFinite, estimatedCost <= CGFloat(cache.totalCostLimit) {
+            cache.setObject(image, forKey: key, cost: Int(estimatedCost))
         }
-        if cache.count >= 256 { cache.removeAll(keepingCapacity: true) }
-        cache[key] = image
         return image
     }
 }

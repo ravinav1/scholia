@@ -72,6 +72,7 @@ enum ProviderCatalog {
             keyHint: "sk-…", supportsImages: true, defaultModel: "gpt-5-mini",
             models: [
                 reasoning("gpt-6-astra", "GPT-6 Astra", ["low", "medium", "high", "xhigh", "max"], "medium"),
+                reasoning("gpt-6.1-sol", "GPT-6.1 Sol", ["low", "medium", "high", "xhigh", "max"], "medium"),
                 reasoning("gpt-6-sol", "GPT-6 Sol", ["none", "low", "medium", "high", "xhigh", "max"], "medium"),
                 reasoning("gpt-6-luna", "GPT-6 Luna", ["none", "low", "medium", "high", "xhigh", "max"], "medium")
             ] + strings([
@@ -207,6 +208,7 @@ enum ProviderCatalog {
             defaultModel: "gpt-5.5",
             models: [
                 reasoning("gpt-6-astra", "GPT-6 Astra", ["low", "medium", "high", "xhigh", "max"], "medium"),
+                reasoning("gpt-6.1-sol", "GPT-6.1 Sol", ["low", "medium", "high", "xhigh", "max"], "medium"),
                 reasoning("gpt-6-sol", "GPT-6 Sol", ["low", "medium", "high", "xhigh", "max"], "medium"),
                 reasoning("gpt-6-luna", "GPT-6 Luna", ["low", "medium", "high", "xhigh", "max"], "medium"),
                 reasoning("gpt-5.5", "GPT-5.5", codexEfforts, "high"),
@@ -323,9 +325,26 @@ enum AnswerLanguage: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var label: String {
         switch self {
-        case .automatic: "Match the selection"
+        case .automatic: "Auto · match prompt"
         case .english: "English"
         case .norwegian: "Norsk bokmål"
+        }
+    }
+
+    var code: String {
+        switch self {
+        case .automatic: "auto"
+        case .english: "en"
+        case .norwegian: "no"
+        }
+    }
+
+    init?(code: String) {
+        switch code {
+        case "auto": self = .automatic
+        case "en": self = .english
+        case "no": self = .norwegian
+        default: return nil
         }
     }
 }
@@ -434,12 +453,22 @@ struct VerifiedProviderModel: Codable, Equatable, Sendable {
     var testedAt: Date
 }
 
+struct RecentProviderModel: Codable, Equatable, Sendable, Identifiable {
+    var providerID: String
+    var modelID: String
+    var endpoint: String
+    var lastUsedAt: Date
+    var id: String { "\(providerID)\u{0}\(modelID)" }
+}
+
 struct AppSettings: Codable, Equatable, Sendable {
     var providerID = "openai"
     var language = AnswerLanguage.automatic
     var models = ProviderCatalog.defaultModels
     var endpoints = ProviderCatalog.defaultEndpoints
     var reasoningEfforts: [String: String] = ["claudecode": "high", "codex": "high"]
+    // Optional so settings saved before study routing retain manual behavior.
+    var studyModelMode: StudyModelMode?
     var quickAskProviderID: String?
     var quickAskModels: [String: String]?
     var quickAskReasoningEfforts: [String: String]?
@@ -452,7 +481,10 @@ struct AppSettings: Codable, Equatable, Sendable {
     var keepExplanationWindowOnTop: Bool? = true
     var showExplanationWindowInWindowSwitcher: Bool? = false
     var useVisibleWorkspaceContext: Bool? = true
+    var localFileAccessEnabled: Bool? = true
+    var localFileWriteAccessEnabled: Bool? = false
     var verifiedProviderModels: [String: [VerifiedProviderModel]]?
+    var recentProviderModels: [RecentProviderModel]?
     var explainShortcut: KeyboardShortcut? = .explainDefault
     var captureShortcut: KeyboardShortcut? = .captureDefault
     var quickAskShortcut: KeyboardShortcut? = .quickAskDefault
@@ -462,6 +494,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     var launchAtLogin = false
 
     var resolvedExplainShortcut: KeyboardShortcut { explainShortcut ?? .explainDefault }
+    var resolvedStudyModelMode: StudyModelMode { studyModelMode ?? .manual }
     var resolvedCaptureShortcut: KeyboardShortcut { captureShortcut ?? .captureDefault }
     var resolvedQuickAskShortcut: KeyboardShortcut { quickAskShortcut ?? .quickAskDefault }
     var resolvedToggleSelectionPopupShortcut: KeyboardShortcut {
@@ -472,6 +505,10 @@ struct AppSettings: Codable, Equatable, Sendable {
         showExplanationWindowInWindowSwitcher ?? false
     }
     var resolvedUseVisibleWorkspaceContext: Bool { useVisibleWorkspaceContext ?? true }
+    var resolvedLocalFileAccessEnabled: Bool { localFileAccessEnabled ?? true }
+    var resolvedLocalFileWriteAccessEnabled: Bool {
+        resolvedLocalFileAccessEnabled && (localFileWriteAccessEnabled ?? false)
+    }
     var resolvedCaptureRegionEnabled: Bool { captureRegionEnabled ?? showSelectionPill }
     var shouldMonitorSelections: Bool {
         showSelectionPill || selectionPopupApplications?.contains(where: \.enabled) == true
@@ -483,6 +520,29 @@ struct AppSettings: Codable, Equatable, Sendable {
         return Set((verifiedProviderModels?[providerID] ?? [])
             .filter { $0.endpoint == endpoint }
             .map(\.id))
+    }
+
+    var recentModels: [RecentProviderModel] {
+        var seen = Set<String>()
+        return (recentProviderModels ?? []).sorted { $0.lastUsedAt > $1.lastUsedAt }.filter { record in
+            let endpoint = (endpoints[record.providerID] ?? ProviderCatalog.provider(id: record.providerID).endpoint)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return ProviderCatalog.providers.contains { $0.id == record.providerID }
+                && record.endpoint == endpoint && !record.modelID.isEmpty && record.modelID.count <= 200
+                && record.lastUsedAt.timeIntervalSince1970 > 0 && record.lastUsedAt <= Date().addingTimeInterval(300)
+                && seen.insert(record.id).inserted
+        }
+    }
+
+    mutating func recordModelUse(providerID: String, modelID: String, endpoint: String, at date: Date = Date()) {
+        let modelID = ProviderCatalog.canonicalModelID(modelID, for: providerID)
+        let endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ProviderCatalog.providers.contains(where: { $0.id == providerID }),
+              !modelID.isEmpty, modelID.count <= 200 else { return }
+        var records = recentProviderModels ?? []
+        records.removeAll { $0.providerID == providerID && $0.modelID == modelID && $0.endpoint == endpoint }
+        records.append(RecentProviderModel(providerID: providerID, modelID: modelID, endpoint: endpoint, lastUsedAt: date))
+        recentProviderModels = Array(records.sorted { $0.lastUsedAt > $1.lastUsedAt }.prefix(12))
     }
 
     func verifiedModel(for providerID: String, modelID: String) -> VerifiedProviderModel? {
@@ -497,11 +557,12 @@ struct AppSettings: Codable, Equatable, Sendable {
     mutating func markModelVerified(
         providerID: String,
         modelID: String,
+        endpoint testedEndpoint: String? = nil,
         testedAt: Date = Date()
     ) {
         let canonical = ProviderCatalog.canonicalModelID(modelID, for: providerID)
         guard !canonical.isEmpty else { return }
-        let endpoint = (endpoints[providerID] ?? ProviderCatalog.provider(id: providerID).endpoint)
+        let endpoint = (testedEndpoint ?? endpoints[providerID] ?? ProviderCatalog.provider(id: providerID).endpoint)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         var all = verifiedProviderModels ?? [:]
         var records = all[providerID] ?? []
@@ -511,11 +572,13 @@ struct AppSettings: Codable, Equatable, Sendable {
         verifiedProviderModels = all
     }
 
-    mutating func removeModelVerification(providerID: String, modelID: String? = nil) {
+    mutating func removeModelVerification(
+        providerID: String, modelID: String? = nil, endpoint testedEndpoint: String? = nil
+    ) {
         guard var all = verifiedProviderModels else { return }
         if let modelID {
             let canonical = ProviderCatalog.canonicalModelID(modelID, for: providerID)
-            let endpoint = (endpoints[providerID] ?? ProviderCatalog.provider(id: providerID).endpoint)
+            let endpoint = (testedEndpoint ?? endpoints[providerID] ?? ProviderCatalog.provider(id: providerID).endpoint)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             all[providerID]?.removeAll { $0.id == canonical && $0.endpoint == endpoint }
             if all[providerID]?.isEmpty == true { all.removeValue(forKey: providerID) }

@@ -114,7 +114,7 @@ struct StoredConversation: Codable, Identifiable, Equatable, Sendable {
                 message.content,
                 maximumUTF16Units: maximumMessageCharacters
             ).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !content.isEmpty else { return nil }
+            guard !content.isEmpty || message.activity?.isEmpty == false else { return nil }
             let reasoning = message.role == .assistant
                 ? message.reasoning.map {
                     TextInputPolicy.bounded(
@@ -132,8 +132,70 @@ struct StoredConversation: Codable, Identifiable, Equatable, Sendable {
                 attachments: retainedAttachments[message.id],
                 reasoning: reasoning,
                 isStreaming: false,
-                metadata: message.metadata.map { String($0.prefix(300)) }
+                metadata: message.metadata.map { String($0.prefix(300)) },
+                activity: message.activity.map { Array($0.suffix(80)).map {
+                    ConversationActivity(id: $0.id, timestamp: $0.timestamp,
+                        title: String($0.title.prefix(180)), detail: $0.detail.map { String($0.prefix(2_000)) })
+                } },
+                modelRouting: message.modelRouting,
+                usage: message.role == .assistant ? message.usage : nil,
+                responseDurationSeconds: message.role == .assistant ? message.responseDurationSeconds : nil
             )
+        }
+    }
+}
+
+/// Encoding image-heavy history and atomically replacing its file must not
+/// block window navigation. Keep only the latest queued snapshot; serialize
+/// clears with saves and finish outstanding writes before application exit.
+final class ConversationHistoryWriter: @unchecked Sendable {
+    private struct Snapshot {
+        let conversations: [StoredConversation]
+        let onError: @Sendable (String) -> Void
+    }
+    private let queue = DispatchQueue(label: "app.scholia.conversation-writer", qos: .utility)
+    private let lock = NSLock()
+    private let persist: @Sendable ([StoredConversation]) throws -> Void
+    private var pending: Snapshot?
+    private var running = false
+    // Accessed only on queue.
+    private var latestWriteError: Error?
+
+    init(persist: @escaping @Sendable ([StoredConversation]) throws -> Void = { values in
+        if values.isEmpty { try ConversationStore.clear() }
+        else { try ConversationStore.save(values) }
+    }) {
+        self.persist = persist
+    }
+
+    func save(_ conversations: [StoredConversation], onError: @escaping @Sendable (String) -> Void = { _ in }) {
+        lock.withLock {
+            pending = Snapshot(conversations: conversations, onError: onError)
+            guard !running else { return }
+            running = true
+            queue.async { [self] in
+                while let snapshot = lock.withLock({ () -> Snapshot? in
+                    guard let value = pending else { running = false; return nil }
+                    pending = nil
+                    return value
+                }) {
+                    do {
+                        try autoreleasepool { try persist(snapshot.conversations) }
+                        latestWriteError = nil
+                    } catch {
+                        latestWriteError = error
+                        snapshot.onError(error.localizedDescription)
+                    }
+                }
+            }
+        }
+    }
+
+    func flush() throws {
+        // save enqueues before returning, so this barrier cannot overtake an
+        // earlier submission. Only lifecycle boundaries wait for I/O.
+        try queue.sync {
+            if let error = latestWriteError { throw error }
         }
     }
 }

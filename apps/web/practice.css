@@ -150,3 +150,9 @@
     max-height: calc(100dvh - 260px);
   }
 }
+.course-practice-coverage { background: var(--paper, #f8f8f2); border: 1px solid var(--line, #daddd2); border-radius: 12px; padding: 18px; margin: 16px 0 24px; }
+.course-practice-coverage progress { width: 100%; accent-color: #32684e; height: 10px; }
+.course-practice-coverage ul { list-style: none; padding: 0; }
+.course-practice-coverage li { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid #dedfd6; }
+.course-practice-coverage small { text-align: right; }
+.course-practice-coverage summary { cursor: pointer; padding: 7px 0; }

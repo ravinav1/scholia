@@ -61,6 +61,7 @@ extension StudyWorkspaceSmoke {
         } catch is CancellationError {}
         print("PASS: chunked downloads preserve bytes, enforce declared and streamed limits, retain HTTP status, and cancel the network task")
         try await checkDocumentStaging()
+        try await checkCanvasSessionsAndAttachments()
     }
 
     private static func checkDocumentStaging() async throws {
@@ -96,6 +97,57 @@ extension StudyWorkspaceSmoke {
         savedBytes = try bytes(destination.file(for: original))
         precondition(savedBytes == originalData, "A failed commit must restore the original directory")
 
+        for failure in ["missing original", "missing index", "malformed index", "truncated original"] {
+            let partial = StudyDocumentStaging(destination: destination)
+            defer { partial.discard() }
+            let candidate = try StudyDocumentImporter.read(
+                data: replacementData, name: "Lecture.md", store: partial.store, id: original.id)
+            let indexURL = partial.store.directory(for: candidate.id).appendingPathComponent("index.json")
+            switch failure {
+            case "missing original":
+                try FileManager.default.removeItem(at: partial.store.file(for: candidate))
+            case "missing index":
+                try FileManager.default.removeItem(at: indexURL)
+            case "malformed index":
+                try Data("{unfinished".utf8).write(to: indexURL)
+            default:
+                try Data(replacementData.prefix(5)).write(to: partial.store.file(for: candidate))
+            }
+            do {
+                try partial.commit(candidate, to: destination)
+                preconditionFailure("A staged document with \(failure) must never replace saved material")
+            } catch {}
+            savedBytes = try bytes(destination.file(for: original))
+            let originalIndex = try destination.index(for: original)
+            precondition(savedBytes == originalData, "Rejecting \(failure) must retain original bytes")
+            precondition(originalIndex.pages.first?.text == "Original course notes", "Rejecting \(failure) must retain the original index")
+        }
+
+        let cancelledNew = StudyDocumentStaging(destination: destination)
+        defer { cancelledNew.discard() }
+        let newDocument = try StudyDocumentImporter.read(
+            data: replacementData, name: "New lecture.md", store: cancelledNew.store)
+        let cancelledNewTask = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            try cancelledNew.commit(newDocument, to: destination)
+        }
+        do {
+            try await cancelledNewTask.value
+            preconditionFailure("Cancelling a new import must not publish its files")
+        } catch is CancellationError {}
+        precondition(!FileManager.default.fileExists(atPath: destination.directory(for: newDocument.id).path),
+                     "A cancelled new document must leave no partial original or index in the library")
+        try FileManager.default.removeItem(at: cancelledNew.store.directory(for: newDocument.id).appendingPathComponent("index.json"))
+        do {
+            try cancelledNew.commit(newDocument, to: destination)
+            preconditionFailure("An incomplete new import must not publish its files")
+        } catch {}
+        precondition(!FileManager.default.fileExists(atPath: destination.directory(for: newDocument.id).path),
+                     "A failed new document must leave no partial destination")
+        cancelledNew.discard()
+        precondition(!FileManager.default.fileExists(atPath: cancelledNew.store.root.path),
+                     "Discard removes all partial staging files")
+
         try staging.commit(replacement, to: destination)
         savedBytes = try bytes(destination.file(for: replacement))
         let savedIndex = try destination.index(for: replacement)
@@ -106,8 +158,89 @@ extension StudyWorkspaceSmoke {
         precondition(revisions.count == 1)
         let previousBytes = try bytes(revisions[0].appendingPathComponent(original.fileName))
         precondition(previousBytes == originalData, "Successful replacements must retain the previous original")
-        print("PASS: staged document refresh preserves originals on cancellation and failed commits, then installs data and index together")
+        print("PASS: staging rejects missing, malformed and truncated files; cancelled and failed imports retain originals and leave no partial new documents")
     }
+}
+
+extension StudyWorkspaceSmoke {
+    static func checkCanvasSessionsAndAttachments() async throws {
+        let origin = URL(string: "https://canvas.example.test")!
+        let now = Date()
+        let cookie = HTTPCookie(properties: [.name: "session", .value: "fixture-secret", .domain: "canvas.example.test", .path: "/api", .secure: "TRUE", .expires: now.addingTimeInterval(3600), HTTPCookiePropertyKey("HttpOnly"): "TRUE"])!
+        let sso = HTTPCookie(properties: [.name: "sso", .value: "never-archive", .domain: ".example.test", .path: "/"])!
+        let archived = CanvasCookieArchive(savedAt: now, entries: [CanvasCookieArchive.Entry(cookie), CanvasCookieArchive.Entry(sso)])
+        let restored = try JSONDecoder().decode(CanvasCookieArchive.self, from: JSONEncoder().encode(archived))
+        let valid = restored.cookies(origin: origin, now: now)
+        precondition(valid.count == 1 && valid[0].isSecure && valid[0].isHTTPOnly)
+        precondition(restored.cookies(origin: origin, now: now.addingTimeInterval(3601)).isEmpty)
+        precondition(restored.cookies(origin: origin, now: now.addingTimeInterval(8 * 86400)).isEmpty)
+        precondition(CanvasCookieArchive.header(valid, url: origin.appendingPathComponent("api/v1/courses"), origin: origin).contains("fixture-secret"))
+        precondition(CanvasCookieArchive.header(valid, url: origin.appendingPathComponent("apievil"), origin: origin).isEmpty)
+        precondition(CanvasCookieArchive.header(valid, url: URL(string: "https://evil.test/api")!, origin: origin).isEmpty)
+
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CanvasAuthFixtureProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let jar = CanvasCookieFixture()
+        let client = CanvasClient(origin: origin, session: session, cookies: { _ in await jar.header }, receiveCookies: { _, headers in await jar.receive(headers) })
+        _ = try await client.account()
+        _ = try await client.account() // The second request must carry the renewed cookie.
+        let ref = try await client.fileReference(id: "1308344", courseID: 24623)
+        precondition(ref.fileName == "Exercise 5.pdf")
+        let material = try await client.material(ref, courseID: 24623)
+        let bytes = try await client.download(material.downloadURL!)
+        precondition(bytes == Data("%PDF-fixture".utf8))
+        do { _ = try await client.fileReference(id: "2", courseID: 24623); preconditionFailure("Locks must remain enforced") }
+        catch { precondition(error.localizedDescription.contains("not currently available")) }
+        do { _ = try await client.fileReference(id: "3", courseID: 24623); preconditionFailure("Expired sign-in must fail") }
+        catch let error as CanvasHTTPError { precondition(error.status == 401) }
+        var original = URLRequest(url: origin.appendingPathComponent("files/1/download"))
+        original.setValue("Bearer fixture", forHTTPHeaderField: "Authorization")
+        original.setValue("session=fixture", forHTTPHeaderField: "Cookie")
+        let redirect = HTTPURLResponse(url: original.url!, statusCode: 302, httpVersion: nil, headerFields: [:])!
+        let policy = CanvasRedirectPolicy(downloads: true)
+        let same = policy.redirectedRequest(URLRequest(url: origin.appendingPathComponent("files/1")), response: redirect, original: original)
+        precondition(same?.value(forHTTPHeaderField: "Cookie") == "session=fixture")
+        let external = policy.redirectedRequest(URLRequest(url: URL(string: "https://storage.example.test/1")!), response: redirect, original: original)
+        precondition(external?.value(forHTTPHeaderField: "Cookie") == nil && external?.value(forHTTPHeaderField: "Authorization") == nil)
+        print("PASS: Canvas cookie renewal, secure local archive filtering, path isolation, linked-only attachment fallback, locks and redirect credentials")
+    }
+}
+
+private actor CanvasCookieFixture {
+    var header = "session=original"
+    func receive(_ headers: [String: String]) {
+        if headers.contains(where: { $0.key.lowercased() == "set-cookie" && $0.value.contains("renewed") }) { header = "session=renewed" }
+    }
+}
+
+private final class CanvasAuthFixtureProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!, path = request.url!.path
+        var status = 200
+        var headers = ["Content-Type": "application/json"]
+        var body: [String: Any] = ["id": 7, "name": "Fixture account"]
+        if url.host == "storage.example.test" {
+            precondition(request.value(forHTTPHeaderField: "Cookie") == nil)
+            precondition(request.value(forHTTPHeaderField: "Authorization") == nil)
+        } else if path == "/api/v1/users/self/profile" {
+            headers["Set-Cookie"] = "session=renewed; Path=/; Secure; HttpOnly"
+        } else {
+            precondition(request.value(forHTTPHeaderField: "Cookie") == "session=renewed")
+            if path.hasPrefix("/api/v1/courses/") { status = path.hasSuffix("/3") ? 401 : 403 }
+            else if path.hasPrefix("/api/v1/files/") {
+                precondition(!path.hasSuffix("/3"), "Do not retry auth failures through another endpoint")
+                body = ["id": 1308344, "filename": "Exercise 5.pdf", "display_name": "Exercise 5.pdf", "hidden_for_user": true, "locked_for_user": path.hasSuffix("/2"), "url": "https://storage.example.test/exercise.pdf"]
+            }
+        }
+        let data = url.host == "storage.example.test" ? Data("%PDF-fixture".utf8) : try! JSONSerialization.data(withJSONObject: body)
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: headers)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
 
 private final class TransferFixtureState: @unchecked Sendable {

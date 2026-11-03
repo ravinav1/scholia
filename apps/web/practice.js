@@ -1,16 +1,19 @@
-import { escapeHtml as esc } from '../chrome/src/render.js';
+import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 import { studyRenderKey } from './study-session.js';
 import { practiceQuestionMarkup, practiceRecapMarkup } from './practice-view.js';
+import { coursePracticeSetupMarkup } from './course-practice.js';
 import './practice.css';
 const date = (value) => new Date((value + 978307200) * 1000).toLocaleString();
 const button = (text, action, attrs = '') =>
   `<button type="button" data-practice="${action}" ${attrs}>${text}</button>`;
 
 export class StudyPractice {
-  constructor({ dialog, request, getState, getSelection, notify, onExplain, onSource }) {
+  constructor({ dialog, request, getState, getSelection, notify, onExplain, onSource, accountID = 'local' }) {
     Object.assign(this, { dialog, request, getState, getSelection, notify, onExplain, onSource });
-    this.clientID = sessionStorage.getItem('scholia.practice.client') || crypto.randomUUID();
-    sessionStorage.setItem('scholia.practice.client', this.clientID);
+    this.storagePrefix = accountID === 'local' ? 'scholia.practice.' : `scholia.practice.account.${accountID}.`;
+    this.outboxPrefix = this.storagePrefix + 'outbox.';
+    this.clientID = sessionStorage.getItem(this.storagePrefix + 'client') || crypto.randomUUID();
+    sessionStorage.setItem(this.storagePrefix + 'client', this.clientID);
     this.outboxConflicts = new Set();
     this.screen = 'setup';
     this.view = null;
@@ -38,7 +41,9 @@ export class StudyPractice {
     });
   }
   async open(screen = 'setup') {
-    this.screen = screen;
+    this.sourceScope = screen === 'course' || !this.getState().library.selectedDocumentID ? 'course' : 'reading';
+    this.screen = screen === 'course' ? 'setup' : screen;
+    if (!this.dialog.open) this.dialog.replaceChildren();
     this.key = '';
     if (!this.dialog.open) this.dialog.showModal();
     await this.refresh();
@@ -63,7 +68,9 @@ export class StudyPractice {
       }
     } catch {
       this.notify(
-        'Practice is saved locally. Reconnect to the Mac to continue; unsent answers remain in this browser.'
+        this.getState().hosted
+          ? 'Reconnect to continue practice. Unsent answers remain in this browser.'
+          : 'Practice is saved locally. Reconnect to the Mac to continue; unsent answers remain in this browser.'
       );
     } finally {
       if (this.dialog.open)
@@ -76,7 +83,7 @@ export class StudyPractice {
   storageKey() {
     const s = this.view?.session;
     return s
-      ? `scholia.practice.draft.${this.clientID}.${s.id}.${s.currentQuestionID || s.questionIDs[s.position]}`
+      ? `${this.storagePrefix}draft.${this.clientID}.${s.id}.${s.currentQuestionID || s.questionIDs[s.position]}`
       : '';
   }
   saveDraft() {
@@ -131,7 +138,7 @@ export class StudyPractice {
   }
   async flushOutbox() {
     const keys = Object.keys(localStorage).filter((key) =>
-      key.startsWith('scholia.practice.outbox.')
+      key.startsWith(this.outboxPrefix)
     );
     for (const key of keys) {
       if (this.outboxConflicts.has(key)) continue;
@@ -160,6 +167,8 @@ export class StudyPractice {
     if (form.id === 'practice-setup') {
       const state = this.getState(),
         data = new FormData(form);
+      this.sourceScope = data.get('sourceScope');
+      this.practiceStyle = data.get('practiceStyle');
       this.pending = true;
       this.generating = true;
       this.generationStart = this.view.revision;
@@ -171,6 +180,8 @@ export class StudyPractice {
           owner: state.draftOwner,
           text: data.get('scope'),
           count: Number(data.get('count')),
+          sourceScope: data.get('sourceScope'),
+          practiceStyle: data.get('practiceStyle'),
           enabled: data.get('openBook') === 'on',
           selection: this.getSelection(),
         });
@@ -190,7 +201,7 @@ export class StudyPractice {
         Number(this.dialog.querySelector('#practice-confidence').value) || undefined;
       const command = this.command('attempt', { text, confidence });
       this.saveDraft();
-      const outboxKey = `scholia.practice.outbox.${command.id}`;
+      const outboxKey = `${this.outboxPrefix}${command.id}`;
       try {
         localStorage.setItem(outboxKey, JSON.stringify(command));
       } catch {
@@ -212,6 +223,12 @@ export class StudyPractice {
     const action = buttonValue.dataset.practice;
     if (action === 'close') {
       this.dialog.close();
+      return;
+    }
+    if (action === 'downloadCourse') {
+      this.dialog.close();
+      await this.request('/api/action', { action: 'downloadAll', id: this.getState().library.selectedCourseID });
+      this.notify('Downloading course materials. Reopen practice when the downloads finish.');
       return;
     }
     if (['setup', 'reviewQueue'].includes(action)) {
@@ -252,8 +269,9 @@ export class StudyPractice {
       return;
     }
     if (action === 'explain') {
-      const result = await this.act(this.command('reveal'));
-      await this.onExplain(result.question);
+      // Tutor access is assistance, but must not reveal the private answer.
+      const result = await this.act(this.command('source'));
+      await this.onExplain(result.question, result.attempts);
       this.dialog.close();
       return;
     }
@@ -323,7 +341,7 @@ export class StudyPractice {
       documentValue = course?.documents.find((d) => d.id === state.library.selectedDocumentID);
     let body;
     const recoveries = Object.keys(localStorage)
-      .filter((key) => key.startsWith('scholia.practice.outbox.'))
+      .filter((key) => key.startsWith(this.outboxPrefix))
       .map((key) => {
         try {
           const item = JSON.parse(localStorage.getItem(key));
@@ -333,9 +351,11 @@ export class StudyPractice {
         }
       })
       .join('');
-    const sessions = `${recoveries}<h3>Recent sessions</h3><div class="practice-sessions">${view.sessions.map((s) => button(`${esc(s.title)} · ${s.finished ? 'Recap' : 'Resume'}`, 'resume', `data-session="${esc(s.id)}"`)).join('')}</div>`;
+    const sessions = `${recoveries}<h3>Recent sessions</h3><div class="practice-sessions">${view.sessions.filter((s) => s.courseID === course?.id).map((s) => button(`${esc(s.title)} · ${s.finished ? 'Recap' : 'Resume'}`, 'resume', `data-session="${esc(s.id)}"`)).join('')}</div>`;
     if (this.screen === 'setup') {
-      body = `<h2>Practice this</h2><p>${esc(this.getSelection() ? 'Selected passage' : documentValue ? `${documentValue.title} · page/section ${state.page}` : 'Downloaded course materials')}</p><form id="practice-setup"><label>Topic or focus (optional)<input name="scope" maxlength="1000"></label><label>Session length<select name="count">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === 3 ? 'selected' : ''}>${n} question${n === 1 ? '' : 's'}</option>`).join('')}</select></label><label class="practice-toggle"><input type="checkbox" name="openBook"> Open-book practice</label><p>Try recall with the source hidden, or choose open-book practice. Hints and solution reveals are always available.</p><button type="submit" class="primary" ${!course ? 'data-unavailable="true"' : ''}>Prepare questions</button></form><p class="fineprint">Untimed · Saved locally · Generated questions can be imperfect</p>${sessions}`;
+      body = coursePracticeSetupMarkup({ course, document: documentValue, sourceScope: this.sourceScope,
+        practiceStyle: this.practiceStyle, selection: this.getSelection(), page: state.page, coverage: view.coverage }) +
+        `<p class="fineprint">Untimed · ${state.hosted ? 'Saved to your account' : 'Saved locally'} · Generated questions can be imperfect</p>${sessions}`;
     } else if (this.screen === 'review') {
       // Server dueCount applies the workload limit. Only the earliest due items are offered today.
       const now = Date.now() / 1000 - 978307200;

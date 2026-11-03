@@ -37,8 +37,12 @@ Depending on the feature you use, Scholia may handle:
   webmail reader, including visible sender/recipient/date fields, message text,
   and attachment names (not attachment contents), when you choose **Draft
   reply**;
-- same-origin page text when you explicitly enable **Entire site** for a
-  question;
+- page and document text from Canvas and linked websites when you enable
+  **Follow links**; you review new sites before reads, or choose **YOLO** to
+  skip those reviews for the current chat. Relevant excerpts and their URLs
+  are sent to the selected model. Research source URLs preserve meaningful
+  query parameters; known credentials, signed URLs, tracking parameters, and
+  fragments are excluded;
 - PDF text and page numbers extracted locally from a document you opened or
   chose;
 - when enabled in the macOS app, bounded Accessibility text and labels from a
@@ -56,6 +60,9 @@ Depending on the feature you use, Scholia may handle:
 - provider API keys or local-endpoint credentials;
 - the current site's hostname when you add it to an allowlist or blocklist;
 - imported documents, extracted indexes, edits, and retained earlier versions;
+- in native chats and the Mac's local browser workspace, local filenames, paths,
+  and file contents read to answer your question when **Allow file access** is
+  enabled; file text and images read this way are sent to the selected model;
 - Canvas account/course identifiers, catalogs, deadlines, submission status,
   downloaded course material, and your Canvas token or native session;
 - native practice questions, attempts, assistance, feedback, and review dates; and
@@ -79,11 +86,32 @@ without waiting. It does not navigate or replace your active conversation.
 
 ## How data is used
 
+The native **Study on Paper** feature requests camera access only after Connect.
+Its video preview stays on the Mac; no audio or video recording is made. Manual
+questions or resumed proactive analysis send the selected notebook crop and up
+to two earlier crops with bounded session context to the selected model.
+Help-on-request observation keeps steps locally until the student asks. Paper
+sessions are held in memory, bounded to 24 crops / approximately 20 MB of encoded
+images, and cleared on close or Clear session; they are not saved in the study
+library. Pause AI keeps the camera preview active; Stop camera releases it.
+Provider retention still applies. Local CLI bridges may write temporary request
+images until completion/cancellation; clearing Scholia does not delete data
+already received by a provider. Paper requests do not enable local file tools.
+See [camera controls and retention](PAPER_STUDY.md).
+
 Data is used only to provide the explanation or contextual conversation you
 request, remember your extension settings, enforce your site access choices,
 keep an active conversation grounded in the source you chose, and let you
 return to saved chats and readings. Hosted data is additionally used to
 authenticate your account and keep its workspaces separate from other accounts.
+
+The Mac app's **Settings → Privacy → Local files** controls file tools in chat.
+Read access is enabled by default. **Allow write access** is separately disabled
+by default and permits creating folders and creating or editing text/code files
+when enabled. Disabling access blocks subsequent file operations, including in
+an active answer. macOS folder permissions still apply. These tools are not
+available to background document classification or model connection tests, and
+do not give the hosted website or extension access to your Mac's filesystem.
 
 Long pages, sites, and PDFs are indexed on the device. Completed PDF text
 indexes may be retained in extension-local IndexedDB under a document
@@ -96,10 +124,19 @@ own controls, and large inline URLs. The extension sends a bounded context pack
 rather than the complete local index. Automatic page, PDF, site, and in-page
 selection context in Compact mode is question-ranked into a roughly 6,000-character pack;
 automatically attached saved ChatGPT context is separately capped at roughly
-4,000 characters. Full mode restores the prior larger context behavior; the
+4,000 characters. In the extension, Full mode includes complete articles and
+short PDFs up to 120,000 source characters, with bounded excerpts for larger sources; the
 explicit None control can omit both while preserving selections and images.
 Screenshots and chosen images are resized on
 the device before submission.
+
+In the extension, sparse or scanned PDF pages are rendered locally for OCR.
+The OCR engine and English/Norwegian language data are bundled with the
+extension; recognition does not upload page images or download remote code.
+Up to 50 sparse pages per document are processed, with a 30-second limit per
+recognition job. Recovered text can be retained in the PDF index and saved
+chat context described here, and sent to the selected provider when you ask a
+question. Temporary recognition images are discarded after processing.
 
 For a mail selection, Scholia targets the conversation containing the selected
 passage rather than the inbox or unrelated messages. The thread is delimited as
@@ -170,9 +207,12 @@ keychain; use a dedicated, revocable provider key with a spending limit.
 Imported ChatGPT snapshots are stored with those local settings until you clear
 their fields, clear extension data, or uninstall Scholia.
 
-On Chromium 151 and newer, a PDF handled by Scholia keeps its original HTTP,
+On supported Chromium 151 and newer, a PDF handled by Scholia keeps its original HTTP,
 HTTPS, or file address in the browser address bar; Chromium supplies the
 document through a one-use stream and Scholia does not persist that stream.
+The reader stores a document fingerprint and page number in per-tab session
+storage to restore its reading position on reload; it does not store PDF bytes
+there. Browsers without the public MIME API use the extension-URL compatibility reader.
 Compatibility and migration routes may retain the original address behind an
 opaque viewer token in `chrome.storage.local`. Those records are capped at 256,
 expire after 180 days of inactivity, and are removed with extension data or
@@ -284,6 +324,57 @@ its library entry; imported files and earlier revisions remain on disk for
 recovery. Clearing the library on disk requires closing Scholia first. Keychain
 credentials are stored separately and are not deleted by removing library files.
 
+The optional **Studentweb results** feature is native-only. Clicking it starts
+an automatic check of NTNU's Results page and saves course codes and pass booleans
+in a separate, non-synchronizing local Keychain item. The check reuses its own
+in-memory sign-in, follows the official Feide form when needed, and opens Results
+automatically. **Use ID and PIN** opens the official Studentweb login for direct
+entry instead. Scholia never reads or stores those fields. A new sign-in may
+still require credentials or MFA.
+Grades, names, student/candidate numbers, credentials, dates, attempts and raw
+page content are not imported or logged. The extractor returns only
+`{courseCode, passed}` after reducing the grade inside the isolated browser.
+Hidden rows, partial assessments and unknown results are omitted; absence of a
+status means unknown. Empty, unstable or unsupported results never erase saved
+statuses. Closing the window cancels pending reads and clears non-cookie website
+data. Login cookies remain only inside a per-library nonpersistent WebKit store
+until **Forget sign-in** or app exit. Cookies and authentication tokens are never
+copied out of WebKit or saved by Scholia. A check sends normal HTTPS requests to
+Studentweb and Feide, which still handle sign-in. Importing itself sends no
+results to a Scholia server or AI provider.
+
+These records are outside the study library, browser API, hosted service, search,
+exports and backups made by Scholia. Native recommendation selections are
+filtered locally after the AI response. Native **Get advice** uses the passed
+course codes when you submit a question or follow-up, including passed courses
+outside the exam plan. Those codes are sent to your selected model provider,
+which may be remote; failed results, grades, attempts and identity are excluded.
+The advice view identifies the included courses. When degree context is enabled,
+the same selected provider receives these codes in both the curriculum-lookup
+selection step and the final advice step; an invalid lookup plan may require one
+repair call. No additional provider is introduced. The current list is read for
+each turn, and deleting statuses removes them from subsequent request context;
+it cannot retract earlier provider requests or mentions in conversation history.
+Other provider workflows, browser advice and hosted advice cannot access this
+Keychain record. Applying a selection still changes the normal shared exam
+plan. The Keychain record lasts until replaced or deleted in **Studentweb
+results → Delete all saved statuses**, and individual records can also be
+deleted. Clearing library files or uninstalling the app does not remove this
+separate Keychain item. Deletion does not erase historical system backups or
+Studentweb's own records. See the [Results import workflow](STUDY_WORKSPACE.md#local-course-pass-statuses-from-results)
+for scope, limits and synthetic privacy checks.
+
+Degree-plan lookups use a bundled public NTNU catalogue with cohort-specific
+courses, semesters, branches and choice rules. Refreshing that catalogue uses
+public requests without Studentweb credentials or cookies. Relevant public plan
+data is included in degree-advice requests. The model first receives a compact
+index of the selected cohorts and optional focus, then chooses validated read-only
+lookups. Those lookups execute against the stored catalogue, without live NTNU
+requests or access to other local files. The final advice uses only the retrieved
+records. Admission years cannot be overridden by model lookup commands. These choices remain in the open panel;
+they are not saved as enrolment records. This catalogue contains no personal
+results and is independent of the private pass-status record.
+
 Canvas sign-in uses the app's WebKit data store; Scholia does not collect your
 institutional password. Personal Canvas tokens use Keychain. Catalog refreshes
 read accessible course metadata and your submission status. Opening a material
@@ -337,13 +428,19 @@ operator configuration and backup responsibilities.
 
 Scholia requests access to websites because its single purpose is to explain
 content on the page you are reading. It uses that access for selection UI,
-explicit page context, user-initiated PDF reading, explicit same-site context,
+explicit page context, user-initiated PDF reading, explicit linked-site research,
 and visible-tab capture. It does not passively collect a browsing history or
 take background screenshots.
 
 You can disable Scholia on individual sites or switch to allowlist mode, which
-keeps it inactive everywhere except the hostnames you approve. Site-wide
-reading is off until you enable **Entire site** for a question. Page-wide
+keeps it inactive everywhere except the hostnames you approve. Linked-site
+research is off until you enable **Follow links**. Normal mode reviews sites
+for each question. YOLO skips reviews but remains read-only, respects site
+restrictions, and never submits forms or changes course data. Reads use the
+browser's existing signed-in access. Stop, leaving the chat, starting another
+chat, and closing the chat cancel pending research requests; no detached crawler
+continues afterward. Read-source titles and safe URLs are retained with saved
+chats alongside the selected excerpts. Page-wide
 context can also be disabled in Settings. Lazy loading and full-page visual
 capture occur only when you enable **Complete page**; Scholia restores the
 original scroll position after capture.

@@ -12,9 +12,11 @@ import {
   resolveModelId,
   siteIsEnabled
 } from '../../../packages/core/src/providers.js';
-import { checkBridgeStatus, discoverOpencodeModels, runCompletion } from './provider-runtime.js';
+import { checkBridgeStatus, discoverCodexModels, discoverOpencodeModels, runCompletion } from './provider-runtime.js';
+import { RECENT_MODELS_KEY, recordRecentModel } from '../../../packages/core/src/recent-models.js';
 import { openExplanationChat } from './explanation-chat.js';
 import { pdfWrapperDownloadUrl } from './pdf-context.js';
+import { forwardOcrRequest } from './ocr-broker.js';
 import { pdfMimeHandlerEnabled, pdfMimeHandlerFrameId } from './pdf-mime-handler.js';
 import {
   loadPdfSourceRecord,
@@ -49,6 +51,7 @@ import {
   contentFrameTarget,
   isCompletedPdfNavigation,
   isLikelyPdfTab,
+  isPdfUrl,
   manualPdfSourceUrl,
   PAGE_SELECTION_KEY,
   pageSelectionStorageKey,
@@ -73,6 +76,7 @@ import {
 } from './browser-workspace-context.js';
 import { embeddedFrameContext, MAX_DEEP_PAGE_TILES } from './deep-page.js';
 import { MAX_MAIL_THREAD_CONTEXT_CHARACTERS } from './mail-context.js';
+import { researchUrl } from './research-links.js';
 import { configurePdfMimeHandling } from './browser-compat.js';
 import { nativePdfProgressFromScriptResults } from './pdf-progress.js';
 import {
@@ -92,16 +96,17 @@ const stagedPdfSources = new Map();
 const newlyCreatedTabs = new Set();
 const mimePdfTabs = new Map();
 let automaticChatGptRefreshTask = null;
-let opencodeModelDiscoveryTask = null;
-const OPENCODE_MODEL_CATALOG_TTL = 10 * 60_000;
+const modelDiscoveryTasks = new Map();
+let modelCatalogWrite = Promise.resolve();
+const MODEL_CATALOG_TTL = 2 * 60_000;
 const DEEP_PAGE_CAPTURE_INTERVAL_MS = 540;
 
 configurePdfMimeHandling().catch(() => {});
 
 async function loadSettings() {
-  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  const stored = await chrome.storage.local.get([SETTINGS_KEY, RECENT_MODELS_KEY]);
   const source = stored[SETTINGS_KEY] || DEFAULT_SETTINGS;
-  const merged = mergeSettings(source);
+  const merged = mergeSettings({ ...source, recentModels: stored[RECENT_MODELS_KEY] || source.recentModels });
   // Prompt-time normalization already fails closed. Persist this migration as
   // well so an old Personalization-page scrape cannot reappear after another
   // extension surface edits otherwise unrelated settings.
@@ -109,6 +114,17 @@ async function loadSettings() {
     await chrome.storage.local.set({ [SETTINGS_KEY]: merged }).catch(() => {});
   }
   return merged;
+}
+
+// A separate key and queue keep concurrent chat completions from losing history
+// or overwriting credentials/settings saved while a response was in flight.
+let recentModelWrite = Promise.resolve();
+function rememberModelUse(provider, model) {
+  recentModelWrite = recentModelWrite.catch(() => {}).then(async () => {
+    const stored = await chrome.storage.local.get(RECENT_MODELS_KEY);
+    await chrome.storage.local.set({ [RECENT_MODELS_KEY]: recordRecentModel(stored[RECENT_MODELS_KEY], provider, model) });
+  });
+  return recentModelWrite;
 }
 
 async function saveSettings(settings) {
@@ -128,47 +144,44 @@ async function syncChatGptContextRefreshAlarm(settings = null) {
   if (schedule) chrome.alarms.create(CHATGPT_CONTEXT_REFRESH_ALARM, schedule);
 }
 
-async function refreshOpencodeModelCatalog(settings, { force = false, timeoutMs = 1_400 } = {}) {
-  const checkedAt = Number(settings.modelCatalogCheckedAt?.opencode || 0);
-  const cachedModels = settings.discoveredModels?.opencode || [];
-  const hasLegacyTruncatedCatalog = cachedModels.length >= 2_000;
-  if (!force && !hasLegacyTruncatedCatalog && Date.now() - checkedAt < OPENCODE_MODEL_CATALOG_TTL) {
-    return settings;
-  }
-  if (opencodeModelDiscoveryTask) return opencodeModelDiscoveryTask;
-
+async function refreshModelCatalog(providerId, settings, { force = false, timeoutMs } = {}) {
+  const checkedAt = Number(settings.modelCatalogCheckedAt?.[providerId] || 0);
+  const cachedModels = settings.discoveredModels?.[providerId] || [];
+  const hasLegacyTruncatedCatalog = providerId === 'opencode' && cachedModels.length >= 2_000;
+  if (!force && !hasLegacyTruncatedCatalog && Date.now() - checkedAt < MODEL_CATALOG_TTL) return settings;
+  if (modelDiscoveryTasks.has(providerId)) return modelDiscoveryTasks.get(providerId);
   const task = (async () => {
     const attemptedAt = Date.now();
     let discovered = null;
     try {
-      discovered = await discoverOpencodeModels(settings, { timeoutMs });
+      discovered = providerId === 'codex'
+        ? await discoverCodexModels(settings, { timeoutMs: 15_000 })
+        : await discoverOpencodeModels(settings, { timeoutMs: timeoutMs || 1_800 });
     } catch {}
-    const current = await loadSettings();
-    current.modelCatalogCheckedAt.opencode = attemptedAt;
-    if (discovered?.models?.length) current.discoveredModels.opencode = discovered.models;
-    else if (hasLegacyTruncatedCatalog) delete current.discoveredModels.opencode;
-    return saveSettings(current);
+    modelCatalogWrite = modelCatalogWrite.catch(() => {}).then(async () => {
+      const current = await loadSettings();
+      if (current.endpoints[providerId] !== settings.endpoints[providerId]) return current;
+      current.modelCatalogCheckedAt[providerId] = attemptedAt;
+      if (discovered?.models?.length) current.discoveredModels[providerId] = discovered.models;
+      else if (hasLegacyTruncatedCatalog) delete current.discoveredModels[providerId];
+      return saveSettings(current);
+    });
+    return modelCatalogWrite;
   })();
-  opencodeModelDiscoveryTask = task;
-  try {
-    return await task;
-  } finally {
-    if (opencodeModelDiscoveryTask === task) opencodeModelDiscoveryTask = null;
-  }
+  modelDiscoveryTasks.set(providerId, task);
+  try { return await task; }
+  finally { if (modelDiscoveryTasks.get(providerId) === task) modelDiscoveryTasks.delete(providerId); }
 }
 
 async function bridgeStatusWithModelCatalog(providerId, settings, options) {
-  if (providerId !== 'opencode') return checkBridgeStatus(providerId, settings, options);
-  const timeoutMs = Number(options?.timeoutMs) || 1_800;
-  const [status, refreshed] = await Promise.all([
-    checkBridgeStatus(providerId, settings, options),
-    refreshOpencodeModelCatalog(settings, {
-      force: options?.refreshModels === true,
-      timeoutMs
-    }).catch(() => settings)
-  ]);
-  if (!status.up) return status;
-  return { ...status, models: refreshed.discoveredModels.opencode || [] };
+  const status = await checkBridgeStatus(providerId, settings, options);
+  if (!status.up || !['codex', 'opencode'].includes(providerId)) return status;
+  // Discovery is independent of the fast health check. Storage events update
+  // an open picker when a new catalog arrives, without delaying chat startup.
+  void refreshModelCatalog(providerId, settings, {
+    force: options?.refreshModels === true, timeoutMs: options?.timeoutMs
+  }).catch(() => {});
+  return { ...status, models: settings.discoveredModels[providerId] || [] };
 }
 
 async function installMenus() {
@@ -339,6 +352,13 @@ async function openPdfViewer(tab) {
   if (source.viewerSourceId) return source;
   if (source.sourceKind !== 'pdf' || !source.pdfUrl) throw new Error('The current tab is not a readable PDF.');
 
+  if (await pdfMimeHandlerEnabled()) {
+    const frameId = await activeMimePdfFrameId(tab.id);
+    if (Number.isInteger(frameId)) return activeMimePdfSource(source, tab, frameId);
+    await chrome.tabs.update(tab.id, { url: source.pdfUrl });
+    return source;
+  }
+
   const stagedCandidate = stagedPdfSources.get(tab.id);
   const stagedSource = stagedCandidate && Date.now() - stagedCandidate.createdAt <= 30_000
     ? stagedCandidate
@@ -445,6 +465,22 @@ function activeMimePdfSource(source, tab, frameId) {
   };
 }
 
+async function tabHasPdfDocument(tabId, expectedUrl) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      func: () => ({ url: location.href, contentType: document.contentType })
+    });
+    const result = results.find(({ frameId }) => frameId === 0)?.result;
+    if (!result) return null;
+    return result.url === expectedUrl && result.contentType === 'application/pdf';
+  } catch {
+    // Some native PDF viewers (and local files without file access) cannot be
+    // inspected. Keep this distinct from a document confirmed to be HTML.
+    return null;
+  }
+}
+
 async function completePdfHandoff(tabId, expectedUrl) {
   const [tab, mimeFrameId] = await Promise.all([
     chrome.tabs.get(tabId),
@@ -477,7 +513,15 @@ async function completePdfHandoff(tabId, expectedUrl) {
     return;
   }
 
-  await openPdfViewer(tab);
+  // A submitted prompt can put its trailing PDF link in the chat's title or
+  // URL path. Even a .pdf suffix must never override a confirmed HTML page.
+  // Only inaccessible native viewers may fall back to the URL hint.
+  const documentIsPdf = await tabHasPdfDocument(tabId, currentUrl);
+  if (documentIsPdf !== true && !(documentIsPdf === null && isPdfUrl(currentUrl))) return;
+
+  // The MIME frame can still be starting after a reload. Its registration and
+  // runtime context may not be visible yet; do not race it with a redirect.
+  if (!await pdfMimeHandlerEnabled()) await openPdfViewer(tab);
 }
 
 function schedulePdfHandoff(tabId, tab) {
@@ -1374,6 +1418,11 @@ async function sourceTabForPanel(sender, message) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') return undefined;
+  if (message.target === 'scholia-ocr') return undefined;
+  if (message.type === 'SCHOLIA_OCR_RECOGNIZE' || message.type === 'SCHOLIA_OCR_CANCEL') {
+    respondAsync(sendResponse, forwardOcrRequest(message, sender));
+    return true;
+  }
 
   if (message.type === 'SCHOLIA_MUTATE_CHAT_HISTORY') {
     if (!isExtensionPage(sender)) { sendResponse({ ok: false, error: 'History can be changed only from an extension page.' }); return false; }
@@ -1401,6 +1450,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     respondAsync(sendResponse, saveSettings(message.settings));
+    return true;
+  }
+
+  if (message.type === 'SCHOLIA_SAVE_LANGUAGE') {
+    if (!isExtensionPage(sender)) {
+      sendResponse({ ok: false, error: 'Language can be changed only from an extension page.' });
+      return false;
+    }
+    respondAsync(sendResponse, loadSettings().then((settings) => {
+      if (!['auto', 'en', 'no'].includes(message.language)) throw new Error('Choose a valid response language.');
+      settings.language = message.language;
+      return saveSettings(settings).then(publicSettings);
+    }));
     return true;
   }
 
@@ -1503,6 +1565,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!tab.active || tab.windowId !== sender.tab.windowId) throw new Error('The page changed before capture. Try again.');
       return chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'png' });
     }));
+    return true;
+  }
+
+  if (message.type === 'SCHOLIA_GET_RESEARCH_PAGE') {
+    if (!isExtensionPage(sender)) { sendResponse({ ok: false, error: 'Research is available only from a Scholia chat.' }); return false; }
+    respondAsync(sendResponse, (async () => {
+      const url = researchUrl(message.url);
+      if (!url) throw new Error('A readable source URL is required.');
+      const tab = Number.isInteger(message.tabId) ? await chrome.tabs.get(message.tabId)
+        : (await chrome.tabs.query({})).find((candidate) => researchUrl(candidate.url) === url);
+      if (!tab || researchUrl(tab.url) !== url) throw new Error('The source tab is no longer open.');
+      await ensureTabIsEnabled(tab);
+      const response = await sendContentFrameMessage(chrome.tabs, tab.id, { type: 'SCHOLIA_GET_RESEARCH_PAGE' });
+      if (!response?.ok) throw new Error(response?.error || 'The source could not be read.');
+      return response.value;
+    })());
     return true;
   }
 
@@ -1782,8 +1860,14 @@ chrome.runtime.onConnect.addListener((port) => {
       }, request.controller.signal, (token) => {
         if (active !== request) return;
         try { port.postMessage({ type: 'reasoning', requestId: request.id, token }); } catch {}
+      }, (activity) => {
+        if (active !== request) return;
+        try { port.postMessage({ type: 'activity', requestId: request.id, activity }); } catch {}
       });
-      if (active === request) port.postMessage({ type: 'done', requestId: request.id, ...result });
+      if (active === request && !request.controller.signal.aborted) {
+        await rememberModelUse(result.provider, result.model).catch(() => {});
+        port.postMessage({ type: 'done', requestId: request.id, ...result });
+      }
     } catch (error) {
       if (active !== request) return;
       if (error?.name === 'AbortError') {

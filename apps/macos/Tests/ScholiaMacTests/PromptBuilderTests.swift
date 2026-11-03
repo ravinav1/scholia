@@ -96,6 +96,27 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertTrue(prepared.messages[0].content.contains("Question: What does this mean?"))
     }
 
+    func testAutomaticResponseLanguageFollowsEachPromptInsteadOfTheSelection() throws {
+        let prepared = try PromptBuilder.prepare(
+            messages: [
+                ConversationMessage(role: .user, content: "Explain this concept."),
+                ConversationMessage(role: .assistant, content: "Here is an explanation."),
+                ConversationMessage(role: .user, content: "Kan du forklare med et eksempel?")
+            ],
+            capture: CapturedContent(kind: .text, text: "An English source passage."),
+            languagePreference: .automatic
+        )
+        XCTAssertEqual(prepared.language, "auto")
+        let instructions = prepared.systemPrompt
+        XCTAssertTrue(instructions.contains("language of the user’s latest question on every turn"))
+        XCTAssertTrue(instructions.contains("not from quoted text, attachments, retrieved sources"))
+        XCTAssertTrue(instructions.contains("Honor explicit requests for a response language"))
+        XCTAssertEqual(prepared.messages.last?.content, "Kan du forklare med et eksempel?")
+        XCTAssertEqual(AnswerLanguage(code: "no"), .norwegian)
+        XCTAssertEqual(AnswerLanguage.automatic.code, "auto")
+        XCTAssertNil(AnswerLanguage(code: "invalid"))
+    }
+
     func testMailPromptUsesPrivateThreadContextAndReplyDraftingGuidance() throws {
         let capture = CapturedContent(
             kind: .mail,
@@ -941,14 +962,37 @@ final class ProviderContractTests: XCTestCase {
 
     func testStreamingUpdatesAreCoalescedAndFlushedLosslessly() {
         var buffer = StreamingUpdateBuffer()
+        let start = ContinuousClock.now
         var delivered: [String] = []
-        for character in String(repeating: "x", count: 150) {
-            if let update = buffer.append(String(character)) { delivered.append(update) }
+        for offset in 0..<150 {
+            if let update = buffer.append("x", now: start.advanced(by: .milliseconds(offset))) {
+                delivered.append(update)
+            }
         }
-        if let update = buffer.flush() { delivered.append(update) }
+        if let update = buffer.flush(now: start.advanced(by: .milliseconds(150))) { delivered.append(update) }
 
         XCTAssertEqual(delivered.joined(), String(repeating: "x", count: 150))
-        XCTAssertEqual(delivered.map { $0.utf16.count }, [64, 64, 22])
+        XCTAssertEqual(delivered.map { $0.utf16.count }, [1, 50, 50, 49])
+        XCTAssertNil(buffer.flush())
+    }
+
+    func testStreamingShowsFirstTokenImmediatelyAndBoundsBurstBuffering() {
+        var buffer = StreamingUpdateBuffer()
+        let start = ContinuousClock.now
+        XCTAssertNil(buffer.append("", now: start))
+        XCTAssertEqual(buffer.append("Hello", now: start), "Hello")
+        XCTAssertNil(buffer.append(" 👋", now: start))
+        let burst = String(repeating: "a", count: 2_048)
+        XCTAssertEqual(buffer.append(burst, now: start), " 👋" + burst)
+        XCTAssertNil(buffer.append("tail", now: start))
+        XCTAssertEqual(buffer.flush(), "tail", "Completion and cancellation must retain the final partial batch.")
+    }
+
+    func testSlowStreamingDoesNotWaitForACharacterThreshold() {
+        var buffer = StreamingUpdateBuffer()
+        let start = ContinuousClock.now
+        XCTAssertEqual(buffer.append("A", now: start), "A")
+        XCTAssertEqual(buffer.append("B", now: start.advanced(by: .milliseconds(100))), "B")
     }
 
     func testQuickAskThinkingProfilesSurviveSettingsRoundTrip() throws {

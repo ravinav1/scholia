@@ -73,6 +73,19 @@ final class LocalBridgeManager {
         endpoint: String,
         apiKey: String
     ) async throws -> [ModelDefinition] {
+        if provider.id == "codex" {
+            guard let url = serviceURL(endpoint: endpoint, path: "/v1/models") else {
+                throw LocalBridgeManagerError.invalidEndpoint
+            }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 15
+            applyAuthorization(to: &request, provider: provider, apiKey: apiKey)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw LocalBridgeManagerError.catalogUnavailable("Codex model discovery is unavailable.")
+            }
+            return try CodexModelCatalog.models(from: data)
+        }
         guard provider.protocolKind == .opencode else { return provider.models }
         var lastError: Error = LocalBridgeManagerError.catalogUnavailable(
             "OpenCode model discovery is unavailable."

@@ -1,4 +1,5 @@
 import { detectDocumentLanguage } from './document-language.js';
+import { createPdfOcrReader } from './pdf-ocr.js';
 
 export const MAX_PDF_BYTES = 1024 * 1024 * 1024;
 export const PDF_RANGE_CHUNK_BYTES = 1024 * 1024;
@@ -76,11 +77,13 @@ function pageSummary(text) {
   return first.length <= 160 ? first : `${first.slice(0, 157).trimEnd()}…`;
 }
 
-export function formatPdfContext(pages = [], totalPages = pages.length) {
+export function formatPdfContext(pages = [], totalPages = pages.length, { indexing = false } = {}) {
   const total = Math.max(pages.length, Number(totalPages) || 0);
   const normalizedPages = pages.map((page) => String(page || '').trim());
   const omitted = total > normalizedPages.length
-    ? `\n\n[PDF extraction stopped after page ${normalizedPages.length} of ${total} at Scholia's local safety limit.]`
+    ? indexing
+      ? `\n\n[PDF text indexing is still in progress. Pages after ${normalizedPages.length} of ${total} are not included yet.]`
+      : `\n\n[PDF extraction stopped after page ${normalizedPages.length} of ${total} at Scholia's local safety limit.]`
     : '';
   return {
     context: normalizedPages
@@ -88,7 +91,7 @@ export function formatPdfContext(pages = [], totalPages = pages.length) {
       .join('\n\n') + omitted,
     outline: normalizedPages
       .map((text, index) => `- PDF page ${index + 1}: ${pageSummary(text)}`)
-      .concat(total > normalizedPages.length ? [`- PDF pages ${normalizedPages.length + 1}–${total}: omitted at local safety limit`] : [])
+      .concat(total > normalizedPages.length ? [`- PDF pages ${normalizedPages.length + 1}–${total}: ${indexing ? 'not indexed yet' : 'omitted at local safety limit'}`] : [])
       .join('\n'),
     pageCount: total,
     extractedPageCount: normalizedPages.length,
@@ -486,7 +489,7 @@ export async function pdfInputOptions(pdfjs, input, {
 }
 
 export async function extractPdfContext(input, { onProgress = () => {}, signal, password = '', maxCharacters = MAX_EXTRACTED_CHARACTERS } = {}) {
-  const characterLimit = Math.max(1, Math.min(MAX_EXTRACTED_CHARACTERS, maxCharacters));
+  const characterLimit = Math.max(1, Math.min(50_000_000, maxCharacters));
   const pdfjs = await import(chrome.runtime.getURL('vendor/pdfjs/pdf.min.mjs'));
   // Content-script dialogs cannot create an extension worker from a page origin.
   if (globalThis.location?.protocol !== 'chrome-extension:' && !globalThis.pdfjsWorker) {
@@ -512,6 +515,10 @@ export async function extractPdfContext(input, { onProgress = () => {}, signal, 
   signal?.addEventListener('abort', abort, { once: true });
   try {
     const pdf = await loadingTask.promise;
+    const ocr = createPdfOcrReader({
+      signal, onProgress, totalPages: pdf.numPages,
+      imageOperations: [pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject, pdfjs.OPS.paintImageMaskXObject]
+    });
     const pages = [];
     let extractedCharacters = 0;
     const pagesToRead = Math.min(pdf.numPages, MAX_EXTRACTED_PAGES);
@@ -519,7 +526,8 @@ export async function extractPdfContext(input, { onProgress = () => {}, signal, 
       if (signal?.aborted) throw new DOMException('PDF extraction was cancelled.', 'AbortError');
       if (extractedCharacters >= characterLimit) break;
       const page = await pdf.getPage(pageNumber);
-      const text = textContentToString((await page.getTextContent()).items);
+      const nativeText = textContentToString((await page.getTextContent()).items);
+      const text = await ocr.readPage(page, nativeText, pageNumber);
       const room = characterLimit - extractedCharacters;
       pages.push(room > 0 ? text.slice(0, room) : '');
       extractedCharacters += Math.min(text.length, Math.max(0, room));
@@ -536,6 +544,7 @@ export async function extractPdfContext(input, { onProgress = () => {}, signal, 
     const formatted = formatPdfContext(pages, pdf.numPages);
     return {
       ...formatted,
+      ...ocr.summary(),
       title: compactLine(metadata.Title || '').slice(0, 500),
       pageLanguage: await detectDocumentLanguage({
         context: formatted.context,

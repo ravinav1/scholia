@@ -1,7 +1,8 @@
 import { mountFileComposer, appendFileChips } from './file-composer.js';
+import { mountResponseLanguage, renderResponseLanguage } from './response-language.js';
 import { copyCodeBlock } from './clipboard.js';
 import { getCanvasCourseContext } from './canvas-index.js';
-import { providerById, providerSupportsFastMode } from '../../../packages/core/src/providers.js';
+import { SETTINGS_KEY, providerById, providerSupportsFastMode } from '../../../packages/core/src/providers.js';
 import { packPageContext } from '../../../packages/core/src/context.js';
 import { CHAT_HISTORY_KEY, clearChats, deleteChat, listChats } from './chat-history.js';
 import { createUserTurn, requestConversation } from './chat-turn.js';
@@ -13,22 +14,26 @@ import {
   defaultContextMode
 } from './context-mode.js';
 import { parseModelChoice, populateModelSelect } from './model-select.js';
+import { populateReasoningSelect } from './reasoning-select.js';
 import { extractPdfContext, fetchPdfBlob } from './pdf-context.js';
-import { renderMarkdown, renderReasoning } from './render.js';
+import { renderMarkdown, renderReasoning, renderActivity, addActivity, bindActivityDisclosure } from './render.js';
 import { sendRuntimeMessage as sendPopupMessage } from './runtime-message.js';
 import { PANEL_NAVIGATION_KEY } from './tab-context.js';
+import { openExamPlanner } from './exam-planner-launch.js';
 
 const popupWindow = chrome.windows?.getCurrent ? chrome.windows.getCurrent().then((value) => value.id).catch(() => null) : Promise.resolve(null);
 const message = async (payload) => sendPopupMessage({ ...payload, windowId: await popupWindow });
 
 const elements = Object.fromEntries([
   'settings', 'site-dot', 'site-state', 'site', 'site-toggle', 'open-sidebar', 'new-chat',
-  'explain', 'capture', 'open-pdf', 'open-pdf-viewer', 'model-settings', 'model-select', 'fast-mode', 'fast-mode-state', 'model-hint', 'chat-count',
+  'explain', 'capture', 'open-pdf', 'open-pdf-viewer', 'open-exam-planner', 'model-settings', 'model-select', 'fast-mode', 'fast-mode-state', 'model-hint', 'chat-count',
   'clear-chats', 'chat-list', 'chat-empty', 'status', 'quick-context-state', 'quick-reset',
-  'quick-files', 'quick-attach', 'quick-messages', 'quick-empty', 'quick-compact', 'quick-none', 'quick-form', 'quick-input', 'quick-send'
+  'quick-files', 'quick-attach', 'quick-messages', 'quick-empty', 'quick-compact', 'quick-none', 'quick-form', 'quick-input', 'quick-send', 'reasoning-select'
 ].map((id) => [id, document.getElementById(id)]));
 
 let settings = null;
+let modelSaving = false;
+let modelSave = Promise.resolve();
 let activeSite = null;
 let activeSource = null;
 let quickContextMode = CONTEXT_MODE_COMPACT;
@@ -82,8 +87,9 @@ function quickMessageElement(entry) {
   const bubble = document.createElement('div');
   bubble.className = 'quick-bubble';
   if (entry.role === 'assistant') {
-    bubble.innerHTML = `${renderReasoning(entry.reasoning, { streaming: entry.streaming })}${renderMarkdown(entry.content)}`;
-    if (entry.streaming && !entry.content) bubble.textContent = 'Reading context…';
+    bubble.innerHTML = `${renderActivity(entry.activity)}${renderReasoning(entry.reasoning, { streaming: entry.streaming })}${renderMarkdown(entry.content)}`;
+    if (entry.streaming && !entry.content) bubble.append(document.createTextNode('Preparing answer…'));
+    bindActivityDisclosure(bubble, entry);
   } else {
     appendFileChips(bubble, entry.files);
     if (entry.imageDataUrl) {
@@ -144,6 +150,18 @@ async function quickChatGptContextAvailable() {
 async function quickPdfCapture(source, question) {
   const signal = quickCaptureController?.signal;
   try {
+    // Reuse the reader's complete/OCR-enriched index, including local files
+    // whose bytes cannot be fetched from a public PDF URL.
+    const prepared = await message({
+      type: 'SCHOLIA_GET_ACTIVE_CONTEXT', expectedTabId: source.tabId,
+      expectedFrameId: source.frameId, expectedUrl: source.tabUrl,
+      question, includeContext: true, maxChars: contextCharacterLimit(quickContextMode)
+    }).catch(() => null);
+    if (signal?.aborted) throw new DOMException('PDF capture was cancelled.', 'AbortError');
+    if (prepared?.pdfContextReady) {
+      if (prepared.extractedCharacters > 0) return { ...source, ...prepared, imageDataUrl: '' };
+      return message({ type: 'SCHOLIA_CAPTURE_ACTIVE_VISIBLE', expectedTabId: source.tabId });
+    }
     const blob = await fetchPdfBlob(source.pdfUrl, { signal });
     const extracted = await extractPdfContext(blob, { signal });
     const context = extracted.extractedCharacters
@@ -214,6 +232,7 @@ function stopQuickChat() {
 }
 
 async function sendQuickChat(rawQuestion) {
+  await modelSave;
   const question = String(rawQuestion || '').trim();
   if (!question || quickStreaming) return;
   const user = createUserTurn(question, null, quickFiles.options);
@@ -254,6 +273,9 @@ async function sendQuickChat(rawQuestion) {
     if (event.requestId !== requestId) return;
     if (event.type === 'token') {
       assistant.content += event.token || '';
+      scheduleQuickRender();
+    } else if (event.type === 'activity') {
+      addActivity(assistant, event.activity);
       scheduleQuickRender();
     } else if (event.type === 'reasoning') {
       assistant.reasoning = `${assistant.reasoning || ''}${event.token || ''}`;
@@ -348,11 +370,13 @@ async function refreshSite() {
 }
 
 function renderModel() {
+  elements['model-select'].disabled = modelSaving;
   populateModelSelect(elements['model-select'], settings);
+  populateReasoningSelect(elements['reasoning-select'], settings, { disabled: modelSaving });
   const provider = providerById(settings?.provider);
   const configured = settings?.configuredProviders?.includes(provider.id);
   const supportsFastMode = providerSupportsFastMode(provider);
-  elements['fast-mode'].disabled = !supportsFastMode;
+  elements['fast-mode'].disabled = modelSaving || !supportsFastMode;
   elements['fast-mode'].title = supportsFastMode
     ? `Toggle Fast mode for ${provider.name} (uses more credits)`
     : 'Fast mode is available with Codex CLI and Claude Code';
@@ -371,6 +395,7 @@ function renderPdfAction() {
 
 async function refreshSettings() {
   settings = await message({ type: 'SCHOLIA_GET_PUBLIC_SETTINGS' });
+  renderResponseLanguage(settings);
   renderModel();
 }
 
@@ -431,6 +456,9 @@ const quickFiles = mountFileComposer({
 });
 
 elements.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
+elements['open-exam-planner'].addEventListener('click', () => {
+  openExamPlanner().then(() => window.close()).catch((error) => showStatus(error.message, true));
+});
 elements['model-settings'].addEventListener('click', () => chrome.runtime.openOptionsPage());
 elements['quick-compact'].addEventListener('click', () => setQuickContextMode(
   quickContextMode === CONTEXT_MODE_COMPACT ? CONTEXT_MODE_FULL : CONTEXT_MODE_COMPACT
@@ -513,33 +541,29 @@ elements['open-pdf-viewer'].addEventListener('click', async () => {
 });
 elements.explain.addEventListener('click', () => runPageCommand('SCHOLIA_EXPLAIN_CURRENT').catch((error) => showStatus(error.message, true)));
 elements.capture.addEventListener('click', () => runPageCommand('SCHOLIA_START_CAPTURE').catch((error) => showStatus(error.message, true)));
-elements['model-select'].addEventListener('change', async () => {
+function saveInlineModel({ reasoningEffort, fastMode } = {}) {
+  if (modelSaving) return modelSave;
   const chosen = parseModelChoice(elements['model-select'].value);
-  elements['model-select'].disabled = true;
-  try {
-    settings = await message({ type: 'SCHOLIA_SAVE_MODEL', ...chosen });
-    renderModel();
-    showStatus(`Using ${providerById(chosen.provider).name} · ${chosen.model}`);
-  } catch (error) {
-    showStatus(error.message, true);
-    renderModel();
-  } finally {
-    elements['model-select'].disabled = false;
+  modelSaving = true;
+  for (const id of ['model-select', 'reasoning-select', 'fast-mode']) {
+    elements[id].disabled = true;
   }
-});
-elements['fast-mode'].addEventListener('click', async () => {
-  const chosen = parseModelChoice(elements['model-select'].value);
-  elements['fast-mode'].disabled = true;
-  try {
-    settings = await message({ type: 'SCHOLIA_SAVE_MODEL', ...chosen, fastMode: !settings?.fastMode });
-    renderModel();
-    showStatus(`Fast mode ${settings.fastMode ? 'enabled' : 'disabled'}.`);
-  } catch (error) {
-    showStatus(error.message, true);
-  } finally {
-    elements['fast-mode'].disabled = !providerSupportsFastMode(settings?.provider);
-  }
-});
+  modelSave = (async () => {
+    try {
+      settings = await message({ type: 'SCHOLIA_SAVE_MODEL', ...chosen, reasoningEffort, fastMode });
+      showStatus('Preferences saved for your next message.');
+    } catch (error) {
+      showStatus(error.message, true);
+    } finally {
+      modelSaving = false;
+      renderModel();
+    }
+  })();
+  return modelSave;
+}
+elements['model-select'].addEventListener('change', () => saveInlineModel());
+elements['reasoning-select'].addEventListener('change', () => saveInlineModel({ reasoningEffort: elements['reasoning-select'].value }));
+elements['fast-mode'].addEventListener('click', () => saveInlineModel({ fastMode: !settings?.fastMode }));
 elements['chat-list'].addEventListener('click', async (event) => {
   const remove = event.target.closest?.('[data-delete-chat]');
   if (remove) {
@@ -558,7 +582,10 @@ elements['clear-chats'].addEventListener('click', async () => {
   showStatus('Saved chats cleared.');
 });
 
+mountResponseLanguage({ message, onSettings: (value) => { settings = value; }, onError: (error) => showStatus(error.message, true) });
+
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[SETTINGS_KEY]) refreshSettings().catch(() => {});
   if (area === 'local' && changes[CHAT_HISTORY_KEY]) refreshChats().catch(() => {});
 });
 

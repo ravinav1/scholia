@@ -8,3 +8,4 @@ apps/macos/.build
 apps/macos/.swiftpm
 *.log
 .DS_Store
+output

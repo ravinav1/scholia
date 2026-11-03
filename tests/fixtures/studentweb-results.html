@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><style>.css-hidden { display: none; } .invisible { visibility: hidden; }</style></head><body>
+<!-- Synthetic fixture only. No real Studentweb information. -->
+<header>PRIVATE_IDENTITY 01010112345 private@example.invalid</header>
+<input name="password" value="PRIVATE_PASSWORD"><textarea>PRIVATE_TEXT</textarea>
+<nav><a href="/studentweb/resultater.jsf">Resultater</a></nav>
+<section><h2>Mine resultater</h2><table>
+<thead><tr><th>Termin</th><th>Emne</th><th>Karakter</th><th>Studiepoeng</th><th>Merknad</th></tr></thead>
+<tbody>
+<tr><td>2025 Høst</td><td><a>TDT4100</a> PRIVATE_COURSE_TITLE</td><td><span class="ui-column-title">Karakter</span>A</td><td>7,5</td><td>Kandidatnummer PRIVATE_CANDIDATE 98765</td></tr>
+<tr><td>2026 Vår</td><td>TMA4100 PRIVATE_TITLE</td><td>Bestått</td><td>7.5</td><td>PRIVATE_FEEDBACK</td></tr>
+<tr><td>2026 Vår</td><td>TFE4100</td><td>F</td><td>0</td><td>PRIVATE_APPEAL</td></tr>
+<tr><td>2026 Vår</td><td>TTK4100</td><td>Ikke bestått</td><td>7,5</td><td></td></tr>
+<tr><td>2026 Vår</td><td>TDT4100</td><td>F</td><td>0</td><td>Failed retake must not erase a pass</td></tr>
+<tr><td>2026 Vår</td><td>PENDING1000</td><td>Ikke publisert</td><td>7,5</td><td></td></tr>
+<tr hidden><td>2026</td><td>HIDDEN1000</td><td>A</td><td>7.5</td><td></td></tr>
+<tr class="css-hidden"><td>2026</td><td>CSS1000</td><td>A</td><td>7.5</td><td></td></tr>
+<tr><td>2026</td><td>HIDDEN1001</td><td><span class="invisible">A</span></td><td>7.5</td><td></td></tr>
+</tbody></table></section>
+<section><h2>Deler der samlet resultat ikke er beregnet</h2><table>
+<thead><tr><th>Emne</th><th>Karakter</th><th>Studiepoeng</th></tr></thead>
+<tbody><tr><td>PART1000</td><td>Bestått</td><td>7.5</td></tr></tbody>
+</table></section>
+<details><summary>Earlier results</summary><section><h2>Mine resultater</h2><table>
+<tr><th>Emne</th><th>Karakter</th><th>Studiepoeng</th></tr><tr><td>CLOSED1000</td><td>A</td><td>7.5</td></tr>
+</table></section></details>
+<button onclick="throw Error('Importer must not click')">Show all</button>
+</body></html>

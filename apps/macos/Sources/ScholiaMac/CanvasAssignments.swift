@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum CanvasSubmissionStatus: String, Codable, Sendable {
     case unknown, notSubmitted, submitted, graded, excused
@@ -6,13 +7,26 @@ enum CanvasSubmissionStatus: String, Codable, Sendable {
     var isComplete: Bool { isHandedIn || self == .excused }
     var submissionLabel: String {
         switch self {
-        case .submitted: "Handed in"
-        case .graded: "Handed in · graded"
+        case .submitted: "Handed in · awaiting grade"
+        case .graded: "Graded"
         case .excused: "Excused"
         case .notSubmitted: "Not handed in"
         case .unknown: "Status not synced"
         }
     }
+}
+
+enum StudyAssignmentProgress: String, Codable, CaseIterable, Identifiable, Sendable {
+    case handedIn, graded, feedback
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .handedIn: "Handed in · awaiting grade"
+        case .graded: "Graded"
+        case .feedback: "Graded · feedback available"
+        }
+    }
+    var status: CanvasSubmissionStatus { self == .handedIn ? .submitted : .graded }
 }
 
 /// Assignment dates are already adjusted by Canvas for the requesting student.
@@ -22,10 +36,44 @@ struct CanvasAssignmentDetails: Codable, Equatable, Sendable {
     var unlockAt: String?
     var lockAt: String?
     var submissionTypes: [String]
-    var status: CanvasSubmissionStatus
+    private var canvasStatus: CanvasSubmissionStatus
+    // Course-local corrections are applied to display copies, never encoded as Canvas metadata.
+    var progressOverride: StudyAssignmentProgress? = nil
+    var status: CanvasSubmissionStatus {
+        get {
+            if let progressOverride { return progressOverride.status }
+            // Older caches trusted workflow_state even when Canvas withheld the result.
+            if canvasStatus == .graded && (gradeVisible == false || gradeMatchesCurrentSubmission == false) {
+                return .submitted
+            }
+            return canvasStatus
+        }
+        set { canvasStatus = newValue }
+    }
     var missing: Bool
     var locked: Bool
     var linkedFileIDs: [String]?
+    var grade: String?
+    var score: Double?
+    var pointsPossible: Double?
+    var gradingType: String?
+    var gradeVisible: Bool?
+    var gradeMatchesCurrentSubmission: Bool?
+    var feedbackAvailable: Bool?
+    var feedback: CanvasAssignmentFeedback?
+    var submissionAttempt: Int?
+    var submittedAt: String?
+    var hasFeedback: Bool {
+        if progressOverride == .handedIn { return false }
+        return progressOverride == .feedback || feedbackAvailable == true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case dueAt, unlockAt, lockAt, submissionTypes, missing, locked, linkedFileIDs
+        case canvasStatus = "status"
+        case grade, score, pointsPossible, gradingType, gradeVisible, gradeMatchesCurrentSubmission, feedbackAvailable
+        case feedback, submissionAttempt, submittedAt
+    }
 
     init(record: [String: Any], origin: URL? = nil, courseID: Int? = nil) {
         dueAt = record["due_at"] as? String
@@ -38,23 +86,95 @@ struct CanvasAssignmentDetails: Codable, Equatable, Sendable {
                 in: record["description"] as? String ?? "", origin: origin, courseID: courseID)
         }
         let submission = record["submission"] as? [String: Any] ?? [:]
+        submissionAttempt = submission["attempt"] as? Int
+        submittedAt = submission["submitted_at"] as? String
+        let posted = (submission["posted_at"] as? String)?.isEmpty == false
+        let visible = submission["excused"] as? Bool != true
+            && submission["grade_hidden"] as? Bool != true
+            && record["muted"] as? Bool != true
+            && record["hide_in_gradebook"] as? Bool != true
+            && submission["assignment_visible"] as? Bool != false
+            && !(submission.keys.contains("posted_at") && !posted)
+            && !(record["post_manually"] as? Bool == true && !posted)
+        gradeVisible = visible
+        grade = visible ? (submission["grade"] as? String ?? (submission["grade"] as? NSNumber)?.stringValue) : nil
+        score = visible ? Self.number(submission["score"]) : nil
+        pointsPossible = Self.number(record["points_possible"])
+        gradingType = record["grading_type"] as? String
+        gradeMatchesCurrentSubmission = submission["grade_matches_current_submission"] as? Bool
+        feedback = CanvasAssignmentFeedback(record: record, submission: submission, gradeVisible: visible)
+        feedbackAvailable = feedback?.hasCurrentFeedback
         missing = submission["missing"] as? Bool == true
         let workflow = submission["workflow_state"] as? String
         if submission["excused"] as? Bool == true {
-            status = .excused
+            canvasStatus = .excused
         }
         // A missing assignment can be automatically graded zero without a submission.
-        else if workflow == "graded" && !missing {
-            status = .graded
+        else if workflow == "graded" && !missing && visible && gradeMatchesCurrentSubmission != false
+            && (score != nil || grade?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) {
+            canvasStatus = .graded
         } else if submission["submitted_at"] as? String != nil
-            || ["submitted", "pending_review"].contains(workflow ?? "")
+            || ["submitted", "pending_review"].contains(workflow ?? "") || (workflow == "graded" && !missing)
         {
-            status = .submitted
+            canvasStatus = .submitted
         } else if workflow == "unsubmitted" || missing {
-            status = .notSubmitted
+            canvasStatus = .notSubmitted
         } else {
-            status = .unknown
+            canvasStatus = .unknown
         }
+    }
+
+    func retainingFeedback(from previous: Self?) -> Self {
+        guard feedback == nil, let previous else { return self }
+        var result = self
+        result.feedback = previous.feedback
+        if gradeVisible == false || gradeMatchesCurrentSubmission == false { result.feedback?.rubric = [] }
+        if var feedback = result.feedback {
+            let changedAttempt = submissionAttempt != nil && previous.submissionAttempt != nil
+                && submissionAttempt != previous.submissionAttempt
+            for index in feedback.comments.indices {
+                let comment = feedback.comments[index]
+                let differentAttempt = comment.attempt != nil && submissionAttempt != nil && comment.attempt != submissionAttempt
+                let beforeSubmission = Self.date(comment.createdAt).map { created in
+                    Self.date(submittedAt).map { created < $0 } ?? false
+                } ?? false
+                if differentAttempt || beforeSubmission || (changedAttempt && comment.attempt == nil && comment.createdAt == nil) {
+                    feedback.comments[index].currentAttempt = false
+                }
+            }
+            result.feedback = feedback
+        }
+        result.feedbackAvailable = result.feedback?.hasCurrentFeedback ?? previous.feedbackAvailable
+        return result
+    }
+
+    static func number(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber {
+            guard CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue.isFinite else { return nil }
+            return number.doubleValue
+        }
+        guard let raw = value as? String, let number = Double(raw), number.isFinite else { return nil }
+        return number
+    }
+
+    var gradeLabel: String? {
+        guard gradeVisible != false, status != .excused, gradingType != "not_graded" else { return nil }
+        guard progressOverride != .handedIn || gradeMatchesCurrentSubmission == false else { return nil }
+        let raw = grade?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        func format(_ number: Double) -> String { number.formatted(.number.precision(.fractionLength(0...2))) }
+        var label = raw
+        if gradingType == "pass_fail" {
+            label = ["complete": "Complete", "pass": "Pass", "incomplete": "Incomplete", "fail": "Fail"][
+                raw.lowercased()] ?? raw
+        } else if gradingType == "points" || (raw.isEmpty && gradingType != "percent") {
+            if let score {
+                label = format(score) + (pointsPossible.map { " / \(format($0))" } ?? " points")
+            }
+        } else if gradingType == "percent", raw.isEmpty, let score, let pointsPossible, pointsPossible > 0 {
+            label = "\(format(score / pointsPossible * 100))%"
+        }
+        guard !label.isEmpty else { return nil }
+        return gradeMatchesCurrentSubmission == false ? "\(label) (previous attempt)" : label
     }
 
     /// Keep Canvas file identity before the assignment HTML becomes plain text.
@@ -85,6 +205,19 @@ struct CanvasAssignmentDetails: Codable, Equatable, Sendable {
 
     var requiresSubmission: Bool { submissionTypes.contains { !["none", "not_graded"].contains($0) } }
     var dueDate: Date? { Self.date(dueAt) }
+
+    /// Older downloaded instructions contain a generated Due line. Reconcile
+    /// only that exact trailing line, identified by the saved source version.
+    static func refreshingCachedDeadline(_ text: String, sourceVersion: String?, dueAt: String?) -> String {
+        guard let version = sourceVersion, let marker = version.range(of: "|due:", options: .backwards) else { return text }
+        let previous = String(version[marker.upperBound...])
+        guard date(previous) != nil else { return text }
+        let line = "Due: " + previous
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed == line || trimmed.hasSuffix("\n" + line) else { return text }
+        let body = String(trimmed.dropLast(line.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return [body, dueAt.map { "Due: " + $0 }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
     private static let dateStyle = Date.ISO8601FormatStyle()
     private static let fractionalDateStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
     static func date(_ value: String?) -> Date? {
@@ -124,12 +257,14 @@ struct StudyAssignment: Identifiable {
 
     static func list(
         courses: [StudyCourse], query: String = "", includeCompleted: Bool = false, dueOnly: Bool = false,
-        includeHidden: Bool = false, hiddenOnly: Bool = false
+        includeHidden: Bool = false, hiddenOnly: Bool = false, includeNonSubmission: Bool = false
     ) -> [Self] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return courses.flatMap { course in
             course.materials.filter {
-                $0.kind == .assignments && $0.assignment?.requiresSubmission != false
+                $0.kind == .assignments
+                    && (includeNonSubmission || $0.assignment?.requiresSubmission != false
+                        || $0.assignment?.status.isComplete == true)
                     && (hiddenOnly
                         ? course.hiddenAssignmentIDs?.contains($0.id) == true
                         : includeHidden || course.hiddenAssignmentIDs?.contains($0.id) != true)
@@ -168,12 +303,13 @@ struct StudyAssignmentGroup: Identifiable {
         var groups: [Key: [StudyAssignment]] = [:]
         for item in StudyAssignment.list(
             courses: courses, query: query, includeCompleted: true, includeHidden: filter == .all,
-            hiddenOnly: filter == .hidden)
+            hiddenOnly: filter == .hidden, includeNonSubmission: [.all, .archive, .hidden].contains(filter))
         {
             let hasDeadline = item.dueDate != nil && item.details?.status.isComplete != true
             switch filter {
             case .due: guard hasDeadline else { continue }
-            case .handedIn: guard item.details?.status.isHandedIn == true else { continue }
+            case .handedIn: guard item.details?.status == .submitted else { continue }
+            case .graded: guard item.details?.status == .graded else { continue }
             case .archive: guard !hasDeadline else { continue }
             case .all, .hidden: break
             }
@@ -184,7 +320,9 @@ struct StudyAssignmentGroup: Identifiable {
             let timeframe: StudyAssignmentTimeframe
             if filter == .archive {
                 timeframe = .archive
-            } else if item.details?.status.isHandedIn == true {
+            } else if item.details?.status == .graded {
+                timeframe = .graded
+            } else if item.details?.status == .submitted {
                 timeframe = .handedIn
             } else if item.details?.status == .excused {
                 timeframe = .excused
@@ -197,7 +335,7 @@ struct StudyAssignmentGroup: Identifiable {
         }
         return groups.map { key, rows in
             let items =
-                key.timeframe == .upcoming
+                key.timeframe == .upcoming || key.timeframe == .overdue
                 ? rows
                 : rows.sorted {
                     let lhs = $0.dueDate ?? .distantPast
@@ -208,7 +346,9 @@ struct StudyAssignmentGroup: Identifiable {
             return Self(semester: key.semester, timeframe: key.timeframe, items: items)
         }.sorted {
             if $0.timeframe != $1.timeframe { return $0.timeframe.rawValue < $1.timeframe.rawValue }
-            if $0.timeframe == .upcoming, $0.items.first?.dueDate != $1.items.first?.dueDate {
+            if ($0.timeframe == .upcoming || $0.timeframe == .overdue),
+                $0.items.first?.dueDate != $1.items.first?.dueDate
+            {
                 return ($0.items.first?.dueDate ?? .distantFuture) < ($1.items.first?.dueDate ?? .distantFuture)
             }
             return StudySemester.newestFirst($0.semester, $1.semester)
@@ -217,14 +357,15 @@ struct StudyAssignmentGroup: Identifiable {
 }
 
 enum StudyAssignmentTimeframe: Int, CaseIterable, Identifiable {
-    case upcoming, overdue, undated, handedIn, excused, archive
+    case overdue, upcoming, undated, handedIn, graded, excused, archive
     var id: Int { rawValue }
     var title: String {
         switch self {
         case .upcoming: "Upcoming"
         case .overdue: "Overdue"
         case .undated: "No deadline"
-        case .handedIn: "Handed in"
+        case .handedIn: "Handed in · awaiting grade"
+        case .graded: "Graded"
         case .excused: "Excused"
         case .archive: "Archive"
         }
@@ -234,6 +375,7 @@ enum StudyAssignmentTimeframe: Int, CaseIterable, Identifiable {
 enum StudyAssignmentFilter: String, CaseIterable, Identifiable {
     case due = "Due & overdue"
     case handedIn = "Handed in"
+    case graded = "Graded"
     case all = "All assignments"
     case archive = "Archive"
     case hidden = "Hidden"
@@ -259,5 +401,25 @@ struct StudyAssignmentDateGroup: Identifiable {
             }
         }
         return groups
+    }
+}
+
+struct StudyAssignmentTimeline {
+    let past: [StudyAssignmentDateGroup]
+    let upcoming: [StudyAssignmentDateGroup]
+
+    init(groups: [StudyAssignmentGroup], calendar: Calendar = .current) {
+        func days(_ timeframe: StudyAssignmentTimeframe) -> [StudyAssignmentDateGroup] {
+            let items = groups.filter { $0.timeframe == timeframe }.flatMap(\.items).sorted {
+                let lhs = $0.dueDate ?? .distantFuture
+                let rhs = $1.dueDate ?? .distantFuture
+                if lhs != rhs { return lhs < rhs }
+                let order = $0.material.title.localizedStandardCompare($1.material.title)
+                return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+            }
+            return StudyAssignmentDateGroup.make(items, calendar: calendar)
+        }
+        past = days(.overdue)
+        upcoming = days(.upcoming)
     }
 }

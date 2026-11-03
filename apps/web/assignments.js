@@ -1,4 +1,4 @@
-import { escapeHtml as esc, renderMarkdown } from '../chrome/src/render.js';
+import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 
 export function selectedAssignment(state) {
   const course = state.library.courses.find((c) => c.id === state.library.selectedCourseID);
@@ -7,56 +7,39 @@ export function selectedAssignment(state) {
   );
 }
 
-export function assignmentPageMarkup(state) {
-  const material = selectedAssignment(state);
-  if (!material) return '';
-  const details = material.assignment,
-    due = assignmentDate(details?.dueAt);
-  const course = state.library.courses.find((c) => c.id === state.library.selectedCourseID);
-  const selected = course?.documents.find((d) => d.id === state.library.selectedDocumentID);
-  const files = state.assignmentFiles || state.assignmentPDFs || [];
-  const dueText = due
-    ? `Due ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(due)}`
-    : details
-      ? 'No due date'
-      : 'Deadline not synced';
-  return `<article class="assignment-page ${selected ? '' : 'assignment-only'}" aria-label="Assignment details">
-    <div class="assignment-page-heading"><div><span class="eyebrow">ASSIGNMENT</span><h1>${esc(material.title)}</h1></div>${submissionBadgeMarkup(details?.status)}</div>
-    <p class="assignment-page-due">${esc(dueText)} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}${assignmentAvailability(details) ? ` · ${esc(assignmentAvailability(details))}` : ''}</p>
-    ${
-      files.length
-        ? `<section class="assignment-files" aria-label="Included files"><h2>Included files <span>${files.length}</span></h2><div class="assignment-file-list">${files
-            .map((file) => {
-              const saved = course?.documents.find((document) => document.sourceKey === file.id);
-              const tooLarge = file.byteCount > 100_000_000;
-              const readable =
-                saved && saved.kind !== 'preview' && saved.pageCount > (saved.unreadablePages || 0);
-              const status = tooLarge
-                ? 'Larger than 100 MB'
-                : state.assignmentFileNotices?.[file.id] ||
-                  (readable
-                    ? 'Ready for companion'
-                    : saved
-                      ? 'No readable text · original available'
-                      : state.busy
-                        ? 'Preparing…'
-                        : 'Open to add to companion');
-              return `<button data-action="assignmentFile" data-id="${esc(file.id)}" data-assignment-id="${esc(material.id)}" data-course-id="${esc(course.id)}" aria-pressed="${selected?.sourceKey === file.id}" title="${esc(file.title)} · ${esc(status)}" ${state.busy || tooLarge ? 'disabled' : ''}><span>${selected?.sourceKey === file.id ? '✓ ' : ''}${esc(file.title)}</span><small>${esc(status)}</small></button>`;
-            })
-            .join(
-              ''
-            )}</div><p class="assignment-file-note">Instructions and readable included files are available to the study companion.</p></section>`
-        : !state.busy && details?.linkedFileIDs && !state.assignmentNotice
-          ? '<p class="assignment-file-note">No files are linked to this assignment.</p>'
-          : ''
-    }
-    <details class="assignment-instructions" open><summary>Instructions</summary><div class="assignment-description">${state.assignmentText ? renderMarkdown(state.assignmentText) : `<p>${details?.locked ? 'Locked in Canvas.' : state.busy ? 'Loading instructions…' : 'No saved instructions. Retry to load this assignment.'}</p>`}</div></details>
-    ${state.assignmentNotice ? `<div class="assignment-page-notice" role="status"><span>${esc(state.assignmentNotice)}</span>${details?.locked ? '' : `<button data-action="assignment" data-id="${esc(material.id)}" data-course-id="${esc(state.library.selectedCourseID)}" ${state.busy ? 'disabled' : ''}>Retry</button>`}</div>` : state.busy ? '<p class="assignment-file-note" role="status">Opening assignment files…</p>' : ''}
-  </article>`;
-}
 
 export const isHandedIn = (status) => ['submitted', 'graded'].includes(status);
-export function submissionBadgeMarkup(status) {
+const gradeNumber = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
+export function assignmentGrade(details) {
+  if (
+    !details ||
+    details.gradeVisible === false ||
+    details.status === 'excused' ||
+    details.gradingType === 'not_graded'
+  )
+    return '';
+  const grade = details.grade == null ? '' : String(details.grade).trim();
+  const score = Number.isFinite(details.score) ? details.score : null;
+  const points = Number.isFinite(details.pointsPossible) ? details.pointsPossible : null;
+  let label = grade;
+  if (details.gradingType === 'pass_fail') {
+    label =
+      { complete: 'Complete', pass: 'Pass', incomplete: 'Incomplete', fail: 'Fail' }[
+        grade.toLowerCase()
+      ] || grade;
+  } else if (details.gradingType === 'points' || (!grade && details.gradingType !== 'percent')) {
+    label =
+      score === null
+        ? grade
+        : `${gradeNumber.format(score)}${points === null ? ' points' : ` / ${gradeNumber.format(points)}`}`;
+  } else if (details.gradingType === 'percent' && !grade && score !== null && points > 0) {
+    label = `${gradeNumber.format((score / points) * 100)}%`;
+  }
+  return label && details.gradeMatchesCurrentSubmission === false
+    ? `${label} (previous attempt)`
+    : label;
+}
+export function submissionBadgeMarkup(status, details) {
   const label =
     {
       submitted: 'Handed in',
@@ -65,7 +48,8 @@ export function submissionBadgeMarkup(status) {
       notSubmitted: 'Not handed in',
     }[status] || 'Status not synced';
   const handedIn = isHandedIn(status);
-  return `<span class="submission-badge ${handedIn ? 'handed-in' : 'pending'}"><span aria-hidden="true">${handedIn ? '✓' : status === 'excused' ? '−' : status === 'notSubmitted' ? '○' : '?'}</span>${label}</span>`;
+  const grade = assignmentGrade(details);
+  return `<span class="submission-badge ${handedIn ? 'handed-in' : 'pending'}"><span aria-hidden="true">${handedIn ? '✓' : status === 'excused' ? '−' : status === 'notSubmitted' ? '○' : '?'}</span>${label}${grade ? ` · Grade: ${esc(grade)}` : ''}</span>`;
 }
 
 const complete = (details) => ['submitted', 'graded', 'excused'].includes(details?.status);
@@ -83,6 +67,7 @@ export function assignmentList(
     dueOnly = false,
     hiddenOnly = false,
     includeHidden = false,
+    includeNonSubmission = false,
   } = {}
 ) {
   const needle = query.trim().toLocaleLowerCase();
@@ -95,7 +80,7 @@ export function assignmentList(
             (hiddenOnly
               ? course.hiddenAssignmentIDs?.includes(material.id)
               : includeHidden || !course.hiddenAssignmentIDs?.includes(material.id)) &&
-            (!material.assignment ||
+            (includeNonSubmission || complete(material.assignment) || !material.assignment ||
               material.assignment.submissionTypes?.some(
                 (type) => !['none', 'not_graded'].includes(type)
               )) &&
@@ -145,6 +130,7 @@ export function assignmentGroups(
     includeCompleted: true,
     hiddenOnly: filter === 'hidden',
     includeHidden: filter === 'all',
+    includeNonSubmission: ['all', 'archive', 'hidden'].includes(filter),
   })) {
     const date = assignmentDate(item.details?.dueAt);
     const hasDeadline = !!date && !complete(item.details);
@@ -183,7 +169,7 @@ export function assignmentGroups(
   }
   const rank = new Map(semesters.map((semester, i) => [semester.id, i]));
   for (const group of groups.values()) {
-    if (group.timeframe !== 'upcoming')
+    if (!['overdue', 'upcoming'].includes(group.timeframe))
       group.items.sort(
         (a, b) =>
           (assignmentDate(b.details?.dueAt)?.getTime() ?? -Infinity) -
@@ -191,11 +177,11 @@ export function assignmentGroups(
           a.material.title.localeCompare(b.material.title, undefined, { numeric: true })
       );
   }
-  const timeframes = { upcoming: 0, overdue: 1, undated: 2, handedIn: 3, excused: 4, archive: 5 };
+  const timeframes = { overdue: 0, upcoming: 1, undated: 2, handedIn: 3, excused: 4, archive: 5 };
   return [...groups.values()].sort(
     (a, b) =>
       timeframes[a.timeframe] - timeframes[b.timeframe] ||
-      (a.timeframe === 'upcoming'
+      (['overdue', 'upcoming'].includes(a.timeframe)
         ? assignmentDate(a.items[0].details.dueAt) - assignmentDate(b.items[0].details.dueAt)
         : 0) ||
       (rank.get(a.semesterID) ?? Infinity) - (rank.get(b.semesterID) ?? Infinity) ||
@@ -224,16 +210,70 @@ export function assignmentDateGroups(items) {
   return [...groups.values()];
 }
 
+export function assignmentTimeline(groups) {
+  const days = (timeframe) =>
+    assignmentDateGroups(
+      groups
+        .filter((group) => group.timeframe === timeframe)
+        .flatMap((group) => group.items)
+        .sort(
+          (a, b) =>
+            assignmentDate(a.details.dueAt) - assignmentDate(b.details.dueAt) ||
+            a.material.title.localeCompare(b.material.title, undefined, { numeric: true }) ||
+            `${a.course.id}:${a.material.id}`.localeCompare(`${b.course.id}:${b.material.id}`)
+        )
+    );
+  return { past: days('overdue'), upcoming: days('upcoming') };
+}
+
 function assignmentVisibilityButton(course, material) {
   const hidden = course.hiddenAssignmentIDs?.includes(material.id) === true;
   return `<button class="assignment-visibility text-button" data-action="assignmentVisibility" data-id="${esc(material.id)}" data-course-id="${esc(course.id)}" data-hidden="${!hidden}" title="${hidden ? 'Show this assignment in your lists again' : 'Hide this assignment. Find it again in All assignments or Hidden.'}" aria-label="${hidden ? 'Unhide' : 'Hide'} ${esc(material.title)}">${hidden ? 'Unhide' : 'Hide'}</button>`;
 }
 
+function assignmentAgendaDaysMarkup(days, now) {
+  const format = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+  return days
+    .map(
+      (day) => `<section class="agenda-day">
+    <h4 class="agenda-date" data-due-date="${esc(day.id)}">${esc(day.title)}</h4><ol>${day.items
+      .map(({ course, material, details }) => {
+        const date = assignmentDate(details?.dueAt),
+          availability = assignmentAvailability(details, now);
+        let link = '';
+        try {
+          const url = new URL(material.sourceURL);
+          if (url.protocol === 'https:' && !url.username && !url.password) link = url.href;
+        } catch {}
+        return `<li class="agenda-item" data-assignment-id="${esc(material.id)}" data-course-id="${esc(course.id)}">
+        <button class="agenda-open" data-action="assignment" data-id="${esc(material.id)}" data-course-id="${esc(course.id)}" aria-label="Read assignment: ${esc(material.title)}">
+          <span class="agenda-title">${esc(material.title)}</span>
+          <span class="agenda-item-meta"><span class="assignment-course">${esc((course.code || '').replace(/-(?:\d{2}[HV])(?:-\d{2}[HV])*$/i, '') || course.name)}</span>
+            ${date ? `<time datetime="${esc(details.dueAt)}">${esc(format.format(date))}</time>` : `<small>${!details ? 'Deadline not synced' : 'No due date'}</small>`}</span>
+          ${submissionBadgeMarkup(details?.status, details)}
+          ${course.hiddenAssignmentIDs?.includes(material.id) ? '<small class="assignment-hidden">Hidden</small>' : ''}
+          ${availability ? `<small>${esc(availability)}</small>` : ''}
+        </button>
+        ${link ? `<a class="agenda-canvas" href="${esc(link)}" target="_blank" rel="noreferrer" aria-label="Open ${esc(material.title)} in Canvas">↗</a>` : ''}
+        ${assignmentVisibilityButton(course, material)}
+      </li>`;
+      })
+      .join('')}</ol></section>`
+    )
+    .join('');
+}
+
 export function assignmentAgendaMarkup(
   courses,
-  { query = '', filter = 'due', semesters = [], busy = false, now = new Date() } = {}
+  { query = '', filter = 'due', semesters = [], busy = false, refreshError = '', dedicated = false, now = new Date() } = {}
 ) {
   const groups = assignmentGroups(courses, { query, filter, semesters, now });
+  const timeline = assignmentTimeline(groups);
+  const showTimeline = filter !== 'all' && (filter === 'due' || timeline.past.length > 0 || timeline.upcoming.length > 0);
+  const allOrder = ['upcoming', 'overdue', 'handedIn', 'excused', 'undated'];
+  const otherGroups = filter === 'all'
+    ? [...groups].sort((a, b) => allOrder.indexOf(a.timeframe) - allOrder.indexOf(b.timeframe))
+    : groups.filter((group) => !['overdue', 'upcoming'].includes(group.timeframe));
   const count = groups.reduce((sum, group) => sum + group.items.length, 0);
   const handedIn = assignmentList(courses, { includeCompleted: true }).filter(({ details }) =>
     isHandedIn(details?.status)
@@ -247,9 +287,14 @@ export function assignmentAgendaMarkup(
           (m) => m.kind === 'assignments' && (!m.assignment || m.assignment.status === 'unknown')
         ))
   );
-  const format = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+  const today = new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(now);
   return `<aside class="assignment-agenda" aria-label="Assignments">
-    <div class="dashboard-section-heading"><h2>Assignments <span>${count}</span></h2><span class="agenda-symbol" aria-hidden="true">▦</span></div>
+    <div class="dashboard-section-heading"><h2>${dedicated ? 'Your assignments' : 'Assignments'} <span>${count}</span></h2>${!dedicated ? '<button class="text-button" data-action="assignments">View all</button>' : ''}${showTimeline ? '<button class="agenda-today-button text-button" data-action="agendaToday" aria-label="Jump to today in assignments">Today</button>' : ''}</div>
     <div class="agenda-scope"><span>All workspaces</span><select id="agenda-filter" aria-label="Assignment filter">
       ${[
         ['due', 'Due & overdue'],
@@ -266,47 +311,30 @@ export function assignmentAgendaMarkup(
     <button class="agenda-handed-in text-button" data-action="agendaHandedIn" aria-pressed="${filter === 'handedIn'}">✓ ${handedIn} handed in</button>
     <label class="dashboard-search"><span class="sr-only">Find an assignment</span><input id="assignment-search" placeholder="Find an assignment…" value="${esc(query)}"></label>
     ${incomplete ? '<div class="agenda-notice"><span>Sync Canvas to refresh deadlines and submission status.</span><button class="text-button" data-action="canvas">Connect</button></div>' : ''}
-    <div class="agenda-scroll">
-      ${groups
+    ${refreshError ? `<p class="agenda-notice" role="status">${esc(refreshError)} <button class="text-button" data-action="canvas">Connect Canvas</button></p>` : ''}
+    <div class="agenda-scroll" data-agenda-view="${esc(filter)}:${esc(query)}" tabindex="0" role="region" aria-label="Assignment timeline">
+      ${
+        showTimeline
+          ? `<section class="agenda-timeline" aria-label="Deadlines in chronological order">
+        ${timeline.past.length ? `<section class="agenda-past" aria-label="Overdue assignments">${assignmentAgendaDaysMarkup(timeline.past, now)}</section>` : ''}
+        <div class="agenda-today" id="agenda-today" tabindex="-1"><strong>Today</strong><time datetime="${esc(now.toISOString())}">${esc(today)}</time></div>
+        ${assignmentAgendaDaysMarkup(timeline.upcoming, now)}
+        ${!timeline.upcoming.length && count ? '<p class="agenda-no-upcoming">No upcoming deadlines.</p>' : ''}
+      </section>`
+          : ''
+      }
+      ${otherGroups
         .map(
           (
             group,
             index
-          ) => `${index === 0 || group.timeframe !== groups[index - 1].timeframe ? `<h3 class="agenda-timeframe ${group.timeframe}">${{ upcoming: 'Upcoming', overdue: 'Overdue', undated: 'No deadline', handedIn: 'Handed in', excused: 'Excused', archive: 'Archive' }[group.timeframe]} <span>${groups.filter((g) => g.timeframe === group.timeframe).reduce((sum, g) => sum + g.items.length, 0)}</span></h3>` : ''}<section class="agenda-group" data-assignment-group="${esc(group.id)}" aria-label="${esc(group.title)}">
+          ) => `${index === 0 || group.timeframe !== otherGroups[index - 1].timeframe ? `<h3 class="agenda-timeframe ${group.timeframe}">${{ overdue: 'Overdue', upcoming: 'Upcoming', undated: 'No deadline', handedIn: 'Finished · handed in', excused: 'Excused', archive: 'Archive' }[group.timeframe]} <span>${otherGroups.filter((g) => g.timeframe === group.timeframe).reduce((sum, g) => sum + g.items.length, 0)}</span></h3>` : ''}<section class="agenda-group" data-assignment-group="${esc(group.id)}" aria-label="${esc(group.title)}">
         <h3><span>${esc(group.title)}</span><span>${group.items.length}</span></h3>
-        <section class="agenda-dates">${assignmentDateGroups(group.items)
-          .map(
-            (day) =>
-              `<h4 class="agenda-date" data-due-date="${esc(day.id)}">${esc(day.title)}</h4><ol>${day.items
-                .map(({ course, material, details }) => {
-                  const date = assignmentDate(details?.dueAt),
-                    availability = assignmentAvailability(details, now);
-                  let link = '';
-                  try {
-                    const url = new URL(material.sourceURL);
-                    if (url.protocol === 'https:' && !url.username && !url.password)
-                      link = url.href;
-                  } catch {}
-                  return `<li class="agenda-item" data-assignment-id="${esc(material.id)}" data-course-id="${esc(course.id)}">
-            <button class="agenda-open" data-action="assignment" data-id="${esc(material.id)}" data-course-id="${esc(course.id)}" aria-label="Read assignment: ${esc(material.title)}">
-              <span class="agenda-title">${esc(material.title)}</span>
-              <span class="agenda-item-meta"><span class="assignment-course">${esc((course.code || '').replace(/-(?:\d{2}[HV])(?:-\d{2}[HV])*$/i, '') || course.name)}</span>
-                ${date ? `<time datetime="${esc(details.dueAt)}">${esc(format.format(date))}</time>` : `<small>${!details ? 'Deadline not synced' : 'No due date'}</small>`}</span>
-              ${submissionBadgeMarkup(details?.status)}
-              ${course.hiddenAssignmentIDs?.includes(material.id) ? '<small class="assignment-hidden">Hidden</small>' : ''}
-              ${availability ? `<small>${esc(availability)}</small>` : ''}
-            </button>
-            ${link ? `<a class="agenda-canvas" href="${esc(link)}" target="_blank" rel="noreferrer" aria-label="Open ${esc(material.title)} in Canvas">↗</a>` : ''}
-            ${assignmentVisibilityButton(course, material)}
-          </li>`;
-                })
-                .join('')}</ol>`
-          )
-          .join('')}</section></section>`
+        <section class="agenda-dates">${assignmentAgendaDaysMarkup(assignmentDateGroups(group.items), now)}</section></section>`
         )
         .join('')}
       ${!count ? `<div class="agenda-empty"><h3>${query.trim() ? 'No matching assignments.' : filter === 'hidden' ? 'No hidden assignments.' : filter === 'handedIn' ? 'No handed-in assignments yet.' : filter === 'all' ? 'No assignments yet.' : filter === 'archive' ? 'Nothing in the archive.' : 'No outstanding deadlines.'}</h3><p>${query.trim() ? 'Try an assignment title or course code.' : filter === 'hidden' ? 'Assignments you hide stay here. Choose Unhide to show them in your lists again.' : filter === 'handedIn' || filter === 'all' ? 'Sync Canvas to refresh submission status.' : filter === 'archive' ? 'Undated and completed assignments will be kept here.' : 'Use Handed in for submitted work, or All assignments to see everything.'}</p></div>` : ''}
-    </div><p class="agenda-timezone">${filter === 'hidden' ? 'Unhide assignments to show them in your lists again' : filter === 'due' ? 'Next deadlines, then newest overdue' : filter === 'handedIn' ? 'Submitted &amp; graded in Canvas' : filter === 'all' ? 'Includes hidden assignments' : 'Undated &amp; completed'} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</p>
+    </div><p class="agenda-timezone">${filter === 'hidden' ? 'Unhide assignments to show them in your lists again' : filter === 'due' ? 'Earlier deadlines above · Upcoming below' : filter === 'handedIn' ? 'Submitted &amp; graded in Canvas' : filter === 'all' ? 'Includes hidden assignments' : 'Undated &amp; completed'} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}${courses.some((course) => course.canvasID) ? ' · Canvas status refreshes every 2 minutes' : ''}</p>
   </aside>`;
 }
 
@@ -325,6 +353,7 @@ export function assignmentsMarkup(
     query,
     includeCompleted: !dashboard && includeCompleted,
     includeHidden: !dashboard && includeCompleted,
+    includeNonSubmission: !dashboard && includeCompleted,
     dueOnly: dashboard,
   });
   const incomplete = courses.some(
@@ -373,7 +402,7 @@ export function assignmentsMarkup(
         <div class="assignment-main"><strong>${esc(material.title)}</strong>
           ${showCourse ? `<button class="assignment-course" data-action="course" data-id="${esc(course.id)}">${esc(course.code || course.name)}</button>` : ''}
           <div class="assignment-due">${date ? `Due <time datetime="${esc(details.dueAt)}">${esc(dateFormat.format(date))}</time>` : !details ? 'Refresh to load due date' : details.dueAt ? 'Due date unavailable' : 'No due date'}</div></div>
-        <div class="assignment-state">${submissionBadgeMarkup(details?.status)}${course.hiddenAssignmentIDs?.includes(material.id) ? '<small class="assignment-hidden">Hidden</small>' : ''}${['Overdue', 'Missing'].includes(status) ? `<small class="assignment-overdue">${esc(status)}</small>` : ''}${availability ? `<small>${esc(availability)}</small>` : ''}</div>
+        <div class="assignment-state">${submissionBadgeMarkup(details?.status, details)}${course.hiddenAssignmentIDs?.includes(material.id) ? '<small class="assignment-hidden">Hidden</small>' : ''}${['Overdue', 'Missing'].includes(status) ? `<small class="assignment-overdue">${esc(status)}</small>` : ''}${availability ? `<small>${esc(availability)}</small>` : ''}</div>
         <div class="assignment-actions">${assignmentVisibilityButton(course, material)}<button data-action="assignment" data-id="${esc(material.id)}" data-course-id="${esc(course.id)}">Read assignment</button>
           ${link ? `<a href="${esc(link)}" target="_blank" rel="noreferrer" aria-label="Open ${esc(material.title)} in Canvas">Open Canvas ↗</a>` : ''}</div>
       </li>`;

@@ -37,12 +37,17 @@ panel, and no panel is rendered when the response contains none.
   model/Fast mode controls, and saved-chat management. It does not open the
   sidebar; **Open sidebar** remains a separate explicit action.
 - Sidebar chat: use **Home** to return without discarding the conversation, or
-  **New chat** to reset it. Model and Codex/Claude Code Fast mode can be changed
-  both on sidebar home and directly above an active chat. **Compact context**
+  **New chat** to reset it. Model and reasoning controls sit in the message bar
+  and on sidebar home. Reasoning choices follow the selected model's supported
+  levels and are remembered per provider, including in popup and PDF chats.
+  Expand **Chat options** for context, language, web search, and Codex/Claude Code
+  Fast mode. Source details expand above the conversation. **Compact context**
   reads the page beside the sidebar, ranks page/PDF/course/site and saved
   ChatGPT reference text locally, and limits the source
-  pack to about 6,000 characters. **Full** uses the larger previous context
-  budget (up to about 24,000 characters); **None** sends only the conversation
+  pack to about 6,000 characters. **Full** includes entire articles and short
+  PDFs (typically 10–15 pages) up to 120,000 extracted source characters, with
+  page boundaries preserved. Larger sources use bounded excerpts. Full context
+  is retained when saving and reopening a chat; **None** sends only the conversation
   plus text or images you attach. The choice is saved with the chat. In every
   extension message composer, Enter sends and Shift+Enter inserts a new line.
   Use the search button
@@ -100,9 +105,20 @@ panel, and no panel is rendered when the response contains none.
   explanation layers expose **Edit**. Resending an edit keeps the earlier
   transcript, discards later turns that depended on the old wording, and
   regenerates from the changed message.
-- The side-panel **Entire site** toggle explicitly follows same-origin links,
-  reads up to 48 HTML pages, and searches the resulting local index for each
-  initial question. The packed context remains fixed for follow-ups.
+- **Follow links**, available on the home screen and during a page chat, searches
+  Canvas course materials and follows relevant links across sites for each
+  question. Links in the question get priority. HTML, PDFs, Office documents,
+  and readable text files are supported; source URLs stay beside their excerpts.
+  **Sources read** lists the evidence gathered. Normal mode asks you to choose
+  sites before reading them, including newly discovered sites. **YOLO** skips
+  these reviews for this chat; it still respects disabled sites and allowlists.
+  Both modes only read: they never click buttons, submit forms, or change Canvas.
+  **Stop**, Home, a new chat, or closing the chat cancels research and pending
+  requests. A cancelled question stays in the composer for editing.
+  Each question allows up to 36 linked-page requests, three link levels, and
+  45 seconds of network work, excluding review time (Canvas indexing has its
+  own limits below). Redirects, sign-in pages, action links, inaccessible files,
+  and unsupported content are skipped, and incomplete coverage is reported.
 - The side-panel **Complete page** toggle scrolls through the current document
   to trigger lazy content, reads live semantic text plus accessible embedded
   documents and open shadow content, captures a bounded full-page visual for
@@ -120,8 +136,8 @@ panel, and no panel is rendered when the response contains none.
 - Select text: use the small Explain pill; click anywhere outside it to dismiss.
 - Open a PDF: on Chromium 151 and newer, Scholia handles Chrome's existing PDF
   stream in place, keeping the original HTTP(S) or `file://` navigation in the
-  address bar while the selectable reader is active. Older Chromium builds use
-  the extension-owned compatibility view after the PDF navigation completes.
+  address bar while the selectable reader is active. Browsers without the public
+  MIME API use the extension-owned compatibility view after navigation completes.
   Automatic opening is enabled in every supported browser, including Brave.
   PDFs opened from Finder, dragged into a browser tab, or opened with the
   browser's Open File command use Scholia's reader too.
@@ -152,20 +168,31 @@ panel, and no panel is rendered when the response contains none.
   the actual downloaded PDF address. Repository preview links from GitHub,
   GitLab, and Bitbucket are resolved to their raw document, and bounded HTML
   preview pages can supply an embedded or explicit download URL. It shows the
-  sanitized original page address and has a persistent
+  sanitized original page address with a **Copy URL** button that copies the
+  full original PDF address, including download parameters, and has a persistent
   light/dark interface control that never recolors the PDF pages themselves.
-  The toolbar shows distinct rendering, page-preparation, text-indexing, and
-  local-cache progress; the first visible page is painted before background
-  indexing begins.
+  Pages render at a minimum 2× density. When a zoomed page exceeds the full-page
+  canvas budget, the visible area is rendered again directly from the PDF at
+  display resolution. Refinement follows scrolling, resizing, and display
+  density changes while preserving selectable text and bounding canvas memory.
+  Reading, navigation, selection, downloading, and printing are available as
+  soon as the first page opens. A quick text index makes exact search and chat
+  context available progressively; OCR for scanned pages and semantic search
+  build automatically in the background. Search results expand without moving
+  the current page or selection. Print preparation takes priority over new
+  indexing work. The toolbar shows each stage, and completed indexes are cached
+  locally for reopening.
   **Chrome view** returns to the built-in viewer; the toolbar menu's **Open
   Scholia PDF view** button restores the selectable view.
 - The toolbar menu also offers **Open a PDF file or address** at any time. HTTP,
   HTTPS, and file addresses open in a new Scholia reader tab, and a local file
-  can be chosen from that tab. On Chromium 151 and newer, Scholia handles the
+  can be chosen from that tab. On supported Chromium 151 and newer, Scholia handles the
   browser's PDF stream in place, so the active reader and restored tab keep the
   original HTTP(S) or `file://` address in the address bar. Existing opaque
   reader links migrate back to their saved original address after an extension
-  reload. Older Chromium versions keep the extension-URL reader as a
+  reload. The MIME reader stores its current page in per-tab session storage;
+  it avoids History API updates that crash Chromium's handler frame. Older
+  Chromium versions and browsers without the public API keep the extension-URL reader as a
   compatibility fallback. A PDF selected with the
   Chromium file picker keeps a revocable handle to that file—not a copy of its
   bytes—so its reader tab can reopen the same file from disk after a restart.
@@ -210,18 +237,25 @@ rendered page or PDF: drag to capture, or press Escape to cancel. The PDF chat
 hides during selection and returns afterward. Capture covers the visible page
 viewport, not content currently scrolled off-screen.
 
+PDF pages with little selectable text are read with bundled, on-device OCR
+(English and Norwegian). This also applies to PDF attachments. Recovered text
+keeps its page numbers, feeds document context and search, and is cached with
+the reader's PDF index. Existing selectable text is retained. OCR processes up
+to 50 sparse pages per document, with a 30-second limit per recognition job;
+unreadable or skipped pages are reported. The original PDF is unchanged.
+
 Links whose visible path ends in `.pdf` sometimes return an HTML preview rather
 than PDF bytes. Scholia follows standard raw-download response hints and common
 repository preview formats, verifies the PDF signature before parsing, and
 keeps **Open original page** available if no safe document download can be
 found.
 
-Scholia uses a standalone PDF reader because native extension MIME handling
-can crash the browser process. For local `file://` PDFs, enable
+On the compatibility path, local `file://` PDFs require
 **Allow access to file URLs** on Scholia's extension details page (for Brave:
 `brave://extensions` → Scholia → Details). This is a one-time browser permission
 that extensions cannot enable themselves. You can also use **Choose PDF
-file** when the panel asks. PDF text
+file** when the panel asks. The original-URL MIME reader does not require that
+file-access permission. PDF text
 extraction, page mapping, and semantic relevance ranking all happen locally;
 only the bounded context pack is included in a provider request. Completed
 text indexes are cached in extension-local IndexedDB under a PDF.js document
@@ -254,11 +288,19 @@ The exact-ID field remains available for models a server does not advertise.
 
 Every browser chat composer has an **Attach files** paperclip and accepts file
 drops and file paste. This includes sidebar, full-page, PDF-reader, toolbar, and
-selection explanation chats. Attach PDFs, images, DOCX, PPTX, XLSX, or readable
-text/code files. Files appear as removable previews and remain with their sent
-message when saved, reopened, or edited. Limits: six files, one image, 25 MB per
-file, 24,000 extracted characters per document and 48,000 per turn. Partial text
-is marked; unreadable, encrypted, or unsupported files show an error.
+selection explanation chats. Any file can be attached; supported text, PDFs,
+Office files, and readable archive members (including Simulink XML) are extracted
+locally. Files remain with their sent message when saved, reopened, or edited.
+Limits are 24 files, one visual image per message, and 25 MB per browser file.
+Complete supported extraction text is retained: large extension attachments use
+IndexedDB, and hosted attachments use account-scoped text files. The UI shows a
+bounded preview; it does not discard the rest of the saved text. Each question
+searches the saved extraction and selects up to 24,000 characters per file and
+48,000 per turn, with explicit request coverage. Followups can retrieve different
+parts, including the end of a long file. Format-specific processing limits and
+unreadable, encrypted, or unsupported contents are reported visibly. Attachment
+IDs and supplied paths distinguish separate copies; browsers cannot supply an
+original absolute path for an ordinary file selection.
 
 On a signed-in Canvas course page, automatic page context searches that course's
 syllabus, pages, assignments, and readable files, including module-only files.

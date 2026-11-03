@@ -6,14 +6,16 @@ final class CanvasDataTransfer: NSObject, URLSessionDataDelegate, @unchecked Sen
     private let lock = NSLock()
     private let limit: Int
     private let redirects: CanvasRedirectPolicy
+    private let priority: CanvasDownloadTaskPriority?
     private var task: URLSessionDataTask?
     private var continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>?
     private var response: HTTPURLResponse?
     private var data = Data()
     private var cancelled = false
-    init(limit: Int, downloads: Bool) {
+    init(limit: Int, downloads: Bool, priority: CanvasDownloadTaskPriority? = nil) {
         self.limit = limit
         redirects = CanvasRedirectPolicy(downloads: downloads)
+        self.priority = priority
     }
 
     func receive(_ request: URLRequest, session: URLSession) async throws -> (Data, HTTPURLResponse) {
@@ -25,6 +27,8 @@ final class CanvasDataTransfer: NSObject, URLSessionDataDelegate, @unchecked Sen
                     guard !cancelled else { return false }
                     self.continuation = continuation
                     self.task = task
+                    task.priority = URLSessionTask.highPriority
+                    priority?.register(task)
                     task.resume()
                     return true
                 }
@@ -43,13 +47,15 @@ final class CanvasDataTransfer: NSObject, URLSessionDataDelegate, @unchecked Sen
         task?.cancel()
     }
     private func finish(_ result: Result<(Data, HTTPURLResponse), Error>) {
-        let callback = lock.withLock {
+        let (callback, finishedTask) = lock.withLock {
             let value = continuation
+            let finishedTask = task
             continuation = nil
             task = nil
             data = Data()
-            return value
+            return (value, finishedTask)
         }
+        if let finishedTask { priority?.remove(finishedTask) }
         callback?.resume(with: result)
     }
     func urlSession(

@@ -37,8 +37,10 @@
         <h2 id="current-title">Loading current tab…</h2>
         <p id="current-url" class="source-url"></p>
         <form id="context-form" class="ask-box">
-          <label for="context-question">Chat with this content</label>
+          <label for="context-question">What would you like to understand?</label>
           <textarea id="context-question" rows="3" placeholder="Ask anything about this page…" required></textarea>
+          <details class="context-options">
+            <summary>Page context <span id="context-mode-summary">Compact context</span></summary>
           <fieldset class="context-mode-options">
             <legend>Automatic context</legend>
             <label class="scope-toggle context-toggle" for="context-mode">
@@ -47,7 +49,7 @@
             </label>
             <label class="scope-toggle context-toggle" for="context-full">
               <input id="context-full" name="context-mode" type="radio" value="full">
-              <span><strong>Full</strong><small>Include the larger page, PDF, or site context pack, up to about 24,000 characters.</small></span>
+              <span><strong>Full</strong><small>Include entire articles and short PDFs, up to about 120,000 characters. Larger sources use relevant excerpts.</small></span>
             </label>
             <label class="scope-toggle context-toggle context-none-toggle" for="context-none">
               <input id="context-none" name="context-mode" type="radio" value="none">
@@ -56,12 +58,14 @@
           </fieldset>
           <label id="site-scope-row" class="scope-toggle" for="site-scope" hidden>
             <input id="site-scope" type="checkbox">
-            <span><strong>Entire site</strong><small>Crawl same-site pages and search them locally for this question.</small></span>
+            <span><strong>Follow links</strong><small>Search Canvas and linked sites for your question. Review sites before they are read.</small></span>
           </label>
           <label id="deep-page-row" class="scope-toggle" for="deep-page" hidden>
             <input id="deep-page" type="checkbox">
             <span><strong>Complete page</strong><small>Load lazy content, read embedded content, and include a full-page visual when the model supports images.</small></span>
           </label>
+          <p id="context-hint" class="hint">Relevant passages are included with your question.</p>
+          </details>
           <div class="ask-actions">
             <button id="choose-files" class="secondary compact-button" type="button">＋ Files</button>
             <button id="choose-image" class="secondary compact-button" type="button"><span aria-hidden="true">▧</span> Image</button>
@@ -74,7 +78,6 @@
           <button id="course-index-refresh" class="secondary compact-button" type="button">Index / refresh course</button>
           <button id="course-index-clear" class="secondary compact-button" type="button">Clear index</button>
         </div>
-        <p id="context-hint" class="hint">Page text is indexed locally and packed into relevant excerpts before it is sent.</p>
         <div id="pdf-viewer-actions" class="pdf-viewer-actions" hidden>
           <button id="open-pdf-viewer" class="secondary" type="button">Open selectable PDF view</button>
           <span id="pdf-viewer-state">Selecting text here will show Scholia's Explain popup.</span>
@@ -96,8 +99,10 @@
       </section>
 
       <section class="card compact model-card">
-        <div class="card-heading"><span class="label">Active model</span><button id="model-settings" class="text-button" type="button">Advanced settings</button></div>
+        <div class="card-heading"><span class="label">Your assistant</span><button id="model-settings" class="text-button" type="button">Settings</button></div>
         <select id="model-select" aria-label="Active provider and model"></select>
+        <label class="reasoning-control" data-reasoning-control hidden>Reasoning <select id="reasoning-select" aria-label="Reasoning effort"></select></label>
+        <div class="model-toggles">
         <button id="fast-mode" class="fast-mode" type="button" aria-pressed="false">
           <span aria-hidden="true">⚡</span><span>Fast mode</span><small id="fast-mode-state">Off</small>
         </button>
@@ -107,6 +112,7 @@
         <button id="learning-mode" class="fast-mode" type="button" aria-pressed="false" hidden title="Guide with graduated hints, or request a worked solution">
           <span aria-hidden="true">◇</span><span>Guided learning</span><small id="learning-mode-state">Off</small>
         </button>
+        </div>
         <p id="model-hint" class="inline-hint">Model changes apply to new turns without leaving the sidebar.</p>
       </section>
 
@@ -116,6 +122,8 @@
         <p id="chat-history-empty" class="history-empty">No saved chats yet. Your conversations will appear here.</p>
       </section>
 
+      <details class="sidebar-tools">
+        <summary>Page &amp; shortcuts</summary>
       <section class="card compact site-card">
         <span class="label">Current website</span>
         <strong id="site">Loading…</strong>
@@ -127,6 +135,7 @@
         <p class="small-copy">Select text on a web page or in Scholia PDF view to open the same Explain popup in place.</p>
         <button id="explain" class="secondary" type="button">Explain current selection</button>
       </section>
+      </details>
 
       <p id="status" class="status" role="status"></p>
       <footer><kbd>⌘⇧E</kbd> selection <span>·</span> <kbd>⌘⇧S</kbd> region</footer>
@@ -138,30 +147,36 @@
         <button id="chat-current-tab" class="text-button" type="button">Chat with the current tab</button>
       </div>
 
-      <section class="chat-controls" aria-label="Chat model controls">
-        <label class="chat-model-field" for="chat-model-select"><span>Model for next turn</span><select id="chat-model-select"></select></label>
-        <button id="chat-context-mode" class="chat-fast-mode" type="button" aria-pressed="true" title="Use compact automatic context"><span aria-hidden="true">▤</span> Compact</button>
-        <button id="chat-context-full" class="chat-fast-mode" type="button" aria-pressed="false" title="Use full automatic context"><span aria-hidden="true">▥</span> Full</button>
-        <button id="chat-context-none" class="chat-fast-mode" type="button" aria-pressed="false" title="Send no automatic context"><span aria-hidden="true">∅</span> None</button>
-        <button id="chat-fast-mode" class="chat-fast-mode" type="button" aria-pressed="false" title="Toggle Fast mode"><span aria-hidden="true">⚡</span> Fast</button>
-        <button id="chat-web-search" class="chat-fast-mode" type="button" aria-pressed="false" title="Toggle web search"><span aria-hidden="true">⊕</span> Web</button>
-        <button id="chat-learning-mode" class="chat-fast-mode" type="button" aria-pressed="false" hidden title="Guide with graduated hints, or request a worked solution"><span aria-hidden="true">◇</span> Learn</button>
-      </section>
-
-      <section class="chat-source">
-        <div class="source-heading">
+      <details class="chat-source">
+        <summary>
+          <span class="source-heading">
           <span id="chat-source-badge" class="badge">Page context</span>
-          <span id="context-state" class="context-state"></span>
-        </div>
+          <span class="source-disclosure">Details</span>
+          </span>
         <strong id="chat-source-title">Current page</strong>
+        </summary>
+        <p id="context-state" class="context-state"></p>
         <p id="chat-source-detail" class="source-detail"></p>
+        <details id="research-sources" hidden><summary>Sources read</summary><ul id="research-source-list"></ul></details>
         <blockquote id="chat-selection" hidden></blockquote>
         <img id="chat-source-image" hidden alt="Captured source region">
-      </section>
+      </details>
 
       <section id="loading-card" class="loading-card" hidden aria-live="polite">
         <span class="spinner" aria-hidden="true"></span>
         <div><strong id="loading-title">Reading context…</strong><p id="loading-detail"></p></div>
+      </section>
+
+      <section id="research-review" class="card research-review" hidden aria-label="Review research sites">
+        <h2>Choose sites to read</h2>
+        <p id="research-review-question" class="small-copy"></p>
+        <p class="hint">Scholia will read relevant pages and course files using your browser access. It will not submit forms or change anything.</p>
+        <div id="research-review-sites"></div>
+        <div class="button-row">
+          <button id="research-skip" class="secondary" type="button">Skip these sites</button>
+          <button id="research-approve" class="primary" type="button">Read selected sites</button>
+        </div>
+        <label class="scope-toggle" for="research-review-yolo"><input id="research-review-yolo" type="checkbox"><span><strong>YOLO for this chat</strong><small>Follow relevant links without further site reviews. Stop still cancels all research.</small></span></label>
       </section>
 
       <section id="pdf-fallback" class="card pdf-fallback" hidden>
@@ -209,6 +224,25 @@
           <button id="explain-capture" class="send-button explain-capture-button" type="submit" aria-label="Explain captured image" hidden>Explain</button>
           <button id="send" class="send-button" type="submit" aria-label="Send">↑</button>
         </div>
+        <div class="composer-models">
+          <div class="chat-model-field"><select id="chat-model-select" aria-label="Model for next message"></select></div>
+          <label class="reasoning-control" data-reasoning-control hidden>Reasoning <select id="chat-reasoning-select" aria-label="Reasoning effort for next message"></select></label>
+        </div>
+        <p id="composer-settings-status" class="status error" role="alert" hidden></p>
+        <details class="composer-options">
+          <summary>Chat options <span id="chat-options-summary">Compact context</span></summary>
+          <section class="chat-controls" aria-label="Chat options">
+            <button id="chat-context-mode" class="chat-fast-mode" type="button" aria-pressed="true" title="Use compact automatic context"><span aria-hidden="true">▤</span> Compact</button>
+            <button id="chat-context-full" class="chat-fast-mode" type="button" aria-pressed="false" title="Use full automatic context"><span aria-hidden="true">▥</span> Full</button>
+            <button id="chat-context-none" class="chat-fast-mode" type="button" aria-pressed="false" title="Send no automatic context"><span aria-hidden="true">∅</span> None</button>
+            <button id="chat-fast-mode" class="chat-fast-mode" type="button" aria-pressed="false" title="Toggle Fast mode"><span aria-hidden="true">⚡</span> Fast</button>
+            <button id="chat-web-search" class="chat-fast-mode" type="button" aria-pressed="false" title="Toggle web search"><span aria-hidden="true">⊕</span> Web</button>
+            <button id="chat-follow-links" class="chat-fast-mode" type="button" aria-pressed="false" title="Follow relevant links and review sites before reading">↗ Follow links</button>
+            <button id="chat-research-yolo" class="chat-fast-mode" type="button" aria-pressed="false" title="Skip site reviews for read-only research. Stop cancels research." hidden>YOLO</button>
+            <button id="chat-learning-mode" class="chat-fast-mode" type="button" aria-pressed="false" hidden title="Guide with graduated hints, or request a worked solution"><span aria-hidden="true">◇</span> Learn</button>
+          </section>
+          <label class="response-language" title="Default response language for all chats. Auto follows the language of your prompt.">Language <select data-response-language aria-label="Response language"></select></label>
+        </details>
       </form>
     </section>
 
@@ -250,6 +284,7 @@
       <p id="response-window-status" class="status" role="status" hidden></p>
       <main id="response-window-messages" class="response-window-messages" aria-live="polite"></main>
       <form id="response-window-form" class="response-window-composer">
+        <label class="response-language" title="Default response language for all chats. Auto follows the language of your prompt.">Language <select data-response-language aria-label="Response language"></select></label>
         <div id="response-window-files" hidden></div>
         <div class="composer-row">
         <button id="response-window-attach" class="icon-button composer-attach" type="button" aria-label="Attach files"></button>

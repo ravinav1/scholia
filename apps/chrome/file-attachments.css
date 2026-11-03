@@ -3,6 +3,13 @@
 .scholia-file-chip > span { overflow:hidden;white-space:nowrap;text-overflow:ellipsis;min-width:0; }
 .scholia-file-chip img { width:28px;height:28px;object-fit:cover;border-radius:4px; }
 .scholia-file-chip small { opacity:.7; }
+.scholia-file-chip input { margin:0;accent-color:var(--accent,#287358); }
+.scholia-file-chip[data-status="unavailable"] { border-style:dashed; }
+.scholia-file-excluded { opacity:.6; }
+.scholia-file-preview { flex-basis:100%;font-size:11px;line-height:1.5;min-width:0; }
+.scholia-file-preview summary { cursor:pointer;overflow-wrap:anywhere; }
+.scholia-file-preview p { margin:4px 0;overflow-wrap:anywhere; }
+.scholia-file-preview pre { white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;margin:5px 0;padding:8px;background:var(--soft,#f1f5f2);border-radius:6px; }
 .scholia-file-chip button { flex:none;border:0;background:transparent;color:inherit;cursor:pointer;padding:0 3px;font-size:16px; }
 .scholia-file-status { font-size:11px;line-height:1.45;margin-top:4px;overflow-wrap:anywhere; }
 .scholia-file-drag { outline:2px dashed var(--accent,var(--scholia-accent,#287358));outline-offset:-4px; }

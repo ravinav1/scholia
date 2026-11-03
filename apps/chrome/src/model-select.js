@@ -1,4 +1,5 @@
 import { PROVIDERS, modelId, modelLabel, providerById, providerModelChoices } from '../../../packages/core/src/providers.js';
+import { MAX_VISIBLE_RECENT_MODELS, normalizeRecentModels } from '../../../packages/core/src/recent-models.js';
 
 const pickerStates = new WeakMap();
 export const MAX_RENDERED_MODEL_OPTIONS = 80;
@@ -116,7 +117,13 @@ function renderPickerOptions(state) {
     allMatches.push(...matches);
   }
 
-  const windowed = limitedModelPickerResults(allMatches);
+  const recent = (state.recentChoices || []).map((value) => allMatches.find((match) => match.option.value === value)).filter(Boolean);
+  if (recent.length) {
+    const recentValues = new Set(recent.map((match) => match.option.value));
+    for (const group of groups) group.matches = group.matches.filter((match) => !recentValues.has(match.option.value));
+    groups.unshift({ group: { label: 'Recently used' }, matches: recent });
+  }
+  const windowed = limitedModelPickerResults(groups.flatMap((group) => group.matches));
   const visible = new Set(windowed.results);
 
   for (const { group, provider, matches } of groups) {
@@ -137,7 +144,7 @@ function renderPickerOptions(state) {
     heading.append(headingName, headingCount);
     section.append(heading);
 
-    for (const { option } of shown) {
+    for (const { option, provider } of shown) {
       const parsed = parseModelChoice(option.value);
       const row = state.select.ownerDocument.createElement('button');
       row.type = 'button';
@@ -225,6 +232,7 @@ function openModelPicker(state) {
   state.popover.hidden = false;
   positionModelPicker(state);
   state.button.setAttribute('aria-expanded', 'true');
+  state.select.dispatchEvent(new Event('scholia-model-picker-open'));
   requestAnimationFrame(() => {
     if (state.popover.hidden) return;
     positionModelPicker(state);
@@ -358,6 +366,8 @@ export function populateModelSelect(select, settings) {
     select.append(group);
   }
   const picker = ensureModelPicker(select);
+  picker.recentChoices = normalizeRecentModels(settings?.recentModels).slice(0, MAX_VISIBLE_RECENT_MODELS)
+    .map((item) => modelChoice(item.providerID, item.modelID));
   syncPicker(picker);
   if (!picker.popover.hidden) renderPickerOptions(picker);
 }

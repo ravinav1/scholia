@@ -7,6 +7,10 @@ import SwiftUI
 @MainActor
 struct StudyWorkspaceSmoke {
     static func main() {
+        if CommandLine.arguments.contains("--downloads-only") {
+            do { try checkDownloadNames(); exit(0) }
+            catch { print("FAIL: \(error)"); exit(1) }
+        }
         if CommandLine.arguments.contains("--performance-only") {
             do { try benchmarkDashboard(); exit(0) }
             catch { print("FAIL: \(error)"); exit(1) }
@@ -19,8 +23,52 @@ struct StudyWorkspaceSmoke {
         app.setActivationPolicy(.regular)
         Task { @MainActor in
             do {
+                if CommandLine.arguments.contains("--personalization-only") {
+                    try await checkPersonalization(); exit(0)
+                }
+                if CommandLine.arguments.contains("--material-cache-only") {
+                    try checkInteractionData()
+                    exit(0)
+                }
+                if CommandLine.arguments.contains("--interactions-only") {
+                    try checkInteractionData()
+                    try await checkInteractionUI()
+                    exit(0)
+                }
+                if CommandLine.arguments.contains("--course-ui-only") || CommandLine.arguments.contains("--course-layout-only") {
+                    try await checkCourseUI(); exit(0)
+                }
+                if CommandLine.arguments.contains("--ai-workspace-only") { try await checkAIWorkspace(); exit(0) }
+                if CommandLine.arguments.contains("--reference-shortcuts-only") { try await checkReferenceLinksAndShortcuts(); exit(0) }
+                if CommandLine.arguments.contains("--sync-status-only") { try await checkSyncStatusUI(); exit(0) }
+                if CommandLine.arguments.contains("--ocr-only") { try await checkDocumentOCR(); exit(0) }
+                if CommandLine.arguments.contains("--assignment-agenda-preview") { try await previewAssignmentAgenda(); exit(0) }
+                if CommandLine.arguments.contains("--course-documents-only") { try await checkCourseDocuments(); exit(0) }
+                if CommandLine.arguments.contains("--canvas-new-files-preview") {
+                    try await previewCanvasNewFiles(); exit(0)
+                }
+                if CommandLine.arguments.contains("--assignment-feedback-preview") {
+                    try await previewAssignmentFeedback(); exit(0)
+                }
+                if CommandLine.arguments.contains("--assignment-status-preview") {
+                    try checkAssignmentProgress(); try await previewAssignmentStatus(); exit(0)
+                }
+                if CommandLine.arguments.contains("--assignment-opening-only") {
+                    try await checkAssignmentOpening(); exit(0)
+                }
+                if CommandLine.arguments.contains("--assignment-deadlines-only") {
+                    try await checkDeadlineRefreshScheduling()
+                    try await checkMovedAssignmentDeadlines()
+                    try await checkDeadlineAuthentication()
+                    try await checkCachedAssignmentDeadline()
+                    print("PASS: moved and removed deadlines, optional feedback failures, cached instructions, tutor context, offline reading and persistence")
+                    exit(0)
+                }
+                if CommandLine.arguments.contains("--pdf-selection-only") {
+                    try await checkPDFSelectionChat(); exit(0)
+                }
                 if CommandLine.arguments.contains("--assignments-only") || CommandLine.arguments.contains("--assignments-preview") {
-                    try await checkDataTransfer(); try await checkAssignments(); try await checkCanvasFavorites(); try checkMaterialGroups()
+                    try await checkDataTransfer(); try await checkAssignments(); try await checkCanvasFavorites(); try await checkCanvasReconnectAndRefresh(); try checkMaterialGroups(); try checkMaterialClassification()
                     print("PASS: Canvas assignment pagination, deadlines, submission states, module fallback, refresh and persistence")
                     if CommandLine.arguments.contains("--assignments-preview") { try await previewAssignments() }
                     exit(0)
@@ -28,7 +76,7 @@ struct StudyWorkspaceSmoke {
                 if CommandLine.arguments.contains("--learning-only") || CommandLine.arguments.contains("--learning-preview") { try await checkLearning(); exit(0) }
                 if CommandLine.arguments.contains("--data-only") {
                     try await checkDataTransfer(); try await checkLearning()
-                    try checkSemesters(); try await checkAssignments(); try await checkStudyFlow(); try checkPDFFit(); try await checkPDFRegions(); try checkFormats(); try await checkDocumentEditing(); try checkMaterialGroups(); try await checkCatalogChanges()
+                    try checkSemesters(); try await checkAssignments(); try await checkStudyFlow(); try checkPDFFit(); try await checkPDFRegions(); try checkFormats(); try await checkDocumentEditing(); try checkMaterialGroups(); try checkMaterialClassification(); try await checkCatalogChanges()
                     print("PASS: Office, notebook, code and original imports; image context; shared semantic search; Canvas changes, partial failures, conditional pagination and module order")
                     exit(0)
                 }
@@ -125,6 +173,170 @@ struct StudyWorkspaceSmoke {
         encoded.removeValue(forKey: "courseLibraryView"); encoded.removeValue(forKey: "selectedSemesterID")
         let legacy = try JSONDecoder().decode(StudyLibrary.self, from: JSONSerialization.data(withJSONObject: encoded))
         precondition(legacy.courses.count == 4 && legacy.courseLibraryView == nil)
+    }
+
+    static func checkPDFSelectionChat() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-selection-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = StudyLibraryStore(root: root), workspace = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        workspace.createCourse(name: "Selection fixture", code: "TEST")
+        let source = root.appendingPathComponent("Selection.pdf")
+        try fixturePDF().write(to: source)
+        workspace.importDocuments([source])
+        for _ in 0..<500 where workspace.isImporting || workspace.documentIndex == nil { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(workspace.documentIndex != nil)
+        workspace.setPage(2)
+        let controller = StudyWindowController(app: AppModel.shared, workspace: workspace, autosave: false)
+        controller.show()
+        defer { controller.window.close() }
+        try await Task.sleep(for: .milliseconds(500))
+        let host = try unwrap(find(StudyPDFHost.self, in: try unwrap(controller.window.contentView)))
+        let passage = try unwrap(host.pdf.document?.findString("eigenvectors", withOptions: []).first)
+        host.pdf.setCurrentSelection(passage, animate: false)
+        host.showSelectionPopup()
+        func button(_ title: String, in view: NSView) -> NSButton? {
+            if let value = view as? NSButton, value.title == title { return value }
+            for child in view.subviews { if let result = button(title, in: child) { return result } }
+            return nil
+        }
+        func clickResponseFooter(_ view: NSView, x: CGFloat) async throws {
+            let window = try unwrap(view.window)
+            let point = view.convert(NSPoint(x: x, y: view.isFlipped ? view.bounds.maxY - 22 : 22), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try unwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+                NSApplication.shared.postEvent(event, atStart: false)
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let explain = try unwrap(button("Explain", in: host)), open = try unwrap(button("Open in chat ↗", in: host))
+        let popup = try unwrap(open.superview)
+        precondition(!popup.isHidden && popup.frame.size == NSSize(width: 320, height: 92))
+        let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try snapshot(controller.window, at: output.appendingPathComponent("pdf-selection-compact-native.png"))
+        let configuration = ProviderConfiguration(provider: ProviderCatalog.provider(id: "ollama"), model: "fixture", endpoint: "http://127.0.0.1:1", apiKey: "", language: .english, fastClaudeMode: false)
+        @MainActor final class ResponseGate { var finished = false }
+        let responseGate = ResponseGate()
+        let completion: StudyCompletion = { messages, _, onToken in
+            precondition(messages.last?.content.contains("> eigenvectors") == true)
+            let prepared = try PromptBuilder.prepare(messages: messages, capture: nil, languagePreference: .english)
+            precondition(prepared.messages.last?.content.contains("Current page: 2 of 3") == true)
+            onToken("The selected passage ")
+            while !responseGate.finished { try await Task.sleep(for: .milliseconds(10)) }
+            return CompletionResult(text: "The selected passage describes eigenvectors.\n\n```python\nv = [1, 0]\n```", providerID: "fixture", providerName: "Fixture", model: "fixture")
+        }
+        precondition(workspace.thread == nil && workspace.draft.isEmpty && workspace.draftImage == nil,
+            "This regression must start with a selection and no conversation or draft")
+        let contentView = try unwrap(controller.window.contentView)
+        let buttonPoint = explain.convert(NSPoint(x: explain.bounds.midX, y: explain.bounds.midY), to: contentView.superview)
+        let hit = contentView.hitTest(buttonPoint)
+        precondition(hit === explain || hit?.isDescendant(of: explain) == true, "The visible Explain button must receive clicks")
+        let originalAction = host.onSelectionAction
+        host.onSelectionAction = { text, send, question in
+            precondition(text == "eigenvectors" && send && question.isEmpty)
+            workspace.selectedText = text
+            workspace.submit(configuration: configuration, complete: completion)
+            return workspace.isStreaming
+        }
+        let focusBeforeExplain = workspace.tutorFocusRequest
+        explain.performClick(nil)
+        precondition(workspace.isStreaming && workspace.messages.count == 2,
+            "Explain must create the first conversation from a passage alone")
+        let response = try unwrap(host.responsePopover)
+        precondition(response.isShown && popup.isHidden,
+            "Explain must open a response popup instead of leaving only the compact selection controls")
+        for _ in 0..<100 where workspace.messages.last?.content.isEmpty == true { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(100))
+        let responseView = try unwrap(response.contentViewController?.view)
+        let responseText = try unwrap(find(NSTextView.self, in: responseView))
+        precondition(responseText.string.contains("The selected passage") && workspace.isStreaming,
+            "The popup must show streamed model tokens before the response finishes")
+        precondition(workspace.tutorFocusRequest == focusBeforeExplain,
+            "Explain must not move focus to the sidebar composer")
+        responseGate.finished = true
+        for _ in 0..<200 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(workspace.messages.last?.content.contains("describes eigenvectors") == true)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+            responseView.window?.appearance = NSAppearance(named: appearance)
+            try await Task.sleep(for: .milliseconds(150))
+            try snapshot(try unwrap(responseView.window), at: output.appendingPathComponent("pdf-selection-response-\(name).png"))
+        }
+        precondition(responseText.string.contains("describes eigenvectors"))
+        workspace.draft = "Keep this unsent draft"
+        try await clickResponseFooter(responseView, x: 55)
+        try await Task.sleep(for: .milliseconds(300))
+        precondition(host.responsePopover == nil && workspace.tutorFocusRequest == focusBeforeExplain + 1)
+        precondition(workspace.draft == "Keep this unsent draft" && controller.window.firstResponder is BoundedComposerTextView,
+            "Opening the response in chat must preserve the draft and focus the sidebar")
+
+        // A failed request must show its error in the popup rather than an older answer.
+        host.pdf.setCurrentSelection(passage, animate: false)
+        host.showSelectionPopup()
+        host.onSelectionAction = { _, _, _ in workspace.error = "Fixture provider unavailable"; return true }
+        explain.performClick(nil)
+        let failedView = try unwrap(host.responsePopover?.contentViewController?.view)
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(host.responsePopover?.isShown == true
+            && find(NSTextView.self, in: failedView)?.string.contains("describes eigenvectors") != true,
+            "A failed request must not display the previous response")
+        try snapshot(try unwrap(failedView.window), at: output.appendingPathComponent("pdf-selection-response-error.png"))
+        host.closeSelectionResponse()
+        workspace.error = nil
+
+        // Stop acts on the same saved request that is streaming into the popup.
+        responseGate.finished = false
+        workspace.draft = ""
+        host.pdf.setCurrentSelection(passage, animate: false)
+        host.showSelectionPopup()
+        host.onSelectionAction = { text, _, _ in
+            workspace.selectedText = text
+            workspace.submit(configuration: configuration, complete: completion)
+            return workspace.isStreaming
+        }
+        explain.performClick(nil)
+        for _ in 0..<100 where workspace.messages.last?.content.isEmpty == true { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(100))
+        let stoppingView = try unwrap(host.responsePopover?.contentViewController?.view)
+        try await clickResponseFooter(stoppingView, x: stoppingView.bounds.maxX - 35)
+        for _ in 0..<100 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(!workspace.isStreaming && workspace.messages.last?.metadata == "Stopped"
+            && workspace.messages.last?.content == "The selected passage ", "Stopping must preserve the partial response")
+        host.closeSelectionResponse()
+        responseGate.finished = true
+        workspace.draft = "Keep this unsent draft"
+        host.onSelectionAction = originalAction
+        host.showSelectionPopup()
+        let focus = workspace.tutorFocusRequest
+        open.performClick(nil)
+        try await Task.sleep(for: .milliseconds(350))
+        precondition(workspace.tutorFocusRequest == focus + 1 && workspace.selectedText == "eigenvectors")
+        precondition(workspace.draft == "Keep this unsent draft")
+        precondition(controller.window.firstResponder is BoundedComposerTextView, "Open in chat must focus the composer")
+        precondition(popup.isHidden, "Opening chat dismisses the selection popover")
+        workspace.draft = ""
+        workspace.canvasBusy = true
+        precondition(workspace.canSend, "A passage alone must be sendable while background sync runs")
+        workspace.submit(configuration: configuration, complete: completion)
+        for _ in 0..<200 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(workspace.messages.count == 6 && workspace.selectedText.isEmpty)
+        workspace.flush()
+        precondition(StudyWorkspaceModel(store: store).messages.first?.content.contains("> eigenvectors") == true)
+        let server = StudyWebServer(app: AppModel.shared, workspace: workspace, assets: URL(fileURLWithPath: "dist/web")) {
+            workspace.submit(configuration: configuration, complete: completion)
+        }
+        server.start(port: 0)
+        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
+        let address = try unwrap(server.address)
+        let browser = Process(); browser.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        browser.arguments = ["node", "scripts/smoke-pdf-selection.mjs", address.absoluteString, output.path]
+        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+            browser.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+            do { try browser.run() } catch { continuation.resume(throwing: error) }
+        }
+        precondition(status == 0)
+        print("PASS: native selection response popup, streaming tokens, light/dark rendering, error popup without stale answers, explicit Open in chat focus, preserved drafts and saved document context during background sync")
     }
 
     static func checkPDFFit() throws {
@@ -235,6 +447,36 @@ struct StudyWorkspaceSmoke {
         workspace.flush()
         precondition(StudyWorkspaceModel(store: store).messages.first?.imageData == crop.data, "Saved conversation must retain the actual crop")
         print("PASS: \(checked) PDF crop rasters plus PDFView conversion and exact-image send/save; zoom, Retina, rotated pages, crop boxes and offsets")
+    }
+
+    static func checkDownloadNames() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-download-names-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = StudyLibraryStore(root: root)
+        let bytes = try fixturePDF()
+        var document = try StudyDocumentImporter.read(data: bytes, name: "Øving 3.pdf", store: store)
+        var course = StudyCourse(name: "Linear algebra", code: "TMA4115")
+        precondition(document.fileName == "original.pdf")
+        precondition(document.downloadFileName(in: course) == "Øving 3.pdf")
+        let destination = root.appendingPathComponent(document.downloadFileName(in: course))
+        try Data(contentsOf: store.file(for: document)).write(to: destination)
+        let saved = try Data(contentsOf: destination)
+        precondition(saved == bytes, "Saving with the original name must preserve PDF bytes")
+        document.originalFileName = nil
+        document.sourceKey = "files:42"
+        course.canvasMaterials = [CanvasMaterialReference(id: "files:42", kind: .files, remoteID: "42",
+            title: "Exercise 4", fileName: "Exercise 4 - vectors.pdf", sourceURL: "https://canvas.ntnu.no/files/42", version: "v1")]
+        precondition(document.downloadFileName(in: course) == "Exercise 4 - vectors.pdf")
+        document.sourceKey = nil
+        document.title = "Eigenvectors.pdf"
+        precondition(document.downloadFileName(in: course) == "TMA4115 - Eigenvectors.pdf")
+        course.code = ""
+        precondition(document.downloadFileName(in: course) == "Linear algebra - Eigenvectors.pdf")
+        let code = try StudyDocumentImporter.read(data: Data("print(42)".utf8), name: "linear_maps.py", store: store)
+        precondition(code.downloadFileName(in: course) == "linear_maps.py")
+        let image = StudyDocument(title: "Figure", kind: .image, fileName: "original.jpg", pageCount: 1, originalFileName: "Figure.png")
+        precondition(image.downloadFileName(in: course) == "Figure.jpg", "Converted images retain their saved format")
+        print("PASS: download names preserve original and Canvas filenames, legacy course/title fallbacks and saved bytes")
     }
 
     static func checkFormats() throws {
@@ -584,7 +826,13 @@ struct StudyWorkspaceSmoke {
         }
         workspace.stopAnswer()
         for _ in 0..<100 where workspace.isStreaming { try await Task.sleep(for: .milliseconds(20)) }
-        precondition(!workspace.isStreaming && workspace.messages.count == 1)
+        precondition(!workspace.isStreaming && workspace.messages.map(\.role) == [.user, .assistant],
+            "Cancellation must retain the question and its recorded activity")
+        precondition(workspace.messages.first?.content == "A cancelled question"
+            && workspace.messages.last?.content.isEmpty == true
+            && workspace.messages.last?.metadata == "Stopped"
+            && workspace.messages.last?.isStreaming == false,
+            "Cancelled answers must stop cleanly without fabricated answer text")
     }
 
     static func checkStudyFlow() async throws {
@@ -663,7 +911,7 @@ struct StudyWorkspaceSmoke {
             (title as NSString).draw(at: NSPoint(x: 54, y: 666), withAttributes: [.font: NSFont.systemFont(ofSize: 26, weight: .semibold)])
             let body = page == 1 ? "A linear map preserves vector addition and scalar multiplication.\nWe can understand a matrix by watching what it does to a grid."
                 : page == 2 ? "Some vectors change length without changing their line of action.\nThese are the eigenvectors of the transformation.\n\nAv = λv\n\nThe scalar λ is the eigenvalue associated with v."
-                : "Consider the diagonal matrix A = diag(2, 1).\nThe vector (1, 0) has eigenvalue 2.\nThe vector (0, 1) has eigenvalue 1."
+                : "Consider the diagonal matrix A = diag(2, 1).\nThe vector (1, 0) has eigenvalue 2.\nThe vector (0, 1) has eigenvalue 1.\nThese independent directions form a basis for the plane."
             (body as NSString).draw(in: NSRect(x: 54, y: 470, width: 500, height: 158), withAttributes: [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.darkGray])
             for i in 0...10 {
                 let offset = CGFloat(i) * 31
@@ -709,7 +957,12 @@ struct StudyWorkspaceSmoke {
         precondition(!workspace.canvasBusy)
         let indexed = workspace.library.courses.filter { $0.canvasID != nil }
         precondition(indexed.count == 2 && indexed.allSatisfy { $0.documents.isEmpty && $0.catalogUpdatedAt != nil })
-        precondition(!CanvasFixtureProtocol.state.paths.contains { $0.contains("/pages/lecture") || $0.contains("/files/42") || $0.contains("storage.example") }, "Metadata indexing must not request individual content or files")
+        precondition(CanvasFixtureProtocol.state.paths.contains("/api/v1/courses/11/pages/lecture"),
+            "Catalog discovery must crawl page links")
+        precondition(!CanvasFixtureProtocol.state.paths.contains("/api/v1/courses/11/files/42"),
+            "A module-only file already in the catalog should resolve download metadata only when opened")
+        precondition(!CanvasFixtureProtocol.state.paths.contains { $0.contains("storage.example") },
+            "Catalog discovery must not download file bodies")
         let algebra = try unwrap(indexed.first { $0.canvasID == 11 })
         workspace.toggleFavorite(algebra.id)
         workspace.selectCourse(algebra.id)
@@ -731,7 +984,8 @@ struct StudyWorkspaceSmoke {
         precondition(workspace.course?.documents.count == 3)
         precondition(workspace.course?.documents.contains { $0.kind == .pdf } == true)
         precondition(workspace.course?.documents.first { $0.sourceKey == page.id }?.id == pageID)
-        precondition(!CanvasFixtureProtocol.state.paths.contains("/api/v1/courses/11/pages/lecture"), "Unchanged saved documents should be reused during bulk download")
+        precondition(CanvasFixtureProtocol.state.paths.filter { $0 == "/api/v1/courses/11/pages/lecture" }.count == 1,
+            "Catalog discovery checks page links once; unchanged saved pages must not be downloaded again")
         workspace.loadCanvasCourses(clientOverride: client)
         for _ in 0..<500 where workspace.canvasBusy { try await Task.sleep(for: .milliseconds(20)) }
         precondition(workspace.library.courses.filter { $0.canvasID == 11 }.count == 1)
@@ -866,6 +1120,12 @@ final class CanvasFixtureProtocol: URLProtocol, @unchecked Sendable {
             case "/api/v1/courses/11/pages/lecture": body = "{\"title\":\"Lecture\",\"body\":\"<p>Eigenvectors</p>\",\"updated_at\":\"v1\"}"
             case "/api/v1/courses/11/files": body = "{}"; status = 403
             case "/api/v1/courses/11/assignments": body = "[]"
+            case "/api/v1/courses/11/folders", "/api/v1/courses/12/folders": body = "[]"
+            case "/api/v1/courses/11/discussion_topics", "/api/v1/courses/12/discussion_topics":
+                precondition(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains {
+                    $0.name == "only_announcements" && $0.value == "true"
+                } == true)
+                body = "[]"
             case "/api/v1/courses/11/modules": body = "[{\"id\":5,\"items_count\":1}]"
             case "/api/v1/courses/11/modules/5/items": body = "[{\"type\":\"File\",\"content_id\":42}]"
             case "/api/v1/courses/11/files/42": body = "{\"id\":42,\"display_name\":\"Notes\",\"filename\":\"notes.pdf\",\"url\":\"https://storage.example.org/file.pdf\"}"

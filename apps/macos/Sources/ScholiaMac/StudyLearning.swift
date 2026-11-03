@@ -151,7 +151,7 @@ struct LearningState: Sendable {
         guard event.schema == 1 else { throw LearningError.invalid("Learning history needs a newer Scholia version.") }
         if c.action == "create" {
             guard let session = event.session, sessions[session.id] == nil, let questions = event.questions,
-                !questions.isEmpty, questions.count <= 5, session.questionIDs == questions.map(\.id),
+                !questions.isEmpty, questions.count <= 12, session.questionIDs == questions.map(\.id),
                 Set(questions.map(\.id)).count == questions.count,
                 questions.allSatisfy({ self.questions[$0.id] == nil && $0.source.courseID == session.courseID })
             else {

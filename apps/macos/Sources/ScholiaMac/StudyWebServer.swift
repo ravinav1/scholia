@@ -1,5 +1,6 @@
 @preconcurrency import AppKit
 import Foundation
+import Combine
 @preconcurrency import Network
 
 /// The browser is another view of the native workspace, with the same credentials,
@@ -11,20 +12,34 @@ final class StudyWebServer {
     private let assets: URL
     private let sendQuestion: (() -> Void)?
     private let practiceProvider: (ProviderConfiguration, StudyCompletion)?
+    private let examRecommendationProvider: (ProviderConfiguration, StudyCompletion)?
     private let token = UUID().uuidString + UUID().uuidString
     private var listener: NWListener?
     private var pendingOpen = false
+    private var stateRevision: UInt64 = 0
+    private var cachedState: (revision: UInt64, expires: Date, response: StudyHTTPResponse)?
+    private var pendingState: (revision: UInt64, task: Task<StudyHTTPResponse, Error>)?
+    private var stateObservers: [AnyCancellable] = []
+    private var nextBackgroundRefresh = Date.distantPast
+    private var materialCache: StudyMaterialListCache { workspace.materialListCache }
     private(set) var address: URL?
 
     init(
         app: AppModel, workspace: StudyWorkspaceModel, assets: URL? = nil,
-        practiceProvider: (ProviderConfiguration, StudyCompletion)? = nil, sendQuestion: (() -> Void)? = nil
+        practiceProvider: (ProviderConfiguration, StudyCompletion)? = nil, sendQuestion: (() -> Void)? = nil,
+        examRecommendationProvider: (ProviderConfiguration, StudyCompletion)? = nil
     ) {
         self.app = app
         self.workspace = workspace
         self.sendQuestion = sendQuestion
         self.practiceProvider = practiceProvider
+        self.examRecommendationProvider = examRecommendationProvider
         self.assets = assets ?? Bundle.main.resourceURL!.appendingPathComponent("StudyWeb")
+        // Publishers invalidate before their mutation. Snapshot capture itself
+        // never suspends on the main actor, so each encoded value is coherent.
+        stateObservers = [workspace.objectWillChange, app.objectWillChange,
+            workspace.learning.objectWillChange, workspace.composerDraft.objectWillChange]
+            .map { publisher in publisher.sink { [weak self] _ in self?.invalidateState() } }
     }
 
     func open() {
@@ -72,8 +87,9 @@ final class StudyWebServer {
                             return
                         }
                         let response = await self.respond(request)
+                        let bytes = await Task.detached { response.serialized() }.value
                         connection.send(
-                            content: response.serialized(), completion: .contentProcessed { _ in connection.cancel() })
+                            content: bytes, completion: .contentProcessed { _ in connection.cancel() })
                     }
                 }
                 reader.start()
@@ -101,36 +117,63 @@ final class StudyWebServer {
                 return .error(403, "Reopen this website from Scholia")
             }
             do {
-                if path == "/api/state", request.method == "GET" { return try state() }
+                if path == "/api/state", request.method == "GET" {
+                    return try await state(ifNoneMatch: request.headers["if-none-match"])
+                }
+                if path == "/api/search", request.method == "GET" {
+                    let params = URLComponents(string: request.path)?.queryItems ?? []
+                    func value(_ name: String) -> String { params.first { $0.name == name }?.value ?? "" }
+                    let result = try await workspace.fileSearch.search(courses: workspace.library.courses,
+                        store: workspace.store, query: value("q"), courseID: value("courseID"),
+                        mode: value("mode").isEmpty ? "all" : value("mode"))
+                    return StudyHTTPResponse(data: try JSONEncoder().encode(result))
+                }
                 if path == "/api/learning", request.method == "GET" {
                     return StudyHTTPResponse(
                         data: try JSONEncoder().encode(workspace.learning.view(library: workspace.library)))
+                }
+                if path == "/api/exam-recommendation", request.method == "POST" {
+                    guard request.headers["content-type"]?.hasPrefix("application/json") == true,
+                        request.body.count <= 500_000 else { return .error(400, "Use a bounded JSON request") }
+                    let input = try JSONDecoder().decode(StudyExamRecommendationRequest.self, from: request.body)
+                    let result = try await workspace.recommendExams(input, using: app,
+                        configuration: examRecommendationProvider?.0, complete: examRecommendationProvider?.1)
+                    return StudyHTTPResponse(data: try JSONEncoder().encode(result))
                 }
                 if path.hasPrefix("/api/edit/"), request.method == "GET" {
                     guard let id = UUID(uuidString: String(path.dropFirst("/api/edit/".count))),
                         let document = workspace.library.courses.flatMap(\.documents).first(where: { $0.id == id })
                     else { return .error(404, "Document not found") }
                     let store = workspace.store
-                    let draft = try await Task.detached { try StudyDocumentEditing.read(document, store: store) }.value
-                    return StudyHTTPResponse(data: try JSONEncoder().encode(draft))
+                    return try await Task.detached {
+                        let draft = try StudyDocumentEditing.read(document, store: store)
+                        return StudyHTTPResponse(data: try JSONEncoder().encode(draft))
+                    }.value
                 }
                 if path.hasPrefix("/api/index/"), request.method == "GET" {
                     guard let id = UUID(uuidString: String(path.dropFirst("/api/index/".count))),
                         let document = workspace.library.courses.flatMap(\.documents).first(where: { $0.id == id })
                     else { return .error(404, "Document not found") }
-                    return StudyHTTPResponse(data: try JSONEncoder().encode(workspace.store.index(for: document)))
+                    let store = workspace.store
+                    return try await Task.detached {
+                        StudyHTTPResponse(data: try JSONEncoder().encode(store.index(for: document)))
+                    }.value
                 }
                 if path.hasPrefix("/api/image/"), request.method == "GET" {
                     let parts = path.dropFirst("/api/image/".count).split(separator: "/").map(String.init)
                     guard parts.count == 2, let id = UUID(uuidString: parts[0]),
                         let document = workspace.library.courses.flatMap(\.documents).first(where: { $0.id == id }),
-                        let index = try? workspace.store.index(for: document),
-                        index.pages.contains(where: { ($0.images ?? []).contains(parts[1]) }),
                         parts[1] == URL(fileURLWithPath: parts[1]).lastPathComponent
                     else { return .error(404, "Image not found") }
-                    return StudyHTTPResponse(
-                        data: try Data(contentsOf: workspace.store.directory(for: id).appendingPathComponent(parts[1])),
-                        type: "image/jpeg")
+                    let store = workspace.store
+                    return try await Task.detached {
+                        guard let index = try? store.index(for: document),
+                            index.pages.contains(where: { ($0.images ?? []).contains(parts[1]) })
+                        else { return StudyHTTPResponse.error(404, "Image not found") }
+                        return StudyHTTPResponse(
+                            data: try Data(contentsOf: store.directory(for: id).appendingPathComponent(parts[1])),
+                            type: "image/jpeg")
+                    }.value
                 }
                 if path.hasPrefix("/api/document/"), request.method == "GET" {
                     guard let id = UUID(uuidString: String(path.dropFirst("/api/document/".count))),
@@ -155,11 +198,12 @@ final class StudyWebServer {
                 let command = try await Task.detached { try JSONDecoder().decode(StudyWebCommand.self, from: raw) }
                     .value
                 try await act(command)
+                invalidateState()
                 if path == "/api/learning" {
                     return StudyHTTPResponse(
                         data: try JSONEncoder().encode(workspace.learning.view(library: workspace.library)))
                 }
-                return try state()
+                return try await state()
             } catch { return .error(400, error.localizedDescription) }
         }
         guard request.method == "GET", let decoded = path.removingPercentEncoding, !decoded.contains(".."),
@@ -171,6 +215,29 @@ final class StudyWebServer {
             return .error(404, "Not found")
         }
         do {
+            let types = [
+                "html": "text/html; charset=utf-8", "js": "text/javascript", "mjs": "text/javascript",
+                "css": "text/css", "svg": "image/svg+xml", "png": "image/png", "gif": "image/gif",
+                "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
+            ]
+            let type = types[file.pathExtension] ?? "application/octet-stream"
+            if name != "index.html" {
+                return try await Task.detached {
+                    let info = try FileManager.default.attributesOfItem(atPath: file.path)
+                    guard info[.type] as? FileAttributeType == .typeRegular else {
+                        return StudyHTTPResponse.error(404, "Not found")
+                    }
+                    let modified = (info[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                    let size = (info[.size] as? NSNumber)?.uint64Value ?? 0
+                    let inode = (info[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0
+                    let etag = "W/\"\(size)-\(modified)-\(inode)\""
+                    var response = StudyHTTPResponse(data: Data(), type: type,
+                        headers: ["Cache-Control": "private, no-cache", "ETag": etag])
+                    response = response.revalidated(ifNoneMatch: request.headers["if-none-match"])
+                    if response.status != 304 { response.data = try Data(contentsOf: file) }
+                    return response
+                }.value
+            }
             var data = try await Task.detached { try Data(contentsOf: file) }.value
             if name == "index.html" {
                 data = Data(
@@ -178,16 +245,34 @@ final class StudyWebServer {
                         of: "__SCHOLIA_TOKEN__", with: token
                     ).utf8)
             }
-            let types = [
-                "html": "text/html; charset=utf-8", "js": "text/javascript", "mjs": "text/javascript",
-                "css": "text/css", "svg": "image/svg+xml", "png": "image/png", "gif": "image/gif",
-                "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
-            ]
-            return StudyHTTPResponse(data: data, type: types[file.pathExtension] ?? "application/octet-stream")
+            return StudyHTTPResponse(data: data, type: type)
         } catch { return .error(404, "Not found") }
     }
 
-    private func state() throws -> StudyHTTPResponse {
+    private func invalidateState() {
+        stateRevision &+= 1
+        cachedState = nil
+    }
+
+    private func state(ifNoneMatch: String? = nil) async throws -> StudyHTTPResponse {
+        let now = Date()
+        if now >= nextBackgroundRefresh {
+            nextBackgroundRefresh = now.addingTimeInterval(30)
+            app.refreshModelCatalogs()
+            // Browser-only use must refresh even when the native window is closed.
+            Task { await workspace.refreshMathWikiIfNeeded() }
+            Task {
+                await workspace.refreshCanvasAssignmentsIfNeeded()
+                await workspace.refreshCanvasContentIfNeeded()
+            }
+        }
+        if let cachedState, cachedState.revision == stateRevision, cachedState.expires > now {
+            return cachedState.response.revalidated(ifNoneMatch: ifNoneMatch)
+        }
+        if let pendingState, pendingState.revision == stateRevision {
+            return try await pendingState.task.value.revalidated(ifNoneMatch: ifNoneMatch)
+        }
+        let revision = stateRevision
         // Do not serialize settings, provider secrets, cookies, tokens, or inactive chat bodies.
         var library = workspace.library
         for ci in library.courses.indices {
@@ -197,36 +282,68 @@ final class StudyWebServer {
                 library.courses[ci].threads[ti].sources = [:]
                 library.courses[ci].threads[ti].draft = ""
                 library.courses[ci].threads[ti].draftImage = nil
+                library.courses[ci].threads[ti].draftAttachments = nil
             }
         }
         let models = ProviderCatalog.providers.flatMap { provider in
-            app.verifiedModels(for: provider).map {
-                StudyWebModel(id: $0.id, label: $0.label, providerID: provider.id, provider: provider.name)
+            app.verifiedModels(for: provider).map { definition in
+                StudyWebModel(id: definition.id, label: definition.label, providerID: provider.id, provider: provider.name,
+                    reasoningEfforts: definition.reasoningEfforts, defaultReasoningEffort: definition.defaultReasoningEffort,
+                    lastUsedAt: app.settings.recentModels.first { recent in
+                        recent.providerID == provider.id && recent.modelID == definition.id
+                    }?.lastUsedAt.timeIntervalSince1970)
             }
         }
-        let data = try JSONEncoder().encode(
-            StudyWebState(
+        let materialGroups = workspace.course.map { materialCache.groups(for: $0) } ?? []
+        let snapshot = StudyWebState(
                 library: library, showingLibrary: workspace.isShowingLibrary,
                 semesters: workspace.semesterGroups, selectedSemesterID: workspace.selectedSemesterID,
-                materialGroups: workspace.course.map { StudyMaterialOrganizer.groups(for: $0) } ?? [],
-                materialFiles: workspace.course.map { StudyMaterialOrganizer.files(for: $0) } ?? [],
+                materialGroups: materialGroups,
+                materialFiles: workspace.course.map { materialCache.files(for: $0) } ?? [],
                 messages: workspace.messages, sources: workspace.thread?.sources ?? [:], page: workspace.currentPage,
                 pageText: workspace.currentPageText, draft: workspace.draft, draftImage: workspace.draftImage,
-                mode: workspace.mode.rawValue, editing: workspace.editingMessageID, models: models,
+                draftFiles: workspace.draftAttachments.map(StudyWebAttachment.init),
+                mode: workspace.mode.rawValue, language: app.settings.language.code,
+                entirePDF: workspace.document != nil && workspace.includeEntirePDF,
+                editing: workspace.editingMessageID, models: models,
                 providerID: app.activeProvider.id,
                 modelID: app.settings.models[app.activeProvider.id] ?? app.activeProvider.defaultModel,
+                reasoningEffort: app.activeStudyReasoningEffort,
+                studyModelMode: app.activeStudyModelMode.rawValue,
                 canSend: workspace.canSend, streaming: workspace.isStreaming,
+                answerStartedAt: workspace.answerStartedAt?.timeIntervalSince1970,
                 busy: workspace.canvasBusy || workspace.isImporting,
                 loadingDocument: workspace.document != nil && workspace.documentIndex == nil && workspace.error == nil,
                 status: workspace.activity ?? workspace.canvasStatus, warnings: workspace.canvasWarnings,
+                sync: workspace.syncActivity,
                 error: workspace.error,
-                context: workspace.contextSummary, includeCourse: workspace.includeCourseContext,
+                context: workspace.contextSummary, contextScope: workspace.conversationScope,
+                workspaceMemory: workspace.workspaceMemory,
+                includeCourse: workspace.includeCourseContext,
+                automaticContextEnabled: workspace.automaticContextEnabled,
                 assignmentText: workspace.assignmentText, assignmentPDFs: workspace.assignmentPDFs,
                 assignmentFiles: workspace.assignmentFiles, assignmentFileNotices: workspace.assignmentFileNotices,
                 assignmentNotice: workspace.assignmentNotice,
+                assignmentPreparing: workspace.assignmentPreparing, assignmentPreparingFileID: workspace.assignmentPreparingFileID,
                 draftOwner: workspace.draftOwner, learningRevision: workspace.learning.state.sequence,
-                reviewDue: workspace.learning.state.due().count))
-        return StudyHTTPResponse(data: data)
+                reviewDue: workspace.learning.state.due().count,
+                canvasConnectionStatus: workspace.canvasConnectionStatus,
+                canvasChecking: workspace.canvasChecking,
+                assignmentRefreshBusy: workspace.assignmentRefreshBusy)
+        // Large catalogs are value snapshots. Encoding and hashing do not need
+        // the main actor and must not compete with native scrolling or typing.
+        let task = Task.detached(priority: .userInitiated) {
+            let data = try JSONEncoder().encode(snapshot)
+            return StudyHTTPResponse(data: data, headers: ["ETag": "\"\(StudyDocumentEditing.revision(data))\""])
+        }
+        pendingState = (revision, task)
+        defer { if pendingState?.revision == revision { pendingState = nil } }
+        let response = try await task.value
+        if stateRevision == revision {
+            // Time-based review counts still refresh even without a model event.
+            cachedState = (revision, now.addingTimeInterval(30), response)
+        }
+        return response.revalidated(ifNoneMatch: ifNoneMatch)
     }
 
     private func act(_ command: StudyWebCommand) async throws {
@@ -237,16 +354,27 @@ final class StudyWebServer {
             return id
         }
         switch command.action {
+        case "studentweb":
+            workspace.studentwebImportRequested = true
+            workspace.examPlannerPresented = true
+            app.openStudyWorkspace()
+        case "examPlan":
+            guard let exams = command.exams, let base = command.baseExams else {
+                throw StudyError.message("Missing exam plan or original plan. Reopen the planner before saving.")
+            }
+            try workspace.replaceExamPlan(exams, base: base)
         case "practiceGenerate":
             try workspace.validateDraftOwner(command.owner)
             if let text = command.selection { workspace.selectedText = String(text.prefix(16_000)) }
             if let provider = practiceProvider {
                 workspace.preparePractice(
                     count: command.count ?? 3, scope: command.text ?? "", openBook: command.enabled ?? false,
-                    configuration: provider.0, complete: provider.1)
+                    configuration: provider.0, sourceScope: command.sourceScope ?? "reading",
+                    style: command.practiceStyle ?? "concepts", complete: provider.1)
             } else {
                 workspace.startPractice(
-                    using: app, count: command.count ?? 3, scope: command.text ?? "", openBook: command.enabled ?? false
+                    using: app, count: command.count ?? 3, scope: command.text ?? "", openBook: command.enabled ?? false,
+                    sourceScope: command.sourceScope ?? "reading", style: command.practiceStyle ?? "concepts"
                 )
             }
         case "practice":
@@ -259,6 +387,7 @@ final class StudyWebServer {
             else { throw StudyError.message("Open the document's course before saving changes.") }
             try await workspace.saveDocumentEdits(draft)
         case "library": workspace.showCourseLibrary()
+        case "assignments": workspace.showAssignments()
         case "libraryView":
             guard let value = command.id, let mode = StudyCourseLibraryViewMode(rawValue: value) else {
                 throw StudyError.message("Unknown course view")
@@ -275,6 +404,7 @@ final class StudyWebServer {
         case "create": workspace.createCourse(name: command.name ?? "", code: command.code ?? "")
         case "favorite": workspace.toggleFavorite(try uuid(command.id))
         case "materials": workspace.showCourseMaterials()
+        case "askCourse": workspace.askAboutCourse()
         case "document":
             let id = try uuid(command.id)
             guard workspace.course?.documents.contains(where: { $0.id == id }) == true else {
@@ -327,7 +457,26 @@ final class StudyWebServer {
             }
             workspace.draft = String((command.text ?? "").prefix(200_000))
             workspace.selectedText = String((command.selection ?? "").prefix(16_000))
-            if let mode = command.mode.flatMap(StudyTeachingMode.init(rawValue:)) { workspace.mode = mode }
+            if let mode = command.mode.flatMap(StudyTeachingMode.migrated) { workspace.mode = mode }
+            if let entirePDF = command.entirePDF { workspace.includeEntirePDF = entirePDF }
+            if let automaticContext = command.automaticContextEnabled { workspace.automaticContextEnabled = automaticContext }
+            if let files = command.files {
+                guard files.count <= MessageAttachmentIngestion.maximumAttachmentsPerMessage else {
+                    throw StudyError.message("Too many attachments in this question.")
+                }
+                let existingFiles = workspace.draftAttachments
+                let ownerBeforeExtraction = workspace.draftOwner
+                let attachments = try await Task.detached(priority: .userInitiated) {
+                    try files.map { wire -> MessageAttachment in
+                        let existing = existingFiles.first(where: {
+                            $0.id.uuidString.lowercased() == wire.id?.lowercased()
+                        })
+                        return try wire.attachment(existing: existing)
+                    }
+                }.value
+                try workspace.validateDraftOwner(ownerBeforeExtraction)
+                workspace.draftAttachments = attachments
+            }
             if let encoded = command.image {
                 guard encoded.count < 34_000_000, let data = Data(base64Encoded: encoded),
                     let image = NSImage(data: data)
@@ -344,8 +493,33 @@ final class StudyWebServer {
                 if let sendQuestion { sendQuestion() } else { workspace.send(using: app) }
             }
         case "stop": workspace.stopAnswer()
-        case "context": workspace.includeCourseContext = command.enabled ?? true
+        case "language":
+            guard let language = command.text.flatMap(AnswerLanguage.init(code:)) else {
+                throw StudyError.message("Unknown response language.")
+            }
+            app.settings.language = language
+            app.persistSettings()
+        case "workspaceMemory":
+            guard let courseID = command.courseID.flatMap(UUID.init(uuidString:)) else { throw StudyError.message("Workspace not found.") }
+            try workspace.saveWorkspaceMemory(courseID: courseID, assignmentID: command.assignmentID,
+                notes: command.text ?? "", documentIDs: command.documentIDs ?? [])
+        case "context":
+            workspace.includeCourseContext = command.enabled ?? true
+            workspace.saveDraft()
+        case "automaticContext":
+            workspace.automaticContextEnabled = command.enabled ?? true
+            workspace.saveDraft()
         case "model": app.selectStudyModel(command.id ?? "", providerID: command.providerID ?? "")
+        case "studyModelMode":
+            guard let mode = command.text.flatMap(StudyModelMode.init(rawValue:)) else {
+                throw StudyError.message("Unknown study model mode.")
+            }
+            app.selectStudyModelMode(mode)
+        case "reasoning":
+            guard command.providerID == app.activeProvider.id, command.id == app.activeModel else {
+                throw StudyError.message("The model changed. Select a reasoning mode for the current model.")
+            }
+            try app.selectStudyReasoningEffort(command.text ?? "")
         case "index", "downloadAll":
             if let id = command.id {
                 workspace.syncCanvasCourses(courseIDs: [try uuid(id)], downloadAll: command.action == "downloadAll")
@@ -356,12 +530,20 @@ final class StudyWebServer {
             if let origin = command.origin { workspace.canvasAddress = try CanvasAddress.origin(origin).absoluteString }
             workspace.loadCanvasCourses(token: command.token, downloadAll: command.enabled ?? false)
         case "signIn":
-            app.openStudyWorkspace()
-            workspace.canvasPresented = true
-            workspace.canvasSigningIn = true
+            if let origin = command.origin { workspace.canvasAddress = try CanvasAddress.origin(origin).absoluteString }
+            await workspace.beginCanvasSignIn()
+            if workspace.canvasSigningIn {
+                app.openStudyWorkspace()
+                workspace.canvasPresented = true
+            }
+        case "refreshAssignments":
+            Task { await workspace.refreshCanvasAssignmentsIfNeeded(force: true) }
         case "cancelSync":
             workspace.cancelCanvas()
             workspace.cancelImport()
+        case "stopPreloading": workspace.preloadFrequentCourses = false
+        case "reconnectSync": await workspace.retryCanvasSignIn()
+        case "clearSyncStatus": workspace.canvasStatus = nil
         case "native": app.openStudyWorkspace()
         case "quickChat": app.showQuickAsk()
         case "clearError": workspace.error = nil
@@ -386,9 +568,12 @@ private struct StudyWebCommand: Decodable, Sendable {
     var selection: String?
     var page: Int?
     var mode: String?
+    var entirePDF: Bool?
     var providerID: String?
     var image: String?
     var clearImage: Bool?
+    var files: [StudyWebAttachment]?
+    var automaticContextEnabled: Bool?
     var origin: String?
     var token: String?
     var enabled: Bool?
@@ -396,17 +581,25 @@ private struct StudyWebCommand: Decodable, Sendable {
     var edit: StudyEditDraft?
     var courseID: String?
     var assignmentID: String?
+    var documentIDs: [UUID]?
     var owner: StudyDraftOwner?
     var learning: LearningCommand?
     var count: Int?
+    var sourceScope: String?
+    var practiceStyle: String?
+    var exams: [StudyExam]?
+    var baseExams: [StudyExam]?
 }
-private struct StudyWebModel: Encodable {
+private struct StudyWebModel: Encodable, Sendable {
     var id: String
     var label: String
     var providerID: String
     var provider: String
+    var reasoningEfforts: [String]
+    var defaultReasoningEffort: String?
+    var lastUsedAt: Double?
 }
-private struct StudyWebState: Encodable {
+private struct StudyWebState: Encodable, Sendable {
     var library: StudyLibrary
     var showingLibrary: Bool
     var semesters: [StudySemesterGroup]
@@ -419,28 +612,43 @@ private struct StudyWebState: Encodable {
     var pageText: String
     var draft: String
     var draftImage: Data?
+    var draftFiles: [StudyWebAttachment]
     var mode: String
+    var language: String
+    var entirePDF: Bool
     var editing: UUID?
     var models: [StudyWebModel]
     var providerID: String
     var modelID: String
+    var reasoningEffort: String?
+    var studyModelMode: String
     var canSend: Bool
     var streaming: Bool
+    var answerStartedAt: Double?
     var busy: Bool
     var loadingDocument: Bool
     var status: String?
     var warnings: [String]
+    var sync: StudySyncActivity
     var error: String?
     var context: String
+    var contextScope: String
+    var workspaceMemory: StudyAIMemoryState
     var includeCourse: Bool
+    var automaticContextEnabled: Bool
     var assignmentText: String
     var assignmentPDFs: [CanvasMaterialReference]
     var assignmentFiles: [CanvasMaterialReference]
     var assignmentFileNotices: [String: String]
     var assignmentNotice: String?
+    var assignmentPreparing: Bool
+    var assignmentPreparingFileID: String?
     var draftOwner: StudyDraftOwner
     var learningRevision: Int
     var reviewDue: Int
+    var canvasConnectionStatus: String
+    var canvasChecking: Bool
+    var assignmentRefreshBusy: Bool
 }
 
 struct StudyHTTPRequest: Sendable {
@@ -453,14 +661,33 @@ struct StudyHTTPResponse: Sendable {
     var status = 200
     var data: Data
     var type = "application/json"
+    var headers: [String: String] = [:]
     static func error(_ status: Int, _ message: String) -> Self {
         Self(status: status, data: (try? JSONSerialization.data(withJSONObject: ["error": message])) ?? Data())
+    }
+    func revalidated(ifNoneMatch: String?) -> Self {
+        guard status == 200, let etag = headers["ETag"], let ifNoneMatch else { return self }
+        func weakValue(_ value: String) -> String { value.hasPrefix("W/") ? String(value.dropFirst(2)) : value }
+        let matches = ifNoneMatch.split(separator: ",").contains { part in
+            let value = part.trimmingCharacters(in: .whitespaces)
+            return value == "*" || weakValue(value) == weakValue(etag)
+        }
+        guard matches else { return self }
+        var response = self
+        response.status = 304
+        response.data = Data()
+        return response
     }
     func serialized() -> Data {
         let policy =
             "default-src 'self'; script-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        var fields = headers
+        fields["Cache-Control"] = fields["Cache-Control"] ?? "no-store"
+        let extra = fields.map { "\($0.key): \($0.value)\r\n" }.joined()
+        let reason = status == 200 ? "OK" : status == 304 ? "Not Modified" : "Error"
+        let length = status == 304 ? "" : "Content-Length: \(data.count)\r\n"
         let head =
-            "HTTP/1.1 \(status) \(status == 200 ? "OK" : "Error")\r\nContent-Type: \(type)\r\nContent-Length: \(data.count)\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: \(policy)\r\nConnection: close\r\n\r\n"
+            "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\n\(length)\(extra)X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: \(policy)\r\nConnection: close\r\n\r\n"
         return Data(head.utf8) + data
     }
 }

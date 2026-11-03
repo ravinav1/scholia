@@ -5,9 +5,11 @@ import { sendRuntimeMessage as message } from './runtime-message.js';
 import { formatUsageRemaining } from './usage.js';
 import { chatGptMemoryTextIsUsable } from './chatgpt-web.js';
 import { copyText as writeClipboardText } from './clipboard.js';
+import { loadExamWorkspaceUrl, openExamPlanner, saveExamWorkspaceUrl } from './exam-planner-launch.js';
 
 const elements = Object.fromEntries([
   'settings-form', 'provider', 'language', 'explain-on-selection', 'include-context',
+  'exam-workspace-url', 'exam-workspace-save', 'exam-workspace-status', 'open-exam-planner',
   'open-shortcuts', 'capture-region-shortcut', 'quick-chat-shortcut',
   'provider-name', 'vision-badge', 'model', 'model-list', 'endpoint', 'key-row',
   'api-key', 'key-hint', 'local-note', 'reveal-key', 'test', 'status',
@@ -515,6 +517,22 @@ elements['reveal-key'].addEventListener('click', () => {
   elements['api-key'].type = reveal ? 'text' : 'password';
   elements['reveal-key'].textContent = reveal ? 'Hide' : 'Show';
 });
+async function saveExamWorkspace() {
+  const url = await saveExamWorkspaceUrl(elements['exam-workspace-url'].value);
+  elements['exam-workspace-url'].value = url;
+  elements['exam-workspace-status'].textContent = 'Website address saved.';
+  return url;
+}
+elements['exam-workspace-save'].addEventListener('click', () => {
+  saveExamWorkspace().catch((error) => { elements['exam-workspace-status'].textContent = error.message; });
+});
+elements['open-exam-planner'].addEventListener('click', () => {
+  saveExamWorkspace().then(openExamPlanner)
+    .catch((error) => { elements['exam-workspace-status'].textContent = error.message; });
+});
+loadExamWorkspaceUrl().then((url) => { elements['exam-workspace-url'].value = url; })
+  .catch((error) => { elements['exam-workspace-status'].textContent = error.message; });
+
 elements['open-shortcuts'].addEventListener('click', () => {
   chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
 });

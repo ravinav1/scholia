@@ -12,9 +12,10 @@ import {
   addPdfSemanticPage,
   createPdfSemanticIndex,
   finalizePdfSemanticIndex,
-  findPdfMatches,
+  findPdfMatchesAsync,
   findPdfSemanticMatches,
-  pdfMatchItemSegments
+  pdfMatchItemSegments,
+  pdfSearchTextContent
 } from './pdf-search.js';
 import {
   pdfIndexCacheKey,
@@ -27,6 +28,7 @@ import {
 } from './pdf-outline.js';
 import { isPdfKeyboardControl, pdfKeyboardAction } from './pdf-keyboard.js';
 import { mountPdfChat } from './pdf-chat.js';
+import { readEntirePdf } from '../../../packages/core/src/entire-pdf.js';
 import { normalizedChatId } from './chat-page.js';
 import {
   normalizePdfPageInput,
@@ -60,6 +62,10 @@ import {
 import { sendRuntimeMessage as message } from './runtime-message.js';
 import { pdfSourceStorageKey, pdfViewerSourceId } from './tab-context.js';
 import { pdfSelectionMetadata, pdfSelectionPages } from './pdf-selection-context.js';
+import { createPdfOcrReader, sparsePdfText } from './pdf-ocr.js';
+import { PDFDetailRenderer, pdfCanvasScale } from './pdf-render-quality.js';
+import { readPdfPosition, writePdfPosition } from './pdf-reading-position.js';
+import { copyText } from './clipboard.js';
 
 const BASE_SCALE = 1.2;
 const PDF_CSS_UNITS = 96 / 72;
@@ -68,9 +74,10 @@ const MAX_ZOOM = 2.5;
 const ZOOM_STEP = 0.15;
 const MAX_CANVAS_PIXELS = 16_000_000;
 const MAX_RENDERED_PAGES = 8;
+const MAX_RETAINED_CANVAS_PIXELS = 32_000_000;
 const PAGE_PLACEHOLDER_BATCH = 300;
 const PAGE_INDEX_CONCURRENCY = 2;
-const PAGE_RENDER_MARGIN = 1_800;
+const PAGE_RENDER_MARGIN = 800;
 const PDF_THEME_KEY = 'scholia.pdf-theme.v1';
 const PDF_PAGE_LAYOUT_KEY = 'scholia.pdf-page-layout.v1';
 const PDF_ZOOM_MODE_KEY = 'scholia.pdf-zoom-mode.v1';
@@ -83,17 +90,19 @@ async function automaticPdfMimeHandlingEnabled() {
 }
 const PDF_ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const elements = Object.fromEntries([
-  'document-title', 'source-url', 'document-activity', 'document-status', 'document-progress', 'page-count', 'page-number', 'page-total',
+  'document-title', 'source-actions', 'source-url', 'copy-source-url', 'document-activity', 'document-status', 'document-progress', 'page-count', 'page-number', 'page-total',
   'zoom-out', 'zoom-label', 'zoom-custom',
   'zoom-in', 'theme-toggle', 'view-toggle', 'pdf-view-menu', 'pdf-view-control', 'outline-toggle', 'pdf-outline', 'outline-status', 'outline-close',
   'outline-tree', 'reader-layout', 'search-toggle', 'pdf-search', 'search-input', 'search-count',
   'search-mode', 'search-previous', 'search-next', 'search-close', 'choose-file', 'download-pdf', 'print-pdf', 'open-native', 'open-chat', 'learning-toggle', 'pdf-chat', 'pdf-chat-close',
+  'send-entire-pdf',
   'pdf-chat-content', 'viewer', 'loading',
   'loading-detail', 'error', 'error-title', 'error-message', 'manual-pdf-form', 'pdf-address', 'open-address',
   'error-open-original', 'error-choose-file', 'pages', 'pdf-file', 'print-pages'
 ].map((id) => [id, document.getElementById(id)]));
 
 let source = null;
+let copySourceUrlTimer = null;
 let pdfjs = null;
 let pdf = null;
 let pdfDownloadFilename = 'document.pdf';
@@ -104,6 +113,8 @@ let pdfPageLayout = 'continuous';
 let zoomBeforeSpread = null;
 let spreadAutoZoom = null;
 let pageStates = [];
+let renderedPageStates = new Set();
+let spreadRows = [];
 let renderObserver = null;
 let pageVisibilityObserver = null;
 let visiblePageStates = new Set();
@@ -113,7 +124,7 @@ let pdfNavigationSequence = 0;
 let restoreReadingPosition = true;
 
 function savedPdfPageNumber(documentProxy) {
-  const saved = history.state?.scholiaPdfPosition;
+  const saved = readPdfPosition({ mimeHandled: !!activeMimeStreamInfo });
   if (!documentProxy.fingerprints?.[0] || saved?.fingerprint !== documentProxy.fingerprints[0]) return 0;
   const page = saved.pageNumber;
   return Number.isInteger(page) && page >= 1 && page <= documentProxy.numPages ? page : 0;
@@ -122,11 +133,9 @@ function savedPdfPageNumber(documentProxy) {
 function savePdfReadingPosition() {
   if (restoreReadingPosition || !currentPageState || !pdf?.fingerprints?.[0]) return;
   const position = { fingerprint: pdf.fingerprints[0], pageNumber: currentPageState.pageNumber };
-  const saved = history.state?.scholiaPdfPosition;
+  const saved = readPdfPosition({ mimeHandled: !!activeMimeStreamInfo });
   if (saved?.fingerprint === position.fingerprint && saved.pageNumber === position.pageNumber) return;
-  try {
-    history.replaceState({ ...history.state, scholiaPdfPosition: position }, '');
-  } catch {}
+  writePdfPosition(position, { mimeHandled: !!activeMimeStreamInfo });
 }
 let scrollFrame = null;
 let spreadResizeTimer = null;
@@ -142,14 +151,20 @@ let pdfLinkService = null;
 let optionalContentConfigPromise = null;
 let fieldObjectsPromise = Promise.resolve(null);
 let pdfSearchReady = false;
+let pdfBasicIndexReady = false;
+let pdfComprehensiveIndexReady = false;
 let pdfSemanticIndex = null;
 let semanticIndexingTask = null;
 let pdfReadyStatus = '';
+let pdfBackgroundStatus = null;
 let pdfSearchResults = [];
 let pdfSearchTruncated = false;
 let activePdfSearchIndex = -1;
 let pdfSearchTimer = null;
 let pdfSearchAction = 0;
+let pdfSearchController = null;
+let pdfSearchTask = null;
+let activePdfSearchHighlights = [];
 let pdfOutlineEntries = [];
 let activePdfOutline = null;
 let pdfOutlineTask = null;
@@ -162,6 +177,27 @@ let activeMimeStreamInfo = null;
 let metadataPromise;
 let resolveMetadata;
 let readyMetadata = null;
+let pdfOcrReader = null;
+let pdfOcrController = null;
+window.addEventListener('pagehide', () => pdfOcrController?.abort());
+
+const detailRenderer = new PDFDetailRenderer({
+  container: elements.viewer,
+  getVisibleBounds: () => ({
+    left: elements.viewer.getBoundingClientRect().left,
+    right: elements.viewer.getBoundingClientRect().right,
+    top: document.querySelector('.toolbar').getBoundingClientRect().bottom,
+    bottom: innerHeight
+  }),
+  getPages: () => !documentInteractive ? [] : [...new Set([...visiblePageStates, currentPageState].filter(Boolean))]
+    .filter((state) => state.renderedZoom === zoom)
+    .map((state) => ({
+      key: state.pageNumber, page: state.page, viewport: pageViewport(state),
+      canvas: state.surface.querySelector('canvas:not(.pdf-detail-canvas)'), host: state.surface,
+      renderOptions: { annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS, optionalContentConfigPromise }
+    }))
+});
+window.addEventListener('pagehide', () => detailRenderer.destroy(), { once: true });
 
 function resetMetadata() {
   readyMetadata = null;
@@ -172,8 +208,9 @@ function resetMetadata() {
 }
 
 globalThis.__scholiaGetPageMetadata = async (options = {}) => {
-  if (!options.forSelection || !pdf) return metadataPromise;
+  if (!options.forSelection || !pdf) return readyMetadata || metadataPromise;
   const documentProxy = pdf;
+  const ocrReader = pdfOcrReader;
   const generation = loadGeneration;
   let fallbackPage = currentPageState?.pageNumber || 1;
   if (options.rect) {
@@ -190,24 +227,27 @@ globalThis.__scholiaGetPageMetadata = async (options = {}) => {
     pageCount: documentProxy.numPages,
     selectedPages: pdfSelectionPages(options.range, fallbackPage),
     selection: options.selection,
+    fullContext: options.fullContext === true,
     pageTitle: document.title,
     url: source?.url || '',
     pageLanguage: readyMetadata?.pageLanguage || navigator.language,
     imageDataUrl: '',
     readPage: async (pageNumber) => {
       const state = pageStates[pageNumber - 1];
-      if (state?.contextText !== null && state?.contextText !== undefined) return state.contextText;
       const page = await documentProxy.getPage(pageNumber);
-      const content = state ? await pageTextContent(state, page) : await page.getTextContent();
-      return textContentToString(content.items);
+      const text = state?.contextText ?? textContentToString((state
+        ? await pageTextContent(state, page) : await page.getTextContent()).items);
+      // Explanations use the text available now; OCR continues independently.
+      return text;
     }
   });
   if (generation !== loadGeneration) throw new Error('The PDF changed while preparing the explanation. Select the passage again.');
-  return result;
+  return result === readyMetadata ? result : { ...result, ...ocrReader?.summary() };
 };
 resetMetadata();
 
 function setStatus(value, { state = 'idle', current, total, owner = 'document' } = {}) {
+  if (owner === 'background') pdfBackgroundStatus = { value, state, current, total };
   if (printController && owner !== 'print') return;
   elements['document-status'].textContent = value;
   elements['document-activity'].dataset.state = state;
@@ -264,6 +304,7 @@ async function setPdfChatOpen(open, { restoreFocus = false, chatId = '' } = {}) 
   const chat = elements['pdf-chat'];
   const savedChatId = normalizedChatId(chatId);
   chat.hidden = !shouldOpen;
+  if (!shouldOpen) pdfChatController?.then((controller) => controller.stop?.()).catch(() => {});
   document.body.classList.toggle('is-pdf-chat-open', shouldOpen);
   elements['open-chat'].setAttribute('aria-expanded', String(shouldOpen));
   elements['open-chat'].textContent = shouldOpen ? 'Hide PDF chat' : 'Chat with PDF';
@@ -290,6 +331,36 @@ async function setPdfChatOpen(open, { restoreFocus = false, chatId = '' } = {}) 
 
 function openPdfChat() {
   setPdfChatOpen(elements['pdf-chat'].hidden);
+}
+
+async function sendEntirePDF() {
+  if (!pdf || elements['send-entire-pdf'].disabled) return;
+  const documentProxy = pdf, generation = loadGeneration, ocr = pdfOcrReader;
+  const sourceSnapshot = { ...source };
+  elements['send-entire-pdf'].disabled = true;
+  try {
+    const full = await readEntirePdf({
+      title: document.title, pageCount: documentProxy.numPages, signal: pdfOcrController?.signal,
+      readPage: async (number) => {
+        if (generation !== loadGeneration) throw new Error('The PDF changed. Send the current PDF again.');
+        const page = await documentProxy.getPage(number);
+        const text = textContentToString((await page.getTextContent()).items);
+        return ocr ? ocr.readPage(page, text, number) : text;
+      },
+      onProgress: (page, total) => setStatus(`Reading entire PDF · ${page} of ${total} pages…`)
+    });
+    if (generation !== loadGeneration) return;
+    await setPdfChatOpen(true);
+    const controller = await pdfChatController;
+    await controller.sendEntirePDF({ ...sourceSnapshot, ...full,
+      viewerSourceId: sourceSnapshot.id || sourceSnapshot.viewerSourceId,
+      pageTitle: document.title, pageLanguage: readyMetadata?.pageLanguage, sourceKind: 'pdf' });
+    setStatus(full.summary);
+  } catch (error) {
+    if (generation === loadGeneration) setStatus(error.message, { state: 'warning' });
+  } finally {
+    if (generation === loadGeneration) elements['send-entire-pdf'].disabled = !documentInteractive;
+  }
 }
 
 function applyTheme(theme) {
@@ -602,6 +673,11 @@ function handleReaderKeyboard(event) {
 
 function showSourceUrl(value) {
   const url = String(value || '').trim();
+  const copyUrl = pdfMimeNavigationTarget(source?.pdfUrl);
+  clearTimeout(copySourceUrlTimer);
+  resetCopySourceUrl();
+  elements['source-actions'].hidden = !url && !copyUrl;
+  elements['copy-source-url'].hidden = !copyUrl;
   elements['source-url'].hidden = !url;
   elements['error-open-original'].hidden = !url;
   elements['source-url'].textContent = url;
@@ -609,11 +685,42 @@ function showSourceUrl(value) {
   elements['source-url'].setAttribute('aria-label', url ? `Open original address at ${url}` : 'Open original address');
 }
 
+function resetCopySourceUrl() {
+  const button = elements['copy-source-url'];
+  button.disabled = false;
+  button.textContent = 'Copy URL';
+  button.title = 'Copy original PDF URL';
+  button.setAttribute('aria-label', button.title);
+}
+
+async function copySourceUrl() {
+  const currentSource = source;
+  const url = pdfMimeNavigationTarget(currentSource?.pdfUrl);
+  const button = elements['copy-source-url'];
+  if (!url || button.disabled) return;
+  clearTimeout(copySourceUrlTimer);
+  button.disabled = true;
+  let copied = false;
+  try {
+    // Copy the original address, including signed query parameters and fragments.
+    // The visible source label is intentionally sanitized for display/context.
+    await copyText(url);
+    copied = true;
+  } catch {}
+  if (source !== currentSource) return;
+  button.disabled = false;
+  button.textContent = copied ? 'Copied!' : 'Copy failed';
+  button.title = copied ? 'Original PDF URL copied' : 'Could not copy the PDF URL. Try again.';
+  button.setAttribute('aria-label', button.title);
+  copySourceUrlTimer = setTimeout(resetCopySourceUrl, 2000);
+}
+
 function showLoading(value, statusOptions = { state: 'working' }) {
   elements['loading-detail'].textContent = value;
   elements.loading.hidden = false;
   elements.error.hidden = true;
   elements['open-chat'].disabled = true;
+  elements['send-entire-pdf'].disabled = true;
   setStatus(value, statusOptions);
 }
 
@@ -636,6 +743,7 @@ function showError(error) {
   elements['error-message'].textContent = error?.message || String(error);
   elements['open-native'].hidden = !source?.pdfUrl;
   elements['open-chat'].disabled = true;
+  elements['send-entire-pdf'].disabled = true;
   setStatus('Paste the PDF address again or choose the file', { state: 'error' });
 }
 
@@ -654,6 +762,7 @@ function showLocalFilePermission(record) {
   elements['error-choose-file'].textContent = 'Reopen file';
   elements['open-native'].hidden = true;
   elements['open-chat'].disabled = true;
+  elements['send-entire-pdf'].disabled = true;
   setStatus('Allow access to reopen the PDF from this computer', { state: 'warning' });
 }
 
@@ -668,6 +777,7 @@ function showManualOpen() {
   elements['error-message'].textContent = 'Paste a PDF address below or choose a file from this device.';
   elements['open-native'].hidden = true;
   elements['open-chat'].disabled = true;
+  elements['send-entire-pdf'].disabled = true;
   elements['document-title'].textContent = 'Open a PDF';
   showSourceUrl('');
   setStatus('Ready for a PDF address or file', { state: 'idle' });
@@ -687,23 +797,27 @@ async function printPdf() {
   cancelPdfPrint();
   const generation = loadGeneration;
   const documentProxy = pdf;
-  printController = new AbortController();
+  const controller = printController = new AbortController();
   elements['print-pdf'].disabled = true;
   elements['print-pdf'].setAttribute('aria-busy', 'true');
   let printFailed = false;
   try {
-    activePrint = await preparePdfPrint({
+    const prepared = await preparePdfPrint({
       pdfDocument: documentProxy,
       pdfjs,
       printContainer: elements['print-pages'],
-      signal: printController.signal,
+      signal: controller.signal,
       onProgress(current, total) {
         setStatus(`Preparing page ${Math.min(current + 1, total)} of ${total} for print…`, {
           state: 'working', current, total, owner: 'print'
         });
       }
     });
-    if (generation !== loadGeneration || documentProxy !== pdf) throw new DOMException('PDF changed.', 'AbortError');
+    if (generation !== loadGeneration || documentProxy !== pdf) {
+      prepared.destroy();
+      throw new DOMException('PDF changed.', 'AbortError');
+    }
+    activePrint = prepared;
     setStatus('Opening Chrome print preview…', {
       state: 'working', current: documentProxy.numPages, total: documentProxy.numPages, owner: 'print'
     });
@@ -711,17 +825,20 @@ async function printPdf() {
     window.print();
     await new Promise((resolve) => setTimeout(resolve, 20));
   } catch (error) {
-    if (error?.name !== 'AbortError') {
+    if (generation === loadGeneration && !controller.signal.aborted && error?.name !== 'AbortError') {
       printFailed = true;
       setStatus(`Could not print this PDF: ${error?.message || error}`, { state: 'warning', owner: 'print' });
     }
   } finally {
     const stillCurrent = generation === loadGeneration && documentProxy === pdf;
-    cancelPdfPrint();
-    elements['print-pdf'].removeAttribute('aria-busy');
-    elements['print-pdf'].disabled = !stillCurrent;
+    if (printController === controller) cancelPdfPrint();
+    if (stillCurrent) {
+      elements['print-pdf'].removeAttribute('aria-busy');
+      elements['print-pdf'].disabled = false;
+    }
     if (stillCurrent && !printFailed) {
-      setStatus(pdfReadyStatus || `${documentProxy.numPages} page${documentProxy.numPages === 1 ? '' : 's'} · ready`, { state: 'ready' });
+      if (pdfBackgroundStatus) setStatus(pdfBackgroundStatus.value, pdfBackgroundStatus);
+      else setStatus(pdfReadyStatus || `${documentProxy.numPages} page${documentProxy.numPages === 1 ? '' : 's'} · ready`, { state: 'ready' });
     }
   }
 }
@@ -1261,10 +1378,25 @@ function nextReaderTurn() {
   });
 }
 
-async function yieldToVisiblePages() {
+async function yieldToVisiblePages(generation = loadGeneration) {
   await nextReaderTurn();
-  for (let attempts = 0; activePageRenders > 0 && attempts < 6; attempts += 1) {
+  for (let attempts = 0; generation === loadGeneration && !document.hidden
+      && (printController || (activePageRenders > 0 && attempts < 6)); attempts += 1) {
     await nextReaderTurn();
+  }
+  // Timers still fire in background tabs. Stop between batches instead of
+  // competing with the website the user has switched to (including OCR).
+  const signal = pdfOcrController?.signal;
+  while (document.hidden && generation === loadGeneration && !signal?.aborted) {
+    await new Promise((resolve) => {
+      const finish = () => {
+        document.removeEventListener('visibilitychange', finish);
+        signal?.removeEventListener('abort', finish);
+        resolve();
+      };
+      document.addEventListener('visibilitychange', finish, { once: true });
+      signal?.addEventListener('abort', finish, { once: true });
+    });
   }
 }
 
@@ -1294,6 +1426,7 @@ function createPageState(pageNumber, total, defaultViewport, page = null) {
     rendering: null,
     renderError: null,
     renderedZoom: 0,
+    displayedZoom: 0,
     nearViewport: false,
     lastRenderedAt: 0,
     indexing: false,
@@ -1312,7 +1445,7 @@ function createPageState(pageNumber, total, defaultViewport, page = null) {
 
 function spreadRowForPage(pageNumber) {
   const index = pdfSpreadIndex(pageNumber);
-  let row = elements.pages.querySelector(`.pdf-spread[data-spread-index="${index}"]`);
+  let row = spreadRows[index];
   if (row) return row;
 
   row = document.createElement('div');
@@ -1320,9 +1453,10 @@ function spreadRowForPage(pageNumber) {
   row.dataset.spreadIndex = String(index);
   row.setAttribute('role', 'presentation');
 
-  const nextRow = [...elements.pages.querySelectorAll(':scope > .pdf-spread')]
-    .find((candidate) => Number(candidate.dataset.spreadIndex) > index);
-  elements.pages.insertBefore(row, nextRow || null);
+  // Placeholders are appended in page order. Keep direct references instead
+  // of repeatedly scanning every existing row while opening a long book.
+  spreadRows[index] = row;
+  elements.pages.append(row);
   return row;
 }
 
@@ -1341,13 +1475,16 @@ function cancelled(error) {
 function selectionTouchesPage(state) {
   const selection = window.getSelection?.();
   if (!selection || selection.isCollapsed) return false;
-  const node = selection.anchorNode;
-  const focus = selection.focusNode;
-  return state.surface.contains(node) || state.surface.contains(focus);
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    if (selection.getRangeAt(index).intersectsNode(state.surface)) return true;
+  }
+  return false;
 }
 
 function releaseRenderedPage(state) {
-  if (!state?.renderedZoom || state.rendering || state.indexing || selectionTouchesPage(state)) return false;
+  if (!state?.displayedZoom || state.rendering || state.indexing || selectionTouchesPage(state)) return false;
+  resetPageSearchHighlights(state);
+  detailRenderer.forget(state.pageNumber);
   try { state.renderTask?.cancel(); } catch {}
   try { state.textLayer?.cancel(); } catch {}
   state.page?.cleanup?.();
@@ -1358,6 +1495,9 @@ function releaseRenderedPage(state) {
   state.xfaLayer = null;
   state.annotationCanvasMap = null;
   state.renderedZoom = 0;
+  state.displayedZoom = 0;
+  renderedPageStates.delete(state);
+  for (const canvas of state.surface.querySelectorAll('canvas')) canvas.width = canvas.height = 0;
   state.surface.replaceChildren();
   state.surface.classList.add('is-loading');
   sizePage(state);
@@ -1365,15 +1505,19 @@ function releaseRenderedPage(state) {
 }
 
 function trimRenderedPages() {
-  const rendered = pageStates.filter((state) => state.renderedZoom && !state.rendering);
-  if (rendered.length <= MAX_RENDERED_PAGES) return;
+  const rendered = [...renderedPageStates].filter((state) => !state.rendering);
+  const pixels = (state) => [...state.surface.querySelectorAll('canvas')]
+    .reduce((total, canvas) => total + canvas.width * canvas.height, 0);
+  let retainedPixels = rendered.reduce((total, state) => total + pixels(state), 0);
+  if (rendered.length <= MAX_RENDERED_PAGES && retainedPixels <= MAX_RETAINED_CANVAS_PIXELS) return;
   const candidates = rendered
-    .filter((state) => !state.nearViewport && state !== currentPageState)
+    .filter((state) => !visiblePageStates.has(state) && state !== currentPageState)
     .sort((left, right) => left.lastRenderedAt - right.lastRenderedAt);
   let remaining = rendered.length;
   for (const state of candidates) {
-    if (remaining <= MAX_RENDERED_PAGES) break;
-    if (releaseRenderedPage(state)) remaining -= 1;
+    if (remaining <= MAX_RENDERED_PAGES && retainedPixels <= MAX_RETAINED_CANVAS_PIXELS) break;
+    const pagePixels = pixels(state);
+    if (releaseRenderedPage(state)) { remaining -= 1; retainedPixels -= pagePixels; }
   }
 }
 
@@ -1396,10 +1540,7 @@ async function indexPageText(state, page, { includeContext = true } = {}) {
   }
   const textContent = await pageTextContent(state, page);
   if (!state.textIndexed) {
-    state.searchText = textContent.items
-      .filter((item) => typeof item?.str === 'string')
-      .map((item) => item.str)
-      .join('');
+    state.searchText = pdfSearchTextContent(textContent.items).text;
     state.textIndexed = true;
   }
   if (includeContext && !state.contextIndexed && state.contextText === null) {
@@ -1465,11 +1606,7 @@ function showPageRenderError(state, error) {
   const native = document.createElement('button');
   native.type = 'button';
   native.textContent = 'Browser view';
-  native.addEventListener('click', () => {
-    message({ type: 'SCHOLIA_OPEN_NATIVE_PDF' }).catch((nativeError) => {
-      setStatus(nativeError.message, { state: 'warning' });
-    });
-  });
+  native.addEventListener('click', () => openNativePdf());
   actions.append(retry, native);
   notice.append(title, detail, actions);
   state.surface.replaceChildren(notice);
@@ -1481,34 +1618,32 @@ async function renderPage(state) {
   if (!pdf || state.renderedZoom === zoom) return;
   if (state.rendering) return state.rendering;
   const version = ++state.version;
+  const generation = loadGeneration;
+  const renderZoom = zoom;
+  let pendingCanvas;
   activePageRenders += 1;
   state.rendering = (async () => {
     const page = state.page || await pdf.getPage(state.pageNumber);
-    if (version !== state.version) return;
+    if (version !== state.version || generation !== loadGeneration) return;
     state.page = page;
     state.renderError = null;
     updatePageDimensions(state, page);
     const viewport = pageViewport(state);
-    const devicePixelRatio = window.devicePixelRatio || 1;
-    const pixelRatio = Math.min(
-      devicePixelRatio,
-      Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, viewport.width * viewport.height))
-    );
-    state.surface.replaceChildren();
-    state.surface.classList.add('is-loading');
+    const pixelRatio = pdfCanvasScale(viewport.width, viewport.height, window.devicePixelRatio, MAX_CANVAS_PIXELS);
+    if (!state.displayedZoom) state.surface.classList.add('is-loading');
     sizePage(state);
 
     const canvas = document.createElement('canvas');
+    pendingCanvas = canvas;
     canvas.width = Math.max(1, Math.floor(viewport.width * pixelRatio));
     canvas.height = Math.max(1, Math.floor(viewport.height * pixelRatio));
-    canvas.style.width = `${Math.ceil(viewport.width)}px`;
-    canvas.style.height = `${Math.ceil(viewport.height)}px`;
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
     const context = canvas.getContext('2d', { alpha: false });
     if (!context) throw new Error(`Page ${state.pageNumber} could not create a canvas.`);
 
     const textLayerElement = document.createElement('div');
     textLayerElement.className = 'textLayer';
-    state.surface.append(canvas, textLayerElement);
     state.surface.title = '';
     state.annotationCanvasMap = new Map();
     const annotationsPromise = page.getAnnotations({ intent: 'display' }).catch(() => []);
@@ -1517,12 +1652,24 @@ async function renderPage(state) {
       annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
       canvasContext: context,
       optionalContentConfigPromise,
-      transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+      transform: [canvas.width / viewport.width, 0, 0, canvas.height / viewport.height, 0, 0],
       viewport
     });
+    const renderTask = state.renderTask;
+    renderTask.onContinue = (continueRender) => {
+      if (document.hidden || (!state.nearViewport && state !== currentPageState)) renderTask.cancel();
+      else continueRender();
+    };
     await state.renderTask.promise;
-    if (version !== state.version) return;
-    state.renderedZoom = zoom;
+    if (version !== state.version || generation !== loadGeneration) return;
+    const previousCanvases = [...state.surface.querySelectorAll('canvas')];
+    detailRenderer.forget(state.pageNumber);
+    state.surface.replaceChildren(canvas, textLayerElement);
+    pendingCanvas = null;
+    for (const previous of previousCanvases) previous.width = previous.height = 0;
+    state.renderedZoom = renderZoom;
+    state.displayedZoom = renderZoom;
+    renderedPageStates.add(state);
     state.lastRenderedAt = ++renderSequence;
     if (page.isPureXfa) {
       const xfaHtml = await page.getXfa();
@@ -1542,6 +1689,7 @@ async function renderPage(state) {
       }
     }
     state.surface.classList.remove('is-loading');
+    detailRenderer.schedule();
     trimRenderedPages();
     const annotationRenderPromise = renderPdfAnnotationLayer(
       state,
@@ -1555,11 +1703,10 @@ async function renderPage(state) {
 
     const textContent = await pageTextContent(state, page);
     if (version !== state.version) return;
+    const searchContent = pdfSearchTextContent(textContent.items);
+    state.searchItemStarts = searchContent.itemStarts;
     if (!state.textIndexed) {
-      state.searchText = textContent.items
-        .filter((item) => typeof item?.str === 'string')
-        .map((item) => item.str)
-        .join('');
+      state.searchText = searchContent.text;
       state.textIndexed = true;
     }
     if (!state.contextIndexed && state.contextText === null) {
@@ -1578,11 +1725,12 @@ async function renderPage(state) {
     applyPdfSearchHighlights(state);
     await annotationRenderPromise;
   })().catch((error) => {
-    if (!cancelled(error)) {
+    if (version === state.version && !cancelled(error)) {
       state.renderError = error;
       showPageRenderError(state, error);
     }
   }).finally(() => {
+    if (pendingCanvas) pendingCanvas.width = pendingCanvas.height = 0;
     activePageRenders = Math.max(0, activePageRenders - 1);
     if (version === state.version) state.rendering = null;
     trimRenderedPages();
@@ -1591,7 +1739,9 @@ async function renderPage(state) {
 }
 
 function resetRenderedPages() {
+  detailRenderer.invalidate();
   for (const state of pageStates) {
+    resetPageSearchHighlights(state);
     state.version += 1;
     try { state.renderTask?.cancel(); } catch {}
     try { state.textLayer?.cancel(); } catch {}
@@ -1603,8 +1753,16 @@ function resetRenderedPages() {
     state.rendering = null;
     state.renderError = null;
     state.renderedZoom = 0;
-    state.surface.replaceChildren();
-    state.surface.classList.add('is-loading');
+    const previous = state.surface.querySelector('canvas:not(.pdf-detail-canvas)');
+    // Scale the last complete page immediately; replace it only after the next
+    // render finishes. Text/annotations are rebuilt at the new scale.
+    state.surface.replaceChildren(...(previous ? [previous] : []));
+    state.surface.classList.toggle('is-loading', !previous);
+    if (previous) {
+      const viewport = pageViewport(state);
+      previous.style.width = `${viewport.width}px`;
+      previous.style.height = `${viewport.height}px`;
+    }
     sizePage(state);
     renderObserver.unobserve(state.shell);
     renderObserver.observe(state.shell);
@@ -1737,9 +1895,6 @@ function updateZoom(next, { preserveMode = false, persist = false, anchor } = {}
   elements['zoom-in'].disabled = zoom >= MAX_ZOOM;
   resetRenderedPages();
   restorePdfViewAnchor(viewAnchor);
-  if (!elements['pdf-search'].hidden && activePdfSearchIndex >= 0) {
-    navigateToActivePdfSearchResult({ behavior: 'auto' }).catch(() => {});
-  }
 }
 
 async function waitForPdfPageState(pageNumber) {
@@ -1880,36 +2035,42 @@ function initializeObservers() {
       const state = pageStateByShell.get(entry.target);
       if (!state) continue;
       state.nearViewport = entry.isIntersecting;
-      if (entry.isIntersecting) renderPage(state);
-      else trimRenderedPages();
+      if (entry.isIntersecting && !document.hidden) renderPage(state);
     }
+    trimRenderedPages();
   }, { rootMargin: `${PAGE_RENDER_MARGIN}px 0px` });
   pageVisibilityObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       const state = pageStateByShell.get(entry.target);
       if (!state) continue;
-      if (entry.isIntersecting) visiblePageStates.add(state);
+      if (entry.isIntersecting) {
+        visiblePageStates.add(state);
+        if (!document.hidden) renderPage(state);
+      }
       else visiblePageStates.delete(state);
     }
     scheduleCurrentPage();
+    detailRenderer.schedule();
   });
 }
 
 function resetPageSearchHighlights(state) {
-  const textLayer = state?.textLayer;
-  const divs = textLayer?.textDivs || [];
-  const items = textLayer?.textContentItemsStr || [];
-  for (const [index, div] of divs.entries()) {
-    if (!div.querySelector?.('.pdf-search-highlight')) continue;
-    div.textContent = items[index] || '';
+  for (const [div, text] of state?.highlightedDivs || []) {
+    if (div.isConnected) div.textContent = text;
+  }
+  state.highlightedDivs = null;
+  state.highlightedLayer = null;
+  state.highlightedResults = null;
+  state.highlightNodes = null;
+}
+
+function clearPdfSearchHighlights({ preserveSelection = false } = {}) {
+  for (const state of pageStates) {
+    if (!preserveSelection || !selectionTouchesPage(state)) resetPageSearchHighlights(state);
   }
 }
 
-function clearPdfSearchHighlights() {
-  for (const state of pageStates) resetPageSearchHighlights(state);
-}
-
-function appendSearchRanges(div, text, ranges) {
+function appendSearchRanges(state, div, text, ranges) {
   const fragment = document.createDocumentFragment();
   let cursor = 0;
   for (const range of ranges) {
@@ -1918,6 +2079,10 @@ function appendSearchRanges(div, text, ranges) {
     highlight.className = `pdf-search-highlight${range.resultIndex === activePdfSearchIndex ? ' is-current' : ''}`;
     highlight.dataset.pdfSearchResult = String(range.resultIndex);
     highlight.textContent = text.slice(range.start, range.end);
+    const nodes = state.highlightNodes.get(range.resultIndex) || [];
+    nodes.push(highlight);
+    state.highlightNodes.set(range.resultIndex, nodes);
+    if (range.resultIndex === activePdfSearchIndex) activePdfSearchHighlights.push(highlight);
     fragment.append(highlight);
     cursor = range.end;
   }
@@ -1926,14 +2091,19 @@ function appendSearchRanges(div, text, ranges) {
 }
 
 function applyPdfSearchHighlights(state) {
+  if (state.highlightedLayer === state.textLayer && state.highlightedResults === state.searchResults) return;
   resetPageSearchHighlights(state);
   if (elements['pdf-search'].hidden || !state?.searchResults?.length || !state.textLayer) return;
+  state.highlightedLayer = state.textLayer;
+  state.highlightedResults = state.searchResults;
+  state.highlightedDivs = new Map();
+  state.highlightNodes = new Map();
 
   const items = state.textLayer.textContentItemsStr || [];
   const divs = state.textLayer.textDivs || [];
   const rangesByItem = new Map();
   for (const result of state.searchResults) {
-    for (const segment of pdfMatchItemSegments(items, result.start, result.length)) {
+    for (const segment of pdfMatchItemSegments(items, result.start, result.length, state.searchItemStarts)) {
       const ranges = rangesByItem.get(segment.itemIndex) || [];
       ranges.push({ ...segment, resultIndex: result.resultIndex });
       rangesByItem.set(segment.itemIndex, ranges);
@@ -1943,8 +2113,16 @@ function applyPdfSearchHighlights(state) {
     const div = divs[itemIndex];
     if (!div) continue;
     ranges.sort((left, right) => left.start - right.start);
-    appendSearchRanges(div, items[itemIndex] || '', ranges);
+    state.highlightedDivs.set(div, items[itemIndex] || '');
+    appendSearchRanges(state, div, items[itemIndex] || '', ranges);
   }
+}
+
+function updateActivePdfSearchHighlight() {
+  for (const node of activePdfSearchHighlights) node.classList.remove('is-current');
+  const result = pdfSearchResults[activePdfSearchIndex];
+  activePdfSearchHighlights = pageStates[result?.pageIndex]?.highlightNodes?.get(activePdfSearchIndex) || [];
+  for (const node of activePdfSearchHighlights) node.classList.add('is-current');
 }
 
 function updatePdfSearchControls() {
@@ -1954,51 +2132,63 @@ function updatePdfSearchControls() {
   const searchReady = pdfSearchReady && (!semantic || pdfSemanticIndex?.finalized);
   if (!query) elements['search-count'].textContent = '0 / 0';
   else if (!searchReady) elements['search-count'].textContent = semantic ? 'Indexing concepts…' : 'Indexing…';
-  else if (!hasResults) elements['search-count'].textContent = 'No results';
+  else if (!hasResults) elements['search-count'].textContent = pdfComprehensiveIndexReady
+    ? 'No results' : 'No results yet · indexing…';
   else {
     const total = `${pdfSearchResults.length.toLocaleString()}${pdfSearchTruncated ? '+' : ''}`;
-    elements['search-count'].textContent = `${(activePdfSearchIndex + 1).toLocaleString()} / ${total}${semantic ? ' pages' : ''}`;
+    const progress = !pdfBasicIndexReady ? ' · indexing…'
+      : !pdfComprehensiveIndexReady ? ' · recognizing scans…' : '';
+    elements['search-count'].textContent = `${(activePdfSearchIndex + 1).toLocaleString()} / ${total}${semantic ? ' pages' : ''}${progress}`;
   }
   elements['search-previous'].disabled = !hasResults;
   elements['search-next'].disabled = !hasResults;
 }
 
-function clearPdfSearchResults() {
-  clearPdfSearchHighlights();
+function clearPdfSearchResults({ preserveSelection = false } = {}) {
+  pdfSearchController?.abort();
+  clearPdfSearchHighlights({ preserveSelection });
   for (const state of pageStates) state.searchResults = [];
   pdfSearchResults = [];
   pdfSearchTruncated = false;
   activePdfSearchIndex = -1;
+  activePdfSearchHighlights = [];
   pdfSearchAction += 1;
   updatePdfSearchControls();
 }
 
-function runPdfSearch({ resetActive = true, reveal = true } = {}) {
+async function runPdfSearch({ resetActive = true, reveal = true } = {}) {
+  const previousResult = !resetActive && pdfSearchResults[activePdfSearchIndex];
   clearTimeout(pdfSearchTimer);
   pdfSearchTimer = null;
-  clearPdfSearchResults();
-  const query = elements['search-input'].value.trim();
+  clearPdfSearchResults({ preserveSelection: !resetActive });
+  const query = elements['search-input'].value;
   const semantic = semanticPdfSearchActive();
-  if (!query || !pdfSearchReady) return;
+  if (!query.trim() || !pdfSearchReady || elements['pdf-search'].hidden) return;
   if (semantic && !pdfSemanticIndex?.finalized) {
     startPdfSemanticIndex();
     return;
   }
 
   const pageTexts = pageStates.map((state) => state.searchText);
+  const controller = pdfSearchController = new AbortController();
   const found = semantic
     ? findPdfSemanticMatches(pageTexts, query, pdfSemanticIndex)
-    : findPdfMatches(pageTexts, query);
+    : await findPdfMatchesAsync(pageTexts, query, { signal: controller.signal }).catch((error) => {
+      if (error.name !== 'AbortError') throw error;
+    });
+  if (!found || controller.signal.aborted) return;
   pdfSearchTruncated = found.truncated;
   pdfSearchResults = found.matches.map((result, resultIndex) => ({ ...result, resultIndex }));
   for (const state of pageStates) state.searchResults = [];
   for (const result of pdfSearchResults) {
     pageStates[result.pageIndex]?.searchResults.push(result);
   }
-  activePdfSearchIndex = pdfSearchResults.length
-    ? resetActive ? 0 : Math.min(Math.max(activePdfSearchIndex, 0), pdfSearchResults.length - 1)
-    : -1;
-  for (const state of pageStates) applyPdfSearchHighlights(state);
+  const previousIndex = previousResult ? pdfSearchResults.findIndex((result) =>
+    result.pageIndex === previousResult.pageIndex && result.start === previousResult.start) : -1;
+  activePdfSearchIndex = previousIndex >= 0 ? previousIndex : reveal && pdfSearchResults.length ? 0 : -1;
+  for (const state of pageStates) {
+    if (resetActive || !selectionTouchesPage(state)) applyPdfSearchHighlights(state);
+  }
   updatePdfSearchControls();
   if (reveal && activePdfSearchIndex >= 0) {
     navigateToActivePdfSearchResult().catch(() => {});
@@ -2006,32 +2196,39 @@ function runPdfSearch({ resetActive = true, reveal = true } = {}) {
 }
 
 function schedulePdfSearch() {
+  pdfSearchController?.abort();
+  pdfSearchAction += 1;
   clearTimeout(pdfSearchTimer);
-  pdfSearchTimer = setTimeout(() => runPdfSearch({ resetActive: true, reveal: true }), 120);
+  pdfSearchTimer = setTimeout(() => {
+    pdfSearchTask = runPdfSearch({ resetActive: true, reveal: true });
+  }, 180);
 }
 
-async function navigateToActivePdfSearchResult({ behavior = 'smooth' } = {}) {
+async function navigateToActivePdfSearchResult({ behavior = 'auto' } = {}) {
   const result = pdfSearchResults[activePdfSearchIndex];
   const state = result && pageStates[result.pageIndex];
   if (!state) return;
   const action = ++pdfSearchAction;
   setCurrentPdfPageState(state);
-  state.shell.scrollIntoView({ block: 'center', inline: 'nearest', behavior });
+  if (!state.textLayer) state.shell.scrollIntoView({ block: 'center', inline: 'nearest', behavior });
   await renderPage(state);
   if (action !== pdfSearchAction || result !== pdfSearchResults[activePdfSearchIndex]) return;
   applyPdfSearchHighlights(state);
+  updateActivePdfSearchHighlight();
   const highlight = state.surface.querySelector(`[data-pdf-search-result="${activePdfSearchIndex}"]`);
   (highlight || state.shell).scrollIntoView({ block: 'center', inline: 'nearest', behavior });
   updatePageCounter(state.pageNumber);
   updateActivePdfOutline(state.pageNumber);
 }
 
-function movePdfSearch(direction) {
-  if (pdfSearchTimer) runPdfSearch({ resetActive: true, reveal: false });
+async function movePdfSearch(direction) {
+  if (pdfSearchTimer) pdfSearchTask = runPdfSearch({ resetActive: true, reveal: false });
+  if (pdfSearchTask) { await pdfSearchTask; pdfSearchTask = null; }
   if (!pdfSearchResults.length) return;
-  activePdfSearchIndex = (activePdfSearchIndex + (direction < 0 ? -1 : 1) + pdfSearchResults.length)
-    % pdfSearchResults.length;
-  for (const state of pageStates) applyPdfSearchHighlights(state);
+  activePdfSearchIndex = activePdfSearchIndex < 0
+    ? (direction < 0 ? pdfSearchResults.length - 1 : 0)
+    : (activePdfSearchIndex + (direction < 0 ? -1 : 1) + pdfSearchResults.length) % pdfSearchResults.length;
+  updateActivePdfSearchHighlight();
   updatePdfSearchControls();
   navigateToActivePdfSearchResult().catch(() => {});
 }
@@ -2039,12 +2236,8 @@ function movePdfSearch(direction) {
 function openPdfSearch() {
   elements['pdf-search'].hidden = false;
   elements['search-toggle'].setAttribute('aria-expanded', 'true');
-  updatePdfSearchControls();
-  if (pdfSearchResults.length) {
-    for (const state of pageStates) applyPdfSearchHighlights(state);
-  } else if (elements['search-input'].value.trim()) {
-    runPdfSearch({ resetActive: true, reveal: true });
-  }
+  // Keep the saved query available without leaving the user's reading position.
+  runPdfSearch({ resetActive: true, reveal: false });
   requestAnimationFrame(() => {
     elements['search-input'].focus();
     elements['search-input'].select();
@@ -2055,6 +2248,7 @@ function closePdfSearch({ clearQuery = false, restoreFocus = true } = {}) {
   const wasOpen = !elements['pdf-search'].hidden;
   clearTimeout(pdfSearchTimer);
   pdfSearchTimer = null;
+  pdfSearchTask = null;
   clearPdfSearchResults();
   elements['pdf-search'].hidden = true;
   elements['search-toggle'].setAttribute('aria-expanded', 'false');
@@ -2066,9 +2260,12 @@ function closePdfSearch({ clearQuery = false, restoreFocus = true } = {}) {
 function preparePdfSearchForDocument() {
   closePdfSearch({ clearQuery: true, restoreFocus: false });
   pdfSearchReady = false;
+  pdfBasicIndexReady = false;
+  pdfComprehensiveIndexReady = false;
   pdfSemanticIndex = null;
   semanticIndexingTask = null;
   pdfReadyStatus = '';
+  pdfBackgroundStatus = null;
   updatePdfSearchControls();
 }
 
@@ -2086,17 +2283,19 @@ function updateDocumentTitle(title) {
   elements['document-title'].textContent = title;
 }
 
-async function indexPdfPage(documentProxy, state, { includeContext }) {
+async function indexPdfPage(documentProxy, state, { includeContext, ocrReader = null, nativeText } = {}) {
   state.indexing = true;
   let page = state.page;
   try {
     page ||= await documentProxy.getPage(state.pageNumber);
-    const contextText = await indexPageText(state, page, { includeContext });
+    nativeText ??= await indexPageText(state, page, { includeContext });
+    const contextText = includeContext && ocrReader
+      ? await ocrReader.readPage(page, nativeText || '', state.pageNumber) : nativeText;
+    if (contextText && contextText !== nativeText) state.searchText += `\n${contextText}`;
     return { state, contextText: contextText || '' };
   } catch (error) {
-    state.textIndexed = true;
-    state.searchText = '';
-    return { state, contextText: '', error };
+    // A failed OCR pass must leave the basic search index intact.
+    return { state, contextText: nativeText || state.contextText || '', error };
   } finally {
     state.indexing = false;
     if (page && state.page !== page && !state.rendering && !state.renderedZoom) page.cleanup();
@@ -2112,7 +2311,7 @@ function semanticPageSample(value, maxCharacters) {
 }
 
 function startPdfSemanticIndex() {
-  if (!pdfSearchReady || pdfSemanticIndex?.finalized) return Promise.resolve(pdfSemanticIndex);
+  if (!pdfComprehensiveIndexReady || pdfSemanticIndex?.finalized) return Promise.resolve(pdfSemanticIndex);
   if (semanticIndexingTask) return semanticIndexingTask;
   const generation = loadGeneration;
   const task = (async () => {
@@ -2124,9 +2323,10 @@ function startPdfSemanticIndex() {
     setStatus(`${pdfReadyStatus || 'PDF ready'} · indexing semantic search`, {
       state: 'working',
       current: 0,
-      total: pageStates.length
+      total: pageStates.length, owner: 'background'
     });
     updatePdfSearchControls();
+    await yieldToVisiblePages(generation);
     for (const [pageIndex, state] of pageStates.entries()) {
       if (generation !== loadGeneration) return;
       addPdfSemanticPage(index, semanticPageSample(state.searchText, perPageCharacters), pageIndex);
@@ -2134,16 +2334,16 @@ function startPdfSemanticIndex() {
         setStatus(`PDF ready · indexing semantic search ${pageIndex + 1} of ${pageStates.length}`, {
           state: 'working',
           current: pageIndex + 1,
-          total: pageStates.length
+          total: pageStates.length, owner: 'background'
         });
-        await yieldToVisiblePages();
+        await yieldToVisiblePages(generation);
       }
     }
     if (generation !== loadGeneration) return;
     pdfSemanticIndex = finalizePdfSemanticIndex(index);
-    if (semanticPdfSearchActive()) runPdfSearch({ resetActive: true, reveal: true });
+    if (semanticPdfSearchActive()) runPdfSearch({ resetActive: false, reveal: false });
     else updatePdfSearchControls();
-    setStatus(`${pdfReadyStatus || 'PDF ready'} · semantic search ready`, { state: 'ready' });
+    setStatus(`${pdfReadyStatus || 'PDF ready'} · semantic search ready`, { state: 'ready', owner: 'background' });
   })();
   semanticIndexingTask = task;
   task.catch((error) => {
@@ -2151,7 +2351,7 @@ function startPdfSemanticIndex() {
     pdfSemanticIndex = null;
     updatePdfSearchControls();
     setStatus(`${pdfReadyStatus || 'PDF ready'} · semantic search unavailable: ${error?.message || error}`, {
-      state: 'warning'
+      state: 'warning', owner: 'background'
     });
   }).finally(() => {
     if (generation === loadGeneration && semanticIndexingTask === task) semanticIndexingTask = null;
@@ -2177,23 +2377,40 @@ async function preparePdfPages({
   let appendedThrough = 1;
   let nextPageToIndex = 1;
   let extractedCharacters = 0;
-  let metadataSettled = false;
-  let settledTitle = '';
+  let title = elements['document-title'].textContent;
+  let restoredOcr = null;
+  let indexErrors = 0;
+  const ocrReader = pdfOcrReader;
 
-  const settleMetadata = async () => {
-    if (metadataSettled || generation !== loadGeneration) return settledTitle;
-    metadataSettled = true;
-    settledTitle = await titlePromise;
-    if (generation !== loadGeneration) return settledTitle;
+  const publishMetadata = (stage = 'basic', pages = contextPages) => {
+    if (generation !== loadGeneration) return;
+    const formatted = formatPdfContext(pages, documentProxy.numPages, {
+      indexing: stage === 'basic' && !pdfBasicIndexReady
+    });
+    const pending = stage === 'basic'
+      ? 'Basic PDF text is available. Text recognition for scanned pages is still in progress.' : '';
     metadataResolver({
-      ...formatPdfContext(contextPages, documentProxy.numPages),
-      pageTitle: settledTitle,
+      ...formatted,
+      ...(restoredOcr || ocrReader?.summary()),
+      context: pending ? `[${pending}]\n\n${formatted.context}` : formatted.context,
+      pdfIndexStage: stage,
+      truncated: pages.length < documentProxy.numPages || extractedCharacters >= MAX_EXTRACTED_CHARACTERS,
+      pageTitle: title,
       url: sourceUrl,
       pageLanguage: navigator.language,
       imageDataUrl: ''
     });
-    return settledTitle;
   };
+  titlePromise.then((value) => {
+    title = value;
+    if (generation === loadGeneration && readyMetadata) metadataResolver({ ...readyMetadata, pageTitle: title });
+  }).catch(() => {});
+
+  // The first rendered page already has native text. Make it usable before
+  // page-frame creation, cache access, or recognition of any scanned pages.
+  pdfSearchReady = true;
+  publishMetadata('basic', [pageStates[0]?.contextText || '']);
+  runPdfSearch({ resetActive: false, reveal: false });
 
   try {
     while (appendedThrough < documentProxy.numPages) {
@@ -2209,7 +2426,7 @@ async function preparePdfPages({
       setStatus(`Page 1 visible · preparing page frames ${end} of ${documentProxy.numPages}`, {
         state: 'working',
         current: end,
-        total: documentProxy.numPages
+        total: documentProxy.numPages, owner: 'background'
       });
       await nextReaderTurn();
     }
@@ -2217,30 +2434,35 @@ async function preparePdfPages({
     const cachedIndex = await cachedIndexPromise;
     if (generation !== loadGeneration) return;
     if (cachedIndex) {
+      restoredOcr = { ocrNotice: cachedIndex.ocrNotice, ocrPageCount: cachedIndex.ocrPageCount };
       for (let pageIndex = 0; pageIndex < cachedIndex.searchTexts.length; pageIndex += 1) {
         const state = pageStates[pageIndex];
         state.searchText = cachedIndex.searchTexts[pageIndex];
         state.textIndexed = true;
         state.contextIndexed = true;
-        state.contextText = null;
+        state.contextText = cachedIndex.contextPages[pageIndex] ?? null;
       }
       contextPages.push(...cachedIndex.contextPages);
       extractedCharacters = cachedIndex.contextPages.reduce((total, text) => total + text.length, 0);
-      await settleMetadata();
-      pdfSearchReady = true;
-      runPdfSearch({ resetActive: true, reveal: true });
+      pdfBasicIndexReady = true;
+      pdfComprehensiveIndexReady = true;
+      publishMetadata('complete');
+      runPdfSearch({ resetActive: false, reveal: false });
       const indexed = pagesToIndex < documentProxy.numPages
         ? ` · search indexed through page ${pagesToIndex}`
         : '';
-      const readyStatus = `${documentProxy.numPages} page${documentProxy.numPages === 1 ? '' : 's'} · selectable text · index restored from cache${indexed}`;
+      const readyStatus = `${documentProxy.numPages} page${documentProxy.numPages === 1 ? '' : 's'} · index restored from cache${indexed}${cachedIndex.ocrNotice ? ` · ${cachedIndex.ocrNotice}` : ''}`;
       pdfReadyStatus = readyStatus;
-      setStatus(readyStatus, { state: 'ready' });
+      setStatus(readyStatus, { state: 'ready', owner: 'background' });
       updateCurrentPage();
+      startPdfSemanticIndex().catch(() => {});
       return;
     }
 
+    // Stage one only reads the PDF text layer. OCR must never hold up native
+    // search results on later pages, basic chat context, or reader controls.
     while (nextPageToIndex <= pagesToIndex) {
-      await yieldToVisiblePages();
+      await yieldToVisiblePages(generation);
       if (generation !== loadGeneration) return;
       const end = Math.min(pagesToIndex, nextPageToIndex + PAGE_INDEX_CONCURRENCY - 1);
       const includeContext = extractedCharacters < MAX_EXTRACTED_CHARACTERS;
@@ -2251,37 +2473,67 @@ async function preparePdfPages({
       const results = await Promise.all(batch);
       if (generation !== loadGeneration) return;
       for (const result of results) {
+        if (result.error) indexErrors += 1;
+        let excerpt = null;
         if (extractedCharacters < MAX_EXTRACTED_CHARACTERS) {
           const room = MAX_EXTRACTED_CHARACTERS - extractedCharacters;
-          const excerpt = result.contextText.slice(0, Math.max(0, room));
+          excerpt = result.contextText.slice(0, Math.max(0, room));
           contextPages.push(excerpt);
           extractedCharacters += excerpt.length;
         }
         result.state.contextIndexed = true;
-        result.state.contextText = null;
+        result.state.contextText = excerpt;
       }
       nextPageToIndex = end + 1;
-      if (extractedCharacters >= MAX_EXTRACTED_CHARACTERS) await settleMetadata();
-      if (end === pagesToIndex || end === 1 || end % 12 < PAGE_INDEX_CONCURRENCY) {
-        setStatus(`Pages ready · indexing searchable text ${end} of ${pagesToIndex}`, {
-          state: 'working',
-          current: end,
-          total: pagesToIndex
+      pdfBasicIndexReady = end === pagesToIndex;
+      if (end === pagesToIndex || nextPageToIndex <= PAGE_INDEX_CONCURRENCY + 1 || end % 12 < PAGE_INDEX_CONCURRENCY) {
+        publishMetadata();
+        runPdfSearch({ resetActive: false, reveal: false });
+        setStatus(`PDF ready · basic text index ${end} of ${pagesToIndex} pages`, {
+          state: 'working', current: end, total: pagesToIndex, owner: 'background'
         });
       }
     }
 
-    const title = await settleMetadata();
+    // Stage two enriches the existing index in place. Keep the basic text even
+    // if recognition fails, and preserve the user's current result and page.
+    pdfReadyStatus = 'Basic text ready · recognizing scanned text in the background';
+    setStatus(pdfReadyStatus, { state: 'working', owner: 'background' });
+    for (let pageIndex = 0; pageIndex < contextPages.length; pageIndex += 1) {
+      const nativeText = contextPages[pageIndex];
+      if (!sparsePdfText(nativeText)) continue;
+      await yieldToVisiblePages(generation);
+      if (generation !== loadGeneration) return;
+      const result = await indexPdfPage(documentProxy, pageStates[pageIndex], {
+        includeContext: true, ocrReader, nativeText
+      });
+      if (generation !== loadGeneration) return;
+      if (result.error) indexErrors += 1;
+      const room = MAX_EXTRACTED_CHARACTERS - extractedCharacters + nativeText.length;
+      const text = result.contextText.slice(0, Math.max(0, room));
+      contextPages[pageIndex] = text;
+      result.state.contextText = text;
+      extractedCharacters += text.length - nativeText.length;
+      if (text !== nativeText) {
+        publishMetadata();
+        runPdfSearch({ resetActive: false, reveal: false });
+      }
+    }
+
     if (generation !== loadGeneration) return;
-    pdfSearchReady = true;
-    runPdfSearch({ resetActive: true, reveal: true });
+    pdfComprehensiveIndexReady = true;
+    publishMetadata('complete');
+    runPdfSearch({ resetActive: false, reveal: false });
     const indexed = pagesToIndex < documentProxy.numPages
       ? ` · search indexed through page ${pagesToIndex}`
       : '';
-    const readyStatus = `${documentProxy.numPages} page${documentProxy.numPages === 1 ? '' : 's'} · selectable text · context ready${indexed}`;
+    const ocrSummary = ocrReader?.summary() || {};
+    const readyStatus = `${documentProxy.numPages} page${documentProxy.numPages === 1 ? '' : 's'} · context ready${indexed}${ocrSummary.ocrNotice ? ` · ${ocrSummary.ocrNotice}` : ' · selectable text'}${indexErrors ? ` · text unavailable on ${indexErrors} page(s)` : ''}`;
     pdfReadyStatus = readyStatus;
-    setStatus(readyStatus, { state: 'ready' });
+    setStatus(readyStatus, { state: indexErrors ? 'warning' : 'ready', owner: 'background' });
     updateCurrentPage();
+    startPdfSemanticIndex().catch(() => {});
+    if (indexErrors) return;
 
     const cacheValue = {
       key: cacheKey,
@@ -2289,38 +2541,44 @@ async function preparePdfPages({
       indexedPageCount: pagesToIndex,
       searchTexts: pageStates.slice(0, pagesToIndex).map((state) => state.searchText),
       contextPages,
-      title
+      title,
+      ...ocrSummary
     };
     nextReaderTurn().then(async () => {
       if (generation !== loadGeneration) return;
-      setStatus(`${readyStatus} · caching search index locally`, { state: 'working' });
+      if (!semanticIndexingTask) setStatus(`${readyStatus} · caching search index locally`, { state: 'working', owner: 'background' });
       const cacheSaved = await writePdfIndexCache(cacheValue);
       if (generation !== loadGeneration) return;
       if (!cacheSaved) {
-        setStatus(readyStatus, { state: 'ready' });
+        if (!semanticIndexingTask) setStatus(pdfSemanticIndex?.finalized ? `${readyStatus} · semantic search ready` : readyStatus, { state: 'ready', owner: 'background' });
         return;
       }
       pdfReadyStatus = `${readyStatus} · index cached`;
-      if (pdfSemanticIndex?.finalized) setStatus(`${pdfReadyStatus} · semantic search ready`, { state: 'ready' });
-      else if (!semanticIndexingTask) setStatus(pdfReadyStatus, { state: 'ready' });
+      if (pdfSemanticIndex?.finalized) setStatus(`${pdfReadyStatus} · semantic search ready`, { state: 'ready', owner: 'background' });
+      else if (!semanticIndexingTask) setStatus(pdfReadyStatus, { state: 'ready', owner: 'background' });
     }).catch(() => {});
   } catch (error) {
     if (generation !== loadGeneration) return;
-    await settleMetadata();
-    pdfSearchReady = true;
-    runPdfSearch({ resetActive: true, reveal: true });
-    const readyStatus = `PDF ready · text indexing stopped: ${error?.message || error}`;
+    pdfBasicIndexReady = true;
+    pdfComprehensiveIndexReady = true;
+    publishMetadata('partial');
+    runPdfSearch({ resetActive: false, reveal: false });
+    const readyStatus = `PDF ready · background indexing stopped: ${error?.message || error}`;
     pdfReadyStatus = readyStatus;
-    setStatus(readyStatus, { state: 'warning' });
+    setStatus(readyStatus, { state: 'warning', owner: 'background' });
   }
 }
 
 async function openPdfInput(input, fallbackTitle = '', documentUrl = '') {
+  detailRenderer.invalidate();
   savePdfReadingPosition();
   pdfNavigationSequence += 1;
   restoreReadingPosition = true;
   history.scrollRestoration = 'manual';
   const generation = ++loadGeneration;
+  pdfOcrController?.abort();
+  pdfOcrController = new AbortController();
+  pdfOcrReader = null;
   elements['download-pdf'].disabled = true;
   elements['download-pdf'].removeAttribute('aria-busy');
   document.dispatchEvent(new CustomEvent('scholia:document-instance-changed'));
@@ -2329,6 +2587,7 @@ async function openPdfInput(input, fallbackTitle = '', documentUrl = '') {
   elements['print-pdf'].disabled = true;
   documentInteractive = false;
   elements['open-chat'].disabled = true;
+  elements['send-entire-pdf'].disabled = true;
   indexingTask = null;
   preparePdfSearchForDocument();
   resetPdfOutlineForDocument();
@@ -2351,6 +2610,16 @@ async function openPdfInput(input, fallbackTitle = '', documentUrl = '') {
   const nextPdf = await loadingTask.promise;
   if (generation !== loadGeneration) { await nextPdf.destroy(); return; }
   pdf = nextPdf;
+  pdfOcrReader = createPdfOcrReader({
+    signal: pdfOcrController.signal,
+    totalPages: pdf.numPages,
+    imageOperations: [pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject, pdfjs.OPS.paintImageMaskXObject],
+    onProgress: ({ page, total }) => {
+      if (generation === loadGeneration) setStatus(`Basic text ready · recognizing scanned text ${page} of ${total}`, {
+        state: 'working', current: page, total, owner: 'background'
+      });
+    }
+  });
   const downloadName = input?.name || pdfjs.getPdfFilenameFromUrl(documentUrl, '')
     || fallbackTitle || source?.pageTitle || 'document';
   pdfDownloadFilename = /\.pdf$/i.test(downloadName) ? downloadName : `${downloadName}.pdf`;
@@ -2360,6 +2629,8 @@ async function openPdfInput(input, fallbackTitle = '', documentUrl = '') {
   fieldObjectsPromise = pdf.getFieldObjects().catch(() => null);
   elements.pages.replaceChildren();
   pageStates = [];
+  renderedPageStates = new Set();
+  spreadRows = [];
   currentPageState = null;
   initializeObservers();
 
@@ -2381,6 +2652,7 @@ async function openPdfInput(input, fallbackTitle = '', documentUrl = '') {
   elements['download-pdf'].disabled = false;
   elements['print-pdf'].disabled = false;
   elements['open-chat'].disabled = false;
+  elements['send-entire-pdf'].disabled = false;
   elements.loading.hidden = true;
   setStatus(`Rendering page 1 of ${pdf.numPages}…`, {
     state: 'working',
@@ -2525,7 +2797,7 @@ async function chooseLocalPdfFile() {
 
   const viewerUrl = chrome.runtime.getURL(`pdf-viewer.html?source=${encodeURIComponent(record.id)}`);
   if (activeMimeStreamInfo) {
-    location.replace(viewerUrl);
+    await navigateReader(viewerUrl);
     return;
   }
   history.replaceState(null, '', viewerUrl);
@@ -2544,6 +2816,15 @@ function manualOpenRequested() {
   }
 }
 
+async function navigateReader(url) {
+  if (activeMimeStreamInfo) {
+    // Navigating just the handler iframe would leave the old PDF's address in
+    // the address bar. An embedded reader must also preserve its containing site.
+    if (activeMimeStreamInfo.embedded) await chrome.tabs.create({ url });
+    else await chrome.tabs.update(activeMimeStreamInfo.tabId, { url });
+  } else location.replace(url);
+}
+
 async function openPdfAddress() {
   const url = elements['pdf-address'].value.trim();
   if (!url) {
@@ -2555,7 +2836,7 @@ async function openPdfAddress() {
   try {
     const prepared = await message({ type: 'SCHOLIA_CREATE_PDF_VIEWER_SOURCE', url });
     const mimeTarget = pdfMimeNavigationTarget(prepared.pdfUrl);
-    location.replace(mimeTarget && await automaticPdfMimeHandlingEnabled()
+    await navigateReader(mimeTarget && await automaticPdfMimeHandlingEnabled()
       ? mimeTarget
       : prepared.viewerUrl);
   } catch (error) {
@@ -2576,6 +2857,8 @@ async function openMimeHandledPdf(streamInfo) {
   elements['document-title'].textContent = source.pageTitle;
   showSourceUrl(source.url);
   elements['open-native'].hidden = false;
+  elements['choose-file'].textContent = 'Open another PDF';
+  elements['choose-file'].title = 'Open a PDF file or address in a new tab';
   showLoading(`Opening ${source.pageTitle} from its original address…`);
   const response = await fetch(streamInfo.streamUrl);
   const blob = await readPdfBlobResponse(response, updateDownloadProgress);
@@ -2713,7 +2996,7 @@ elements['search-mode'].addEventListener('change', () => {
   chrome.storage.local.set({
     [PDF_SEARCH_MODE_KEY]: semanticPdfSearchActive() ? 'semantic' : 'exact'
   }).catch(() => {});
-  if (elements['search-input'].value.trim()) runPdfSearch({ resetActive: true, reveal: true });
+  if (elements['search-input'].value.trim()) runPdfSearch({ resetActive: true, reveal: false });
   elements['search-input'].focus();
 });
 elements['search-input'].addEventListener('input', schedulePdfSearch);
@@ -2730,6 +3013,7 @@ elements['search-previous'].addEventListener('click', () => movePdfSearch(-1));
 elements['search-next'].addEventListener('click', () => movePdfSearch(1));
 elements['search-close'].addEventListener('click', () => closePdfSearch());
 elements['open-chat'].addEventListener('click', openPdfChat);
+elements['send-entire-pdf'].addEventListener('click', sendEntirePDF);
 document.addEventListener('scholia:open-pdf-chat', (event) => {
   const chatId = normalizedChatId(event.detail?.chatId);
   if (chatId) setPdfChatOpen(true, { chatId });
@@ -2760,8 +3044,15 @@ elements['open-native'].addEventListener('click', openNativePdf);
 elements['download-pdf'].addEventListener('click', downloadPdf);
 elements['print-pdf'].addEventListener('click', printPdf);
 elements['source-url'].addEventListener('click', openNativePdf);
+elements['copy-source-url'].addEventListener('click', copySourceUrl);
 elements['error-open-original'].addEventListener('click', openNativePdf);
 const openFileChooser = () => {
+  // File System Access pickers cannot run inside a cross-origin MIME frame.
+  // Start the file/address chooser in its own tab, with the correct address.
+  if (activeMimeStreamInfo) {
+    chrome.tabs.create({ url: chrome.runtime.getURL('pdf-viewer.html?open=1') }).catch(showError);
+    return;
+  }
   if (pendingLocalFileRecord) {
     const record = pendingLocalFileRecord;
     showLoading(`Reopening ${record.name} from this computer…`);
@@ -2781,6 +3072,11 @@ elements['pdf-file'].addEventListener('change', () => {
   chooseFile(file).catch(showError).finally(() => { elements['pdf-file'].value = ''; });
 });
 window.addEventListener('scroll', scheduleCurrentPage, { passive: true });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !documentInteractive) return;
+  for (const state of visiblePageStates) renderPage(state);
+  if (currentPageState) renderPage(currentPageState);
+});
 window.addEventListener('blur', () => setPdfViewMenuOpen(false));
 document.addEventListener('pointerdown', (event) => {
   if (!elements['pdf-view-menu'].hidden && !elements['pdf-view-control'].contains(event.target)) {

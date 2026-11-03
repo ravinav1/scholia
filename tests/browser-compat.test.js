@@ -11,7 +11,7 @@ test('Brave is detected through its navigator API or browser brand', async () =>
   assert.equal(await isBraveBrowser({ userAgentData: { brands: [{ brand: 'Chromium' }] } }), false);
 });
 
-test('Brave disables native PDF MIME handling for previously enabled installations', async () => {
+test('a Chromium-derived browser with the public MIME API enables the fixed handler', async () => {
   const calls = [];
   const result = await configurePdfMimeHandling({
     mimeHandler: {
@@ -21,15 +21,15 @@ test('Brave disables native PDF MIME handling for previously enabled installatio
     brave: { isBrave: async () => true }
   });
 
-  assert.deepEqual(calls, [['application/pdf', { enabled: false }]]);
+  assert.deepEqual(calls, [['application/pdf', { enabled: true }]]);
   assert.deepEqual(result, {
     brave: true,
     mimeHandlerConfigured: true,
-    mimeHandlerEnabled: false
+    mimeHandlerEnabled: true
   });
 });
 
-test('Chromium disables native PDF MIME handling to keep PDFs in the standalone reader', async () => {
+test('Chromium enables the original-URL PDF reader with the history crash workaround', async () => {
   const calls = [];
   const result = await configurePdfMimeHandling({
     mimeHandler: {
@@ -37,11 +37,11 @@ test('Chromium disables native PDF MIME handling to keep PDFs in the standalone 
     }
   }, {});
 
-  assert.deepEqual(calls, [['application/pdf', { enabled: false }]]);
+  assert.deepEqual(calls, [['application/pdf', { enabled: true }]]);
   assert.deepEqual(result, {
     brave: false,
     mimeHandlerConfigured: true,
-    mimeHandlerEnabled: false
+    mimeHandlerEnabled: true
   });
 });
 

@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   buildPdfSemanticIndex,
   findPdfMatches,
+  findPdfMatchesAsync,
   findPdfSemanticMatches,
-  pdfMatchItemSegments
+  pdfMatchItemSegments,
+  pdfSearchTextContent
 } from '../apps/chrome/src/pdf-search.js';
 
 test('PDF search finds literal, case-insensitive phrases across pages', () => {
@@ -12,7 +14,7 @@ test('PDF search finds literal, case-insensitive phrases across pages', () => {
     'First Needle phrase.',
     'No match here.',
     'Another needle\nphrase and needle phrase.'
-  ], '  NEEDLE   phrase ');
+  ], 'NEEDLE   phrase');
 
   assert.deepEqual(result, {
     matches: [
@@ -22,6 +24,44 @@ test('PDF search finds literal, case-insensitive phrases across pages', () => {
     ],
     truncated: false
   });
+});
+
+test('PDF search respects leading/trailing spaces, including adjacent terms and PDF whitespace', () => {
+  const text = 'try ry rye dry ry ry\nry\u00a0end';
+  assert.equal(findPdfMatches([text], 'ry').matches.length, 7);
+  assert.deepEqual(findPdfMatches([text], ' ry ').matches.map(({ start }) => start), [4, 15, 18, 21]);
+  assert.deepEqual(findPdfMatches([text], ' ry').matches.map(({ start }) => start), [4, 7, 15, 18, 21]);
+  assert.deepEqual(findPdfMatches([text], 'ry ').matches.map(({ start }) => start), [1, 4, 12, 15, 18, 21]);
+  assert.deepEqual(findPdfMatches(['ry'], ' ry ').matches, []);
+  assert.deepEqual(findPdfMatches([text], '   \n\t').matches, []);
+});
+
+test('PDF line breaks remain searchable and highlights map to the correct text spans', () => {
+  const items = [{ str: 'try', hasEOL: true }, { str: 'ry', hasEOL: true }, { type: 'endMarkedContent' },
+    { str: 'ry ' }, { str: 'end' }];
+  const { text, itemStarts } = pdfSearchTextContent(items);
+  assert.equal(text, 'try\nry\nry end');
+  assert.deepEqual(findPdfMatches([text], ' ry ').matches, [
+    { pageIndex: 0, start: 4, length: 2 }, { pageIndex: 0, start: 7, length: 2 }
+  ]);
+  assert.deepEqual(pdfMatchItemSegments(['try', 'ry', 'ry ', 'end'], 4, 5, itemStarts), [
+    { itemIndex: 1, start: 0, end: 2 }, { itemIndex: 2, start: 0, end: 2 }
+  ]);
+});
+
+test('cooperative PDF search agrees with literal matching and aborts obsolete work', async () => {
+  const pages = ['try ry ry ', 'ry\nry\n', 'needle\nphrase'];
+  for (const query of [' ry ', 'ry', 'needle phrase', ' ', 'a+b']) {
+    assert.deepEqual(await findPdfMatchesAsync(pages, query), findPdfMatches(pages, query));
+  }
+  const controller = new AbortController();
+  const large = Array.from({ length: 20_000 }, () => 'not a match '.repeat(100));
+  let turns = 0;
+  await assert.rejects(findPdfMatchesAsync(large, 'absent', {
+    signal: controller.signal,
+    yieldTask: async () => { turns++; controller.abort(); }
+  }), { name: 'AbortError' });
+  assert.equal(turns, 1, 'Obsolete searches stop at the next yield');
 });
 
 test('PDF search treats punctuation as text rather than a regular expression', () => {

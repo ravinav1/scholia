@@ -5,7 +5,7 @@ import XCTest
 @testable import ScholiaMac
 
 final class AttachmentSafetyTests: XCTestCase {
-    func testTextIngestionUsesStrictMIMEAllowlist() throws {
+    func testDeclaredContainersAreNotMisreadAsTextAndOversizedFilesRemainVisible() throws {
         let source = Data("let answer = 42\n".utf8)
         let accepted = try XCTUnwrap(MessageAttachmentIngestion.ingest(
             data: source,
@@ -15,16 +15,16 @@ final class AttachmentSafetyTests: XCTestCase {
         XCTAssertEqual(accepted.mimeType, "text/plain")
         XCTAssertEqual(accepted.extractedText, "let answer = 42\n")
 
-        XCTAssertNil(MessageAttachmentIngestion.ingest(
+        XCTAssertEqual(MessageAttachmentIngestion.ingest(
             data: source,
             fileName: "looks-safe.txt",
             mimeType: "application/zip"
-        ))
-        XCTAssertNil(MessageAttachmentIngestion.ingest(
+        )?.effectiveReadStatus, .unreadable)
+        XCTAssertEqual(MessageAttachmentIngestion.ingest(
             data: Data(repeating: 1, count: MessageAttachmentIngestion.maximumInputBytes + 1),
             fileName: "large.txt",
             mimeType: "text/plain"
-        ))
+        )?.effectiveReadStatus, .unreadable)
     }
 
     func testAttachmentPromptEscapesMetadataAndCannotCloseItsDelimiter() throws {
@@ -78,7 +78,7 @@ final class AttachmentSafetyTests: XCTestCase {
         ], role: .user))
     }
 
-    func testLongTextIsReadCompletelyOrRejectedWithoutTruncation() throws {
+    func testLongTextIsReadCompletelyOrExplicitlyMarkedPartial() throws {
         let source = String(repeating: "A full paragraph.\n", count: 3_000) + "FINAL DOCUMENT SENTINEL"
         let attachment = try MessageAttachmentIngestion.read(
             data: Data(source.utf8), fileName: "long.txt", mimeType: "text/plain"
@@ -86,10 +86,18 @@ final class AttachmentSafetyTests: XCTestCase {
         XCTAssertEqual(attachment.extractedText, source)
         let prepared = try prepare([ConversationMessage(role: .user, content: "Read it", attachments: [attachment])])
         XCTAssertTrue(prepared.messages[0].content.contains(source))
-        XCTAssertThrowsError(try MessageAttachmentIngestion.read(
-            data: Data(String(repeating: "x", count: MessageAttachmentIngestion.maximumExtractedUTF16Units + 1).utf8),
-            fileName: "too-long.txt", mimeType: "text/plain"
-        ))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try AttachmentTextCorpusStore.$directoryOverride.withValue(root) {
+            let indexed = try MessageAttachmentIngestion.read(
+                data: Data(String(repeating: "x", count: MessageAttachmentIngestion.maximumExtractedUTF16Units + 1).utf8),
+                fileName: "long-indexed.txt", mimeType: "text/plain"
+            )
+            XCTAssertEqual(indexed.effectiveReadStatus, .complete)
+            XCTAssertEqual(indexed.extractedText.utf16.count, MessageAttachmentIngestion.maximumExtractedUTF16Units)
+            XCTAssertEqual(indexed.textCorpusUTF16Count, MessageAttachmentIngestion.maximumExtractedUTF16Units + 1)
+            XCTAssertEqual(try AttachmentTextCorpusStore.text(for: indexed).utf16.count, MessageAttachmentIngestion.maximumExtractedUTF16Units + 1)
+        }
     }
 
     func testLatestQuestionAndAllDocumentsSurviveOldAttachmentBudgets() throws {
@@ -239,9 +247,10 @@ final class AttachmentSafetyTests: XCTestCase {
             }
             XCTAssertFalse(quick ? model.isIngestingQuickAttachment : model.isIngestingDraftAttachment)
             let attachments = quick ? model.quickDraftAttachments : model.draftAttachments
-            XCTAssertEqual(attachments.map(\.fileName), ["one.jpg", "two.jpg", "notes.txt"])
+            XCTAssertEqual(attachments.map(\.fileName), ["one.jpg", "two.jpg", "notes.txt", "broken.pdf"])
             XCTAssertEqual(attachments.filter(\.isImage).count, 2)
-            XCTAssertTrue((quick ? model.quickAskError : model.errorMessage)?.contains("broken.pdf") == true)
+            XCTAssertEqual(attachments.last?.effectiveReadStatus, .unreadable)
+            XCTAssertTrue(attachments.last?.readDetail?.contains("PDF") == true)
             for attachment in attachments {
                 if quick { model.removeQuickDraftAttachment(attachment.id) }
                 else { model.removeDraftAttachment(attachment.id) }

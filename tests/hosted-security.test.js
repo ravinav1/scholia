@@ -273,6 +273,11 @@ test('failed automatic transfers consume the batch budget and never cross Canvas
 
 test('the default PDF respects automatic download limits while explicit attachment opening remains available', async (t) => {
   const transfers = [];
+  const assignmentRecord = {
+    id: 1, name: 'Large PDF', updated_at: 'v1', published: true,
+    description: '<a href="/courses/1/files/1/download">large.pdf</a>',
+    submission_types: ['online_upload'],
+  };
   const app = await fixture(t, {
     canvasHosts: ['canvas.example'],
     remoteRequest: async (address, options) => {
@@ -281,6 +286,10 @@ test('the default PDF respects automatic download limits while explicit attachme
         transfers.push(options.limit);
         return { status: 200, headers: {}, data: Buffer.from('PDF fixture') };
       }
+      if (url.pathname === '/api/v1/courses/1/assignments/1')
+        return { status: 200, headers: {}, data: JSON.stringify(assignmentRecord) };
+      if (url.pathname === '/api/v1/courses/1/assignments')
+        return { status: 200, headers: {}, data: JSON.stringify([assignmentRecord]) };
       return {
         status: 200,
         headers: {},
@@ -300,6 +309,7 @@ test('the default PDF respects automatic download limits while explicit attachme
   const assignment = {
     id: 'assignments:1',
     kind: 'assignments',
+    remoteID: '1',
     title: 'Large PDF',
     version: 'v1',
     assignment: { linkedFileIDs: ['1'] },

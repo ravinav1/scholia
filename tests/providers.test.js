@@ -12,8 +12,16 @@ import {
   providerSupportsWebSearch,
   publicSettings,
   resolveModelId,
-  siteIsEnabled
+  siteIsEnabled,
+  sortModelChoices
 } from '../packages/core/src/providers.js';
+
+test('model picker puts verified models first, then capacity and numeric newest versions', () => {
+  assert.deepEqual(sortModelChoices(['gpt-6-luna', 'gpt-5-mini', 'gpt-6-astra', 'gpt-6-sol', 'gpt-5.6'], new Set(['gpt-5-mini', 'gpt-6-sol'])),
+    ['gpt-6-sol', 'gpt-5-mini', 'gpt-6-astra', 'gpt-5.6', 'gpt-6-luna']);
+  assert.deepEqual(sortModelChoices(['claude-opus-4-8', 'claude-opus-4-10', 'claude-opus-4-7']),
+    ['claude-opus-4-10', 'claude-opus-4-8', 'claude-opus-4-7']);
+});
 
 test('website access policies are normalized and exposed without secrets', () => {
   const settings = mergeSettings({
@@ -90,10 +98,7 @@ test('discovered models are normalized, public, and merged with arbitrary model 
   assert.ok(ids.includes('opencode-go/glm-5.3'));
   assert.ok(ids.includes('manual/anything'));
   assert.ok(ids.includes('future-provider/brand-new-model'));
-  assert.deepEqual(
-    choices.map(modelLabel),
-    choices.map(modelLabel).toSorted((left, right) => left.localeCompare(right, 'en', { numeric: true, sensitivity: 'base' }))
-  );
+  assert.ok(ids.indexOf('opencode-go/glm-5.3') < ids.indexOf('opencode-go/glm-5.3-flash'));
   assert.equal(
     providerModelChoices('opencode', settings, { includeSelected: false })
       .some((model) => modelId(model) === 'future-provider/brand-new-model'),

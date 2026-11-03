@@ -36,7 +36,8 @@ export function practiceQuestionMarkup(view) {
       )
       .join('')}
     ${['question', 'revision'].includes(s.stage) ? `<form id="practice-answer-form"><label for="practice-answer">Your answer</label><textarea id="practice-answer" rows="4" maxlength="20000" required></textarea><label for="practice-confidence">Confidence (optional)</label><select id="practice-confidence"><option value="">Not recorded</option>${[1, 2, 3, 4, 5].map((n) => `<option value="${n}">${n} / 5</option>`).join('')}</select><button class="primary" type="submit">Save answer & get feedback</button></form>` : button('Try again', 'revise')}
-    <div class="practice-actions">${s.hintCount < q.hintCount ? button('Next hint', 'hint') : ''}${!s.revealed ? button('Show solution / worked example', 'reveal') : ''}${button('Save for review', 'saveReview')}</div>
+    <div class="practice-actions">${s.hintCount < q.hintCount ? button('Next hint', 'hint') : ''}${!s.revealed ? button('Show solution / worked example', 'reveal', attempts.length ? '' : 'disabled title="Save an attempt first. You can describe where you are stuck."') : ''}${button('Save for review', 'saveReview')}</div>
+    ${!attempts.length && !s.revealed ? '<p>Save an attempt to unlock the solution. If you are stuck, describe what you tried or where you need help.</p>' : ''}
     ${q.referenceAnswer ? `<section class="practice-solution"><h3>Reference solution</h3>${renderMarkdown(q.referenceAnswer)}<ul>${(q.rubric || []).map((r) => `<li>${esc(r)}</li>`).join('')}</ul><p>Revealing the solution is recorded as assistance.</p></section>` : ''}
     <div class="practice-actions">${button(s.position + 1 < s.questionIDs.length ? 'Next question / skip' : 'Finish session', 'next')}${button('Finish now', 'finish')}${button('Explain in tutor', 'explain')}</div>`;
 }
@@ -57,7 +58,7 @@ export function practiceRecapMarkup(view) {
       );
       return `<article class="practice-attempt"><h3>${esc(q.concept)}</h3><p>${!attempts.length ? 'Skipped · untested' : success ? 'Answered independently' : 'Revisit after assistance, revision or unresolved feedback'}</p><p>${esc(q.source.title)} · page/section ${q.source.page}${q.stale ? ' · Source changed; needs revalidation' : ''}</p>
       ${attempts.map((a) => `<details><summary>${esc(date(a.createdAt))} · ${practiceAttemptLabel(a)}</summary><p>${esc(a.answer)}</p>${a.assessment ? `<strong>${esc(a.assessment.verdict)} · Model judgment</strong>${renderMarkdown(a.assessment.correct)}${renderMarkdown(a.assessment.issue)}${renderMarkdown(a.assessment.nextStep)}${a.dispute ? `<p>Unresolved: ${esc(a.dispute)}</p>` : `${button('This feedback seems wrong', 'dispute', `data-attempt="${a.id}" data-question="${q.id}"`)}`}` : button('Retry feedback', 'feedback', `data-attempt="${a.id}" data-question="${q.id}"`)}${a.selfAssessment ? `<p>Self-assessment: ${esc(a.selfAssessment)}</p>` : ''}</details>`).join('')}
-      ${q.referenceAnswer ? `<details><summary>Reference solution</summary>${renderMarkdown(q.referenceAnswer)}</details>` : button('Show solution', 'revealSaved', `data-question="${q.id}"`)}
+      ${q.referenceAnswer ? `<details><summary>Reference solution</summary>${renderMarkdown(q.referenceAnswer)}</details>` : attempts.length ? button('Show solution', 'revealSaved', `data-question="${q.id}"`) : '<p>Skipped without an attempt. Practise this question again to unlock its solution.</p>'}
       ${button('Save for review', 'saveReview', `data-question="${esc(q.id)}"`)}</article>`;
     })
     .join('')}`;

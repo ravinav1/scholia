@@ -30,7 +30,12 @@ struct CanvasCatalogChanges: Codable, Equatable, Sendable {
                 || (catalog.moduleOrderComplete && prior.moduleID != nil
                     && (reference.moduleID != prior.moduleID || reference.modulePosition != prior.modulePosition
                         || reference.moduleItemPosition != prior.moduleItemPosition
-                        || reference.moduleTitle != prior.moduleTitle))
+                        || reference.moduleTitle != prior.moduleTitle || reference.moduleSection != prior.moduleSection))
+                || (catalog.linkedContentComplete && prior.linkedFromID != nil
+                    && (reference.linkedFromID != prior.linkedFromID || reference.linkedFromTitle != prior.linkedFromTitle
+                        || reference.linkedOrder != prior.linkedOrder || reference.linkedPosition != prior.linkedPosition
+                        || reference.linkedSection != prior.linkedSection))
+                || (catalog.foldersComplete && prior.folderTitle != nil && reference.folderTitle != prior.folderTitle)
                 || (reference.byteCount != nil && prior.byteCount != nil && reference.byteCount != prior.byteCount)
                 || (reference.assignment != nil && reference.assignment != prior.assignment)
             {
@@ -42,16 +47,27 @@ struct CanvasCatalogChanges: Codable, Equatable, Sendable {
             if merged.fileName == nil { merged.fileName = prior.fileName }
             if merged.byteCount == nil { merged.byteCount = prior.byteCount }
             if merged.assignment == nil { merged.assignment = prior.assignment }
-            if !catalog.moduleOrderComplete && merged.moduleID == nil {
-                merged.moduleID = prior.moduleID
-                merged.moduleTitle = prior.moduleTitle
-                merged.modulePosition = prior.modulePosition
-                merged.moduleItemPosition = prior.moduleItemPosition
+            else { merged.assignment = merged.assignment?.retainingFeedback(from: prior.assignment) }
+            if (!catalog.moduleOrderComplete || !catalog.linkedContentComplete) && merged.moduleID == nil {
+                merged.copyModuleGrouping(from: prior)
+            }
+            if (!catalog.moduleOrderComplete || !catalog.linkedContentComplete) && merged.linkedFromID == nil {
+                merged.linkedFromID = prior.linkedFromID
+                merged.linkedFromTitle = prior.linkedFromTitle
+                merged.linkedPosition = prior.linkedPosition
+                merged.linkedOrder = prior.linkedOrder
+                merged.linkedSection = prior.linkedSection
+            }
+            if !catalog.foldersComplete && (merged.folderID == nil || merged.folderID == prior.folderID) {
+                merged.folderID = prior.folderID
+                merged.folderTitle = prior.folderTitle
             }
             latest[id] = merged
         }
         for (id, prior) in old where latest[id] == nil {
-            if catalog.completeKinds.contains(prior.kind) {
+            let complete = prior.isMathWiki ? catalog.mathWikiComplete
+                : prior.isCourseWebsite ? catalog.courseWebsitesComplete : catalog.completeKinds.contains(prior.kind)
+            if complete {
                 changes.removed.append(id)
             } else {
                 latest[id] = prior

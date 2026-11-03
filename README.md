@@ -19,6 +19,26 @@ There are three clients:
 These libraries are separate. The Mac app and its local website share data;
 there is no automatic sync with a hosted account or the extension.
 
+Choose **Language** beside the chat input to set the default for all chats in
+that client. **Auto** follows the language of each prompt; English and Norsk
+bokmål are available as fixed defaults. You can also ask for another language
+directly in a message.
+
+In a PDF reader, choose **Send entire PDF** to include every page’s extracted
+text and ask for an explanation of the whole document. Whole-document context
+stays available for follow-up questions. The reader reports unreadable pages;
+images and diagrams need to be attached for visual questions. Documents over
+750,000 characters must be split or use regular page context.
+
+Use **Search files** or **⌘K / Ctrl+K** in the Mac or web workspace to find names
+and text within one workspace or across your library. Needle returns verified
+page matches without embeddings or model calls. See [search and benchmarks](docs/SEARCH.md).
+
+Press **⌘⇧K / Ctrl+Shift+K** or choose **Switch** to jump to a workspace by name or
+course code. The same picker offers quick actions for coursework search,
+assignments, exam dates, review, and new chats. Type **>** to show only actions;
+use **↑ / ↓**, **Enter**, and **Escape** to navigate.
+
 ## Get started
 
 Use Node.js 24 or newer (`.nvmrc`), then install dependencies:
@@ -31,15 +51,26 @@ npm ci
 
 Requires macOS 14 or newer and Apple's developer tools.
 
+Double-click **[Update Scholia.command](Update%20Scholia.command)**, or run:
+
 ```sh
-npm run build:macos
-npm run install:macos -- --launch
+npm run update:macos
 ```
+
+This builds the current source, installs **Scholia** in **Applications**, and
+opens it. For later updates, choose **Scholia → Update Scholia…** in the app.
+Chats, documents, and settings are kept.
 
 Choose a provider in Settings and test a model. Create a workspace, import a
 file, or connect Canvas. See the [Mac setup guide](apps/macos/README.md) for
 signing and permissions and the [workspace guide](docs/STUDY_WORKSPACE.md) for
 reading, assignments, and course downloads.
+
+Choose **Study on Paper (⌘3)** to work with an iPhone Continuity Camera or webcam.
+Select a notebook region, ask contextual questions, or enable gentle proactive
+feedback. The camera session is temporary and clears when its window closes.
+See [camera setup, controls, and limitations](docs/PAPER_STUDY.md) and
+[verification results](docs/PAPER_STUDY_VERIFICATION.md).
 
 ### Hosted web
 

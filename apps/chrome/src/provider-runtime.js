@@ -78,6 +78,22 @@ function bridgeInstructions(provider, endpoint) {
   return { startUrl, command, installCommand, port };
 }
 
+export async function discoverCodexModels(rawSettings, options = {}) {
+  const settings = mergeSettings(rawSettings);
+  const endpoint = String(settings.endpoints.codex || providerById('codex').endpoint).trim();
+  assertSecureEndpoint(endpoint, 'Codex');
+  const signal = AbortSignal.any([AbortSignal.timeout(options.timeoutMs || 15_000), ...(options.signal ? [options.signal] : [])]);
+  const response = await fetch(`${endpointBase(endpoint)}/v1/models`, {
+    headers: settings.apiKeys.codex ? { authorization: `Bearer ${settings.apiKeys.codex}` } : {}, signal
+  });
+  if (!response.ok) throw new Error(`Codex model catalog returned HTTP ${response.status}.`);
+  const result = await response.json();
+  if (!Array.isArray(result.data)) throw new Error('Codex returned an invalid model catalog.');
+  const models = mergeSettings({ discoveredModels: { codex: result.data } }).discoveredModels.codex || [];
+  if (!models.length) throw new Error('Codex returned no models.');
+  return { models };
+}
+
 export async function discoverOpencodeModels(rawSettings, options = {}) {
   const settings = mergeSettings(rawSettings);
   const provider = providerById('opencode');
@@ -166,8 +182,8 @@ function imageParts(dataUrl) {
   return { mediaType: match[1], base64: match[2].replace(/\s/g, '') };
 }
 
-function preparedConversation(payload, settings) {
-  const language = normalizeLanguage(settings.language, payload.pageLanguage);
+function preparedConversation(payload, settings, { purpose = 'chat' } = {}) {
+  const language = normalizeLanguage(payload.language ?? settings.language);
   const legacyImage = imageParts(payload.imageDataUrl);
   const conversation = sanitizeConversation(payload.messages).map((message, index) => {
     const { imageDataUrl, ...textMessage } = message;
@@ -243,13 +259,16 @@ function preparedConversation(payload, settings) {
     language,
     conversation,
     hasImages: conversation.some((message) => Boolean(message.image)),
-    learningMode: payload.learningMode === true
+    learningMode: payload.learningMode,
+    entirePDF: payload.entirePDF === true && contextEnabled,
+    entireDocument: payload.entireDocument === true && contextEnabled,
+    purpose
   };
 }
 
 function openAiMessages(prepared) {
   return [
-    { role: 'system', content: systemPrompt(prepared.language, { learningMode: prepared.learningMode }) },
+    { role: 'system', content: systemPrompt(prepared.language, prepared) },
     ...prepared.conversation.map((message) => {
       const { image, ...textMessage } = message;
       if (!image || message.role !== 'user') return textMessage;
@@ -312,7 +331,7 @@ function anthropicMessages(prepared) {
 
 function ollamaMessages(prepared) {
   return [
-    { role: 'system', content: systemPrompt(prepared.language, { learningMode: prepared.learningMode }) },
+    { role: 'system', content: systemPrompt(prepared.language, prepared) },
     ...prepared.conversation.map((message) => {
       const { image, ...textMessage } = message;
       return { ...textMessage, ...(image ? { images: [image.base64] } : {}) };
@@ -320,14 +339,14 @@ function ollamaMessages(prepared) {
   ];
 }
 
-export function buildProviderRequest(payload, rawSettings) {
+export function buildProviderRequest(payload, rawSettings, options = {}) {
   const settings = mergeSettings(rawSettings);
   const providerId = payload.provider || settings.provider;
   const provider = providerById(providerId);
   const model = payload.model || settings.models[provider.id] || provider.defaultModel;
   const endpoint = String(settings.endpoints[provider.id] || provider.endpoint).trim();
   const key = String(settings.apiKeys[provider.id] || '').trim();
-  const prepared = preparedConversation(payload, settings);
+  const prepared = preparedConversation(payload, settings, options);
   const webSearch = payload.webSearch === true;
 
   if (!endpoint) throw new Error(`Set an endpoint for ${provider.name} in Scholia settings.`);
@@ -356,7 +375,7 @@ export function buildProviderRequest(payload, rawSettings) {
       model,
       max_tokens: 1400,
       stream: true,
-      system: systemPrompt(prepared.language, { learningMode: prepared.learningMode }),
+      system: systemPrompt(prepared.language, prepared),
       messages: anthropicMessages(prepared)
     };
     if (webSearch) {
@@ -381,7 +400,7 @@ export function buildProviderRequest(payload, rawSettings) {
       body = {
         model,
         stream: true,
-        instructions: systemPrompt(prepared.language, { learningMode: prepared.learningMode }),
+        instructions: systemPrompt(prepared.language, prepared),
         input: openAiResponsesInput(prepared),
         tools: [{ type: 'web_search' }]
       };
@@ -400,12 +419,12 @@ export function buildProviderRequest(payload, rawSettings) {
       }
     }
     if (provider.id === 'claudecode' || provider.id === 'codex') {
-      const reasoning = modelReasoning(provider, model);
+      const reasoning = modelReasoning(provider, model, settings);
       const effort = String(payload.reasoningEffort || settings.reasoningEfforts[provider.id] || reasoning?.default || '');
       if (reasoning?.efforts?.includes(effort)) body.reasoning_effort = effort;
     }
-    if (provider.id === 'openai' && /^gpt-6(?:-|$)/.test(model)) {
-      const reasoning = modelReasoning(provider, model);
+    if (provider.id === 'openai' && /^gpt-6(?:[.-]|$)/.test(model)) {
+      const reasoning = modelReasoning(provider, model, settings);
       const requested = payload.reasoningEffort || settings.reasoningEfforts[provider.id];
       const effort = reasoning?.efforts.includes(requested) ? requested : reasoning?.default || 'medium';
       delete body.temperature;
@@ -541,7 +560,23 @@ function finalizeProviderText(request, text, citations, webSearchUsed, onToken, 
   };
 }
 
-async function consumeSse(response, request, onToken, onReasoning) {
+export function providerActivity(event) {
+  if (event?.scholia_activity?.title) return {
+    title: String(event.scholia_activity.title).slice(0, 180),
+    detail: String(event.scholia_activity.detail || '').slice(0, 2000)
+  };
+  const type = String(event?.type || '');
+  if (/web_search_call\.(in_progress|searching)$/.test(type)) return { title: 'Searching the web' };
+  if (/web_search_call\.completed$/.test(type)) return { title: 'Web search complete' };
+  const block = event?.content_block;
+  if (type === 'content_block_start' && block?.type === 'server_tool_use')
+    return { title: 'Provider started a tool', detail: String(block.name || 'Tool').slice(0, 180) };
+  if (type === 'content_block_start' && /tool_result$/.test(block?.type || ''))
+    return { title: 'Tool result received', detail: String(block.type).replaceAll('_', ' ') };
+  return null;
+}
+
+async function consumeSse(response, request, onToken, onReasoning, onActivity) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -562,6 +597,8 @@ async function consumeSse(response, request, onToken, onReasoning) {
       throw new Error(streamError?.message || data?.message || 'The provider stream reported an error.');
     }
     collectWebCitations(data, citations);
+    const activity = providerActivity(data);
+    if (activity) onActivity(activity);
     webSearchUsed ||= containsWebSearchMarker(data);
     const reasoningDelta = reasoningDeltaFromProviderEvent(data, {
       protocol: request.provider.protocol,
@@ -654,7 +691,7 @@ function preparedImageFilename(message, index) {
 
 function opencodeTranscript(prepared) {
   return [
-    { role: 'system', content: systemPrompt(prepared.language, { learningMode: prepared.learningMode }) },
+    { role: 'system', content: systemPrompt(prepared.language, prepared) },
     ...prepared.conversation
   ].map((message, index) => {
     const role = message.role === 'assistant' ? 'Assistant' : message.role === 'system' ? 'System' : 'User';
@@ -731,7 +768,7 @@ async function runOpencode(request, onToken, signal, onReasoning) {
     return requestJson(`/session/${encodeURIComponent(id)}/message`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: opencodeModel(chosenModel), ...(variant ? { variant } : {}), parts })
+      body: JSON.stringify({ model: opencodeModel(chosenModel), system: systemPrompt(prepared.language, prepared), ...(variant ? { variant } : {}), parts })
     });
   }
 
@@ -775,7 +812,7 @@ async function runOpencode(request, onToken, signal, onReasoning) {
   return { text, reasoning, provider: provider.id, model };
 }
 
-export async function runCompletion(payload, settings, onToken = () => {}, signal, onReasoning = () => {}) {
+export async function runCompletion(payload, settings, onToken = () => {}, signal, onReasoning = () => {}, onActivity = () => {}, options = {}) {
   const merged = mergeSettings(settings);
   const provider = providerById(payload.provider || merged.provider);
   let effectivePayload = payload;
@@ -789,7 +826,8 @@ export async function runCompletion(payload, settings, onToken = () => {}, signa
     }
     effectivePayload = { ...payload, bridgeSupportsImages: true };
   }
-  const request = buildProviderRequest(effectivePayload, merged);
+  const request = buildProviderRequest(effectivePayload, merged, options);
+  onActivity({ title: `Connecting to ${request.provider.name}`, timestamp: Date.now() });
   if (request.provider.protocol === 'opencode') return runOpencode(request, onToken, signal, onReasoning);
 
   let response;
@@ -833,7 +871,7 @@ export async function runCompletion(payload, settings, onToken = () => {}, signa
 
   const completion = request.provider.protocol === 'ollama'
     ? { ...await consumeNdjson(response, onToken, onReasoning), webSearch: false, webSearchUsed: false, sourceCount: 0 }
-    : await consumeSse(response, request, onToken, onReasoning);
+    : await consumeSse(response, request, onToken, onReasoning, onActivity);
 
   if (!completion.text.trim()) throw new Error(`${request.provider.name} returned an empty response.`);
   return { ...completion, provider: request.provider.id, model: request.model };

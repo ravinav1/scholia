@@ -1,4 +1,4 @@
-export const PDF_INDEX_CACHE_VERSION = 1;
+export const PDF_INDEX_CACHE_VERSION = 3;
 export const MAX_CACHED_PDF_INDEX_CHARACTERS = 20_000_000;
 export const MAX_TOTAL_CACHED_PDF_INDEX_CHARACTERS = 60_000_000;
 export const MAX_CACHED_PDF_INDEXES = 12;
@@ -44,6 +44,8 @@ export function createPdfIndexCacheRecord({
   searchTexts,
   contextPages,
   title = '',
+  ocrPageCount = 0,
+  ocrNotice = '',
   now = Date.now()
 } = {}) {
   const totalPages = finiteInteger(pageCount);
@@ -62,6 +64,8 @@ export function createPdfIndexCacheRecord({
     searchTexts,
     contextPages,
     title: String(title || '').slice(0, 500),
+    ocrPageCount: Math.min(indexedPages, Math.max(0, Number(ocrPageCount) || 0)),
+    ocrNotice: String(ocrNotice || '').slice(0, 1_000),
     characterCount,
     updatedAt: timestamp
   };

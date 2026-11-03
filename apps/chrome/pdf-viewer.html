@@ -12,7 +12,10 @@
       <span class="mark" aria-hidden="true">S</span>
       <div class="document-copy">
         <strong id="document-title">Opening PDF…</strong>
-        <button id="source-url" class="document-source" type="button" hidden></button>
+        <div id="source-actions" class="document-source-actions" hidden>
+          <button id="source-url" class="document-source" type="button" hidden></button>
+          <button id="copy-source-url" class="copy-source-url" type="button" title="Copy original PDF URL" aria-label="Copy original PDF URL" aria-live="polite" hidden>Copy URL</button>
+        </div>
         <div id="document-activity" class="document-activity" data-state="working">
           <span class="document-activity__indicator" aria-hidden="true"></span>
           <span id="document-status" role="status">Preparing Scholia PDF view</span>
@@ -93,6 +96,7 @@
       <button id="choose-file" class="quiet-button" type="button" title="Choose another PDF">Choose file</button>
       <button id="open-native" class="quiet-button" type="button" title="Open in Chrome's built-in PDF viewer">Chrome view</button>
       <button id="open-chat" class="primary-button" type="button" aria-controls="pdf-chat" aria-expanded="false" disabled>Chat with PDF</button>
+      <button id="send-entire-pdf" class="quiet-button" type="button" title="Send every page’s extracted text to the tutor and ask for an explanation" disabled>Send entire PDF</button>
     </div>
 
     <section id="pdf-search" class="pdf-search" role="search" aria-label="Search PDF" hidden>

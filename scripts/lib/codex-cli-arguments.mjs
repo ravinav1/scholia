@@ -1,4 +1,4 @@
-export function buildCodexExecArguments({ model, effort, fastMode = false, webSearch = false, imagePaths = [] }) {
+export function buildCodexExecArguments({ model, effort, fastMode = false, webSearch = false, imagePaths = [], systemInstructions = '' }) {
   const argumentsList = [
     ...(webSearch ? ['--search'] : []),
     'exec',
@@ -15,7 +15,7 @@ export function buildCodexExecArguments({ model, effort, fastMode = false, webSe
     '--model',
     model,
     '--config',
-    `model_reasoning_effort="${effort}"`,
+    `model_reasoning_effort=${JSON.stringify(effort)}`,
     '--config',
     'model_verbosity="low"',
     '--config',
@@ -23,6 +23,9 @@ export function buildCodexExecArguments({ model, effort, fastMode = false, webSe
     '--config',
     'hide_agent_reasoning=false'
   ];
+  // Pass application rules at developer priority, outside the user transcript.
+  // execFile/spawn argv and a TOML-compatible quoted string avoid shell parsing.
+  if (systemInstructions) argumentsList.push('--config', `developer_instructions=${JSON.stringify(systemInstructions)}`);
   if (fastMode) {
     argumentsList.push('--config', 'service_tier="fast"', '--enable', 'fast_mode');
   }

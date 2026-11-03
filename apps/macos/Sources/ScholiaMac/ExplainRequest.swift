@@ -106,6 +106,10 @@ struct CapturedContent: Identifiable, Equatable, Sendable {
     }
 }
 
+enum AttachmentReadStatus: String, Codable, Sendable {
+    case complete, partial, unreadable
+}
+
 /// Documents carry extracted text; images carry a prepared raster. Document
 /// bytes are never serialized as provider file blocks.
 struct MessageAttachment: Identifiable, Codable, Equatable, Sendable {
@@ -115,12 +119,37 @@ struct MessageAttachment: Identifiable, Codable, Equatable, Sendable {
     var byteCount: Int
     var extractedText: String
     var imageData: Data? = nil
+    var readStatus: AttachmentReadStatus? = nil
+    var readDetail: String? = nil
+    var sourcePath: String? = nil
+    var isEnabled: Bool? = nil
+    var textCorpusID: String? = nil
+    var textCorpusUTF16Count: Int? = nil
+    /// Set only on copies prepared for a provider request, never on saved originals.
+    var requestTextPrepared: Bool? = nil
+
+    var includedInContext: Bool { isEnabled != false }
 
     var isImage: Bool { imageData != nil && mimeType.hasPrefix("image/") }
+    var effectiveReadStatus: AttachmentReadStatus { readStatus ?? .complete }
+    var readStatusLabel: String {
+        switch effectiveReadStatus {
+        case .complete: isImage ? "Image included" : textCorpusID != nil ? "All text indexed" : "Text read"
+        case .partial: modelStructureAvailable ? "Model structure read" : "Partly read"
+        case .unreadable: "Contents unavailable"
+        }
+    }
 
     var formattedByteCount: String {
         ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
     }
+}
+
+struct ConversationActivity: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var timestamp = Date()
+    var title: String
+    var detail: String?
 }
 
 struct ConversationMessage: Identifiable, Codable, Equatable, Sendable {
@@ -138,6 +167,11 @@ struct ConversationMessage: Identifiable, Codable, Equatable, Sendable {
     var reasoning: String?
     var isStreaming: Bool
     var metadata: String?
+    var activity: [ConversationActivity]?
+    var modelRouting: StudyModelRoute?
+    var usage: CompletionUsage?
+    /// Wall time including source preparation, tools, and model inference.
+    var responseDurationSeconds: Double?
 
     init(
         id: UUID = UUID(),
@@ -148,7 +182,11 @@ struct ConversationMessage: Identifiable, Codable, Equatable, Sendable {
         attachments: [MessageAttachment]? = nil,
         reasoning: String? = nil,
         isStreaming: Bool = false,
-        metadata: String? = nil
+        metadata: String? = nil,
+        activity: [ConversationActivity]? = nil,
+        modelRouting: StudyModelRoute? = nil,
+        usage: CompletionUsage? = nil,
+        responseDurationSeconds: Double? = nil
     ) {
         self.id = id
         self.role = role
@@ -159,6 +197,17 @@ struct ConversationMessage: Identifiable, Codable, Equatable, Sendable {
         self.reasoning = reasoning
         self.isStreaming = isStreaming
         self.metadata = metadata
+        self.activity = activity
+        self.modelRouting = modelRouting
+        self.usage = usage
+        self.responseDurationSeconds = responseDurationSeconds
+    }
+
+    mutating func recordActivity(_ title: String, detail: String? = nil) {
+        let title = String(title.prefix(180))
+        let detail = detail.map { String($0.prefix(2_000)) }
+        guard activity?.last?.title != title || activity?.last?.detail != detail else { return }
+        activity = Array(((activity ?? []) + [ConversationActivity(title: title, detail: detail)]).suffix(80))
     }
 }
 

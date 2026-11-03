@@ -43,6 +43,20 @@ reading destinations and saves drafts before navigation. An AppKit split view
 lets the tutor occupy almost the full document window without replacing the
 reader or reloading the PDF.
 
+Saved capture conversations use a separate coalescing utility writer, with
+clears ordered behind outstanding writes and a durability barrier at app exit.
+Resizing native answers reflows their existing attributed text and adjusts math
+attachments without reparsing Markdown. Equation images are shared across pane
+widths in a cost-limited cache. Dismantling a PDF reader releases its document and
+interaction callbacks immediately.
+
+PDF parsing runs on a serial background actor. Document tickets discard stale
+loads after navigation, while same-document conversations retain their index
+and OCR work. A bounded LRU cache shares decoded text indexes across reading,
+practice, and context retrieval; file identity, size, and modification time
+invalidate edited or replaced indexes. Reading-position changes leave material
+groupings intact.
+
 Canvas catalogs metadata before downloading content. Materials have stable
 source identities, optional module positions, remote versions, and saved
 references. Refresh reconciles additions, changes, and removals while preserving
@@ -68,12 +82,42 @@ region capture crops and resizes only an explicitly selected area. Quick Chat
 remains in memory until promoted to a saved conversation. Local CLI bridges are
 started only when needed and stopped only if Scholia owns their process.
 
+## Native paper study
+
+`PaperStudyWindowController` owns a separate temporary session. `PaperCamera`
+uses AVFoundation Continuity/external camera discovery, a local preview, and a
+serial capture queue. Only selected, resized crops reach `PaperStudySession`,
+at most twice per second; quality and hand checks run locally. Session revision
+and request generations reject stale answers, with one pending request and
+latency-aware spacing. `PaperTutor` builds bounded multimodal context and
+validates structured observations through the existing `ProviderClient`, using
+a dedicated tutoring purpose. Paper sessions do not write `StudyLibrary` or
+`ConversationStore`; closing or clearing stops capture and releases the session.
+See [paper study](PAPER_STUDY.md) for controls and provider retention boundaries.
+
 ## Local browser workspace
 
 **Open in Browser** starts `StudyWebServer` on `127.0.0.1:8792`. Its bundled
 frontend shares the native model, files, provider settings, Canvas connection,
 reading position, and learning store. The Mac must remain running. Native and
 local-browser navigation refer to the same active workspace.
+
+The dashboard loads a small ES module graph. PDF.js, notebook reading, practice,
+assignment instructions, and rich text rendering load when first used. HTML
+escaping stays independent of Markdown, math, and syntax highlighting. Reader
+generations prevent delayed loads from replacing a newer destination; failed
+loads expose a retry. Chat updates retain unchanged message sections so activity
+ticks and streamed tokens preserve source controls, disclosures, and selection.
+The PDF reader additionally budgets retained canvas pixels, evicting completed
+offscreen pages while protecting visible pages and active selections. This
+avoids retaining ten high-resolution canvases merely to fill PDF.js's page cache.
+
+Both browser APIs support conditional state requests with ETags. The browser
+acknowledges only accepted snapshots, skips parsing and rendering on unchanged
+responses, and separately advances deadline and answer timers. Native snapshots
+are invalidated by model changes and encoded off the main actor. Static assets
+revalidate privately; session HTML and API state remain `no-store`. Material
+groupings are reused until their catalog inputs change.
 
 The server validates Host and Origin, rejects cross-site requests, and requires
 a per-launch token for API and document access. It sends no raw Keychain
@@ -107,6 +151,12 @@ native process, desktop permission, or loopback bridge is required.
   host allowlist. `network.js` rejects private/reserved network destinations,
   pins validated DNS results for requests, bounds downloads, and strips
   credentials when following file redirects.
+
+Original document and static-asset responses stream from open file descriptors
+with backpressure, instead of buffering complete files for each client. Search
+workers retire their isolates after idle deadlines and reopen persistent indexes
+on demand. Retirement is negotiated with the parent so a new request or ongoing
+semantic indexing cannot be interrupted by the idle timer.
 
 API and file routes authenticate the session and check ownership before reading
 data. Mutations require the session's CSRF token. Host/Origin checks, strict

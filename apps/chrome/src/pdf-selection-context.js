@@ -1,4 +1,6 @@
 import { COMPACT_PACKED_CONTEXT_CHARS } from '../../../packages/core/src/context.js';
+import { FULL_CONTEXT_CHARS } from './context-mode.js';
+import { formatPdfContext } from './pdf-context.js';
 
 export const LARGE_PDF_PAGE_COUNT = 50;
 export const LARGE_PDF_CONTEXT_CHARACTERS = 100_000;
@@ -28,12 +30,40 @@ export function pdfSelectionPages(range, fallbackPage = 1) {
     .concat(start || end ? [] : [fallbackPage]);
 }
 
-/** Read a bounded neighborhood without depending on the full-document index. */
+/** Keep article-sized PDFs whole in Full mode; bound reads for larger documents. */
 export async function pdfSelectionMetadata({
-  metadata, pageCount, selectedPages = [1], selection = '', readPage, ...source
+  metadata, pageCount, selectedPages = [1], selection = '', readPage, fullContext = false, ...source
 }) {
-  if (metadata && pageCount < LARGE_PDF_PAGE_COUNT
+  const complete = metadata && !metadata.pdfLocalContext && !metadata.truncated
+    && String(metadata.context || '').trim()
+    && (metadata.extractedPageCount == null || metadata.extractedPageCount === pageCount);
+  if (fullContext && complete && metadata.context.length <= FULL_CONTEXT_CHARS) return metadata;
+  if (!fullContext && complete && pageCount < LARGE_PDF_PAGE_COUNT
       && String(metadata.context || '').length <= LARGE_PDF_CONTEXT_CHARACTERS) return metadata;
+
+  // A selection can arrive before background indexing finishes. Read a short
+  // document on demand, stopping as soon as it exceeds the full-context budget.
+  // Reuse these reads if we need to fall back to the selected page neighborhood.
+  const pageReads = new Map();
+  const readText = (page) => {
+    if (!pageReads.has(page)) pageReads.set(page, Promise.resolve().then(() => readPage(page)));
+    return pageReads.get(page);
+  };
+  if (fullContext && !complete && pageCount > 0 && pageCount < LARGE_PDF_PAGE_COUNT) {
+    const texts = [];
+    let characters = 0;
+    for (let page = 1; page <= pageCount; page += 1) {
+      let text;
+      try { text = String(await readText(page) || '').trim(); } catch { break; }
+      characters += `[PDF page ${page} of ${pageCount}]\n`.length
+        + (text || '(No extractable text on this page.)').length + (page > 1 ? 2 : 0);
+      if (characters > FULL_CONTEXT_CHARS) break;
+      texts.push(text);
+    }
+    if (texts.length === pageCount) {
+      return { ...metadata, ...source, ...formatPdfContext(texts, pageCount), pdfLocalContext: false, truncated: false };
+    }
+  }
 
   const validPage = (page) => Number.isInteger(page) && page >= 1 && page <= pageCount;
   const anchors = [...new Set(selectedPages.filter(validPage))].slice(0, 2);
@@ -54,7 +84,7 @@ export async function pdfSelectionMetadata({
   for (const page of pages) {
     let text;
     try {
-      text = String(await readPage(page) || '').trim() || '(No extractable text on this page.)';
+      text = String(await readText(page) || '').trim() || '(No extractable text on this page.)';
     } catch {
       text = '(Text could not be extracted from this page.)';
     }

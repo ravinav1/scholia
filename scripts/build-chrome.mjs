@@ -87,6 +87,12 @@ await Promise.all([
     entryPoints: [join(sourceRoot, 'pdf-viewer.js')],
     outfile: join(outputRoot, 'pdf-viewer.js'),
     format: 'esm'
+  }),
+  build({
+    ...shared,
+    entryPoints: [join(sourceRoot, 'ocr-offscreen.js')],
+    outfile: join(outputRoot, 'ocr-offscreen.js'),
+    format: 'esm'
   })
 ]);
 
@@ -96,7 +102,7 @@ for (const file of [
   'panel.html', 'panel.css', 'file-attachments.css',
   'chat.html', 'chat.css', 'chat-bootstrap.js',
   'popup.html', 'popup.css',
-  'pdf-viewer.html', 'pdf-viewer.css'
+  'pdf-viewer.html', 'pdf-viewer.css', 'ocr-offscreen.html'
 ]) {
   await cp(join(chromeRoot, file), join(outputRoot, file));
 }
@@ -124,6 +130,21 @@ await cp(join(pdfjsRoot, 'cmaps'), join(pdfjsOutput, 'cmaps'), { recursive: true
 await cp(join(pdfjsRoot, 'standard_fonts'), join(pdfjsOutput, 'standard_fonts'), { recursive: true });
 await cp(join(pdfjsRoot, 'web', 'images'), join(pdfjsOutput, 'images'), { recursive: true });
 await cp(join(pdfjsRoot, 'LICENSE'), join(pdfjsOutput, 'LICENSE'));
+
+// OCR runs fully inside the extension; neither code nor language data uses a CDN.
+const ocrRoot = join(outputRoot, 'vendor', 'ocr');
+await mkdir(join(ocrRoot, 'lang'), { recursive: true });
+await cp(join(projectRoot, 'node_modules/tesseract.js/dist/worker.min.js'), join(ocrRoot, 'worker.min.js'));
+await cp(join(projectRoot, 'node_modules/tesseract.js/LICENSE.md'), join(licenseOutput, 'tesseract.js.txt'));
+await cp(join(projectRoot, 'node_modules/tesseract.js-core/LICENSE'), join(licenseOutput, 'tesseract.js-core.txt'));
+for (const variant of ['lstm', 'simd-lstm', 'relaxedsimd-lstm']) {
+  const name = `tesseract-core-${variant}.wasm.js`;
+  await cp(join(projectRoot, 'node_modules/tesseract.js-core', name), join(ocrRoot, name));
+}
+for (const language of ['eng', 'nor']) {
+  await cp(join(projectRoot, `node_modules/@tesseract.js-data/${language}/4.0.0_best_int/${language}.traineddata.gz`),
+    join(ocrRoot, 'lang', `${language}.traineddata.gz`));
+}
 
 const manifest = JSON.parse(await readFile(outputManifestPath, 'utf8'));
 const requestedVersion = String(process.env.SCHOLIA_EXTENSION_VERSION || '').trim();

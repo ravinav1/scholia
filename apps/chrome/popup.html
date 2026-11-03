@@ -34,6 +34,10 @@
         <button id="quick-send" class="primary" type="submit" aria-label="Send Quick Chat message">↑</button>
       </form>
       <p class="quick-hint">Enter to send · Shift+Enter for a new line · Compact off uses full context</p>
+      <div class="quick-preferences">
+        <label class="reasoning-control" data-reasoning-control hidden>Reasoning <select id="reasoning-select" aria-label="Reasoning effort for next message"></select></label>
+        <label class="response-language" title="Default response language for all chats. Auto follows the language of your prompt.">Language <select data-response-language aria-label="Response language"></select></label>
+      </div>
     </section>
 
     <section class="site-card">
@@ -46,6 +50,7 @@
       <button id="open-sidebar" class="primary launcher-main" type="button"><span>Open sidebar</span><span aria-hidden="true">→</span></button>
       <button id="new-chat" class="secondary" type="button">＋ New chat</button>
       <button id="open-pdf" class="secondary pdf-viewer-launcher" type="button"><span>Open a PDF file or address</span><span aria-hidden="true">＋</span></button>
+      <button id="open-exam-planner" class="secondary pdf-viewer-launcher" type="button" title="Open your Scholia website. Set its address in extension settings."><span>Exam planner</span><span aria-hidden="true">↗</span></button>
       <button id="open-pdf-viewer" class="secondary pdf-viewer-launcher" type="button" hidden><span>Open Scholia PDF view</span><span aria-hidden="true">↗</span></button>
       <div class="quick-actions">
         <button id="explain" class="quiet" type="button"><span aria-hidden="true">⌁</span> Explain selection</button>

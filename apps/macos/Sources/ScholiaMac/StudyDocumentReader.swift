@@ -39,38 +39,34 @@ struct StudyPDFReader: NSViewRepresentable {
     var onFigure: (Data) -> Void
     var controls: StudyPDFControls? = nil
     var onSelectionAction: ((String, Bool, String) -> Bool)? = nil
+    var selectionResponse: ((@escaping () -> Void) -> AnyView)? = nil
     var selectionBusy = false
     var revision = ""
+    var onOpenLink: ((URL) -> Bool)? = nil
 
     func makeNSView(context: Context) -> StudyPDFHost {
         let host = StudyPDFHost()
         context.coordinator.host = host
+        host.pdf.delegate = context.coordinator
         context.coordinator.observe()
         return host
     }
     func updateNSView(_ host: StudyPDFHost, context: Context) {
         context.coordinator.parent = self
         if host.url != url || host.revision != revision {
+            host.closeSelectionResponse()
             host.pendingPage = page
             host.url = url
             host.revision = revision
-            host.pdf.document = PDFDocument(url: url)
-            host.pdf.autoScales = true
-            DispatchQueue.main.async { controls?.attach(host) }
+            context.coordinator.loadDocument(url: url, revision: revision)
         }
+        // Page controls can change while file parsing is still in progress.
+        if context.coordinator.loadingDocument { host.pendingPage = page }
         host.controls = controls
         host.selectionBusy = selectionBusy
-        host.onSelectionAction = { [weak host] text, explain, question in
-            if let selectedPage = host?.selectionPage { page = selectedPage }
-            selection = text
-            return onSelectionAction?(text, explain, question) ?? false
-        }
+        host.selectionResponse = selectionResponse
+        configureActions(for: host)
         host.crop.isHidden = !selectingFigure
-        host.crop.onCapture = { data in
-            selectingFigure = false
-            if let capturedPage = host.crop.capturedPage { page = capturedPage }
-            if let data { onFigure(data) }
-        }
         if host.pendingPage == nil, let target = host.pdf.document?.page(at: page - 1), host.pdf.currentPage !== target
         {
             host.pdf.go(to: target)
@@ -81,18 +77,73 @@ struct StudyPDFReader: NSViewRepresentable {
             if zoom != 1 { host.pdf.scaleFactor = host.pdf.scaleFactorForSizeToFit * zoom }
         }
     }
+    func configureActions(for host: StudyPDFHost) {
+        host.onSelectionAction = { [weak host] text, explain, question in
+            if let selectedPage = host?.selectionPage { page = selectedPage }
+            selection = text
+            return onSelectionAction?(text, explain, question) ?? false
+        }
+        // The host owns the overlay; retaining it here would keep every closed
+        // reader, PDF document, and rendered page alive after navigation.
+        host.crop.onCapture = { [weak host] data in
+            selectingFigure = false
+            if let capturedPage = host?.crop.capturedPage { page = capturedPage }
+            if let data { onFigure(data) }
+        }
+    }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     static func dismantleNSView(_ host: StudyPDFHost, coordinator: Coordinator) {
+        coordinator.cancelDocumentLoad()
         NotificationCenter.default.removeObserver(coordinator)
+        host.pdf.delegate = nil
         coordinator.host = nil
         host.stopObservingEvents()
+        host.crop.onCapture = nil
+        host.onSelectionAction = nil
+        host.selectionResponse = nil
+        host.pdf.document = nil
     }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, @preconcurrency PDFViewDelegate {
         var parent: StudyPDFReader
         weak var host: StudyPDFHost?
+        private var loadTask: Task<Void, Never>?
+        private var loadID: UUID?
+        private var selectionUpdateScheduled = false
+        var loadingDocument: Bool { loadTask != nil }
         init(_ parent: StudyPDFReader) { self.parent = parent }
+        func cancelDocumentLoad() {
+            loadTask?.cancel()
+            loadTask = nil
+            loadID = nil
+        }
+        func loadDocument(url: URL, revision: String) {
+            cancelDocumentLoad()
+            let ticket = UUID()
+            loadID = ticket
+            // Clear the previous reading immediately; a slow load must never
+            // expose the old PDF beneath the new document title.
+            host?.pdf.document = nil
+            loadTask = Task { [weak self] in
+                do {
+                    let loaded = try await StudyPDFDocumentLoader.shared.load(url)
+                    guard let self, !Task.isCancelled, self.loadID == ticket,
+                          let host = self.host, host.url == url, host.revision == revision else { return }
+                    self.loadTask = nil
+                    host.pdf.document = loaded.document
+                    host.pdf.autoScales = true
+                    self.parent.controls?.attach(host)
+                    host.needsLayout = true
+                } catch {
+                    if self?.loadID == ticket { self?.loadTask = nil }
+                }
+            }
+        }
+        func pdfViewWillClick(onLink sender: PDFView, with url: URL) {
+            guard StudyHTML.safeURL(url.absoluteString) != nil else { return }
+            if parent.onOpenLink?(url) != true { NSWorkspace.shared.open(url) }
+        }
         func observe() {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(pageChanged), name: .PDFViewPageChanged, object: host?.pdf)
@@ -112,9 +163,19 @@ struct StudyPDFReader: NSViewRepresentable {
             }
         }
         @objc func selectionChanged() {
-            let text = host?.pdf.currentSelection?.string ?? ""
-            DispatchQueue.main.async { [weak self] in self?.parent.selection = String(text.prefix(16_000)) }
             host?.scheduleSelectionPopup()
+            // PDFKit may emit several changes during one selection drag. Read
+            // the latest text once after that burst instead of retaining and
+            // publishing every intermediate multi-page selection.
+            guard !selectionUpdateScheduled else { return }
+            selectionUpdateScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.selectionUpdateScheduled = false
+                guard let host = self.host else { return }
+                let text = String((host.pdf.currentSelection?.string ?? "").prefix(16_000))
+                if self.parent.selection != text { self.parent.selection = text }
+            }
         }
     }
 }
@@ -130,6 +191,8 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
     var zoomMode = "width"
     weak var controls: StudyPDFControls?
     var onSelectionAction: ((String, Bool, String) -> Bool)?
+    var selectionResponse: ((@escaping () -> Void) -> AnyView)?
+    private(set) var responsePopover: NSPopover?
     var selectionBusy = false { didSet { explainButton.isEnabled = !selectionBusy } }
     private(set) var selectionPage: Int?
     private var popupText = ""
@@ -161,9 +224,9 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         selectionPopup.isHidden = true
         selectionPreview.font = .systemFont(ofSize: 11)
         selectionPreview.textColor = .secondaryLabelColor
-        selectionPreview.maximumNumberOfLines = 2
+        selectionPreview.maximumNumberOfLines = 1
         selectionPreview.lineBreakMode = .byTruncatingTail
-        questionField.placeholderString = "Ask about this…"
+        questionField.placeholderString = "Add a question (optional)"
         questionField.font = .systemFont(ofSize: 12)
         questionField.bezelStyle = .roundedBezel
         questionField.delegate = self
@@ -182,14 +245,15 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         close.isBordered = false
         close.setAccessibilityLabel("Close selection popup")
         let hint = NSTextField(labelWithString: "Selection + document context")
+        hint.stringValue = "Passage + context"
         hint.font = .systemFont(ofSize: 9)
         hint.textColor = .secondaryLabelColor
-        selectionPreview.frame = NSRect(x: 12, y: 78, width: 303, height: 32)
-        questionField.frame = NSRect(x: 12, y: 40, width: 244, height: 27)
-        explainButton.frame = NSRect(x: 262, y: 39, width: 77, height: 28)
-        hint.frame = NSRect(x: 12, y: 15, width: 185, height: 14)
-        ask.frame = NSRect(x: 233, y: 10, width: 105, height: 23)
-        close.frame = NSRect(x: 321, y: 88, width: 20, height: 23)
+        selectionPreview.frame = NSRect(x: 10, y: 65, width: 274, height: 17)
+        questionField.frame = NSRect(x: 10, y: 32, width: 220, height: 27)
+        explainButton.frame = NSRect(x: 236, y: 31, width: 76, height: 28)
+        hint.frame = NSRect(x: 10, y: 9, width: 170, height: 14)
+        ask.frame = NSRect(x: 205, y: 5, width: 105, height: 23)
+        close.frame = NSRect(x: 289, y: 63, width: 22, height: 23)
         for view in [selectionPreview, questionField, explainButton, hint, ask, close] {
             selectionPopup.addSubview(view)
         }
@@ -226,6 +290,7 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         if !selectionPopup.isHidden { showSelectionPopup() }
     }
     func stopObservingEvents() {
+        closeSelectionResponse()
         popupWork?.cancel()
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
@@ -266,9 +331,13 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
     }
     func showSelectionPopup() {
+        guard responsePopover?.isShown != true else { return }
         // Keep the captured passage while the popup's field editor owns focus.
         if !selectionPopup.isHidden, questionField.currentEditor() != nil { return }
-        guard crop.isHidden, NSEvent.pressedMouseButtons == 0,
+        // Layout also runs while an NSButton is tracking a click. Hiding its
+        // parent at that point cancels the click before its action can fire.
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        guard crop.isHidden,
             let selection = pdf.currentSelection, let text = selection.string,
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
             let page = selection.pages.last
@@ -285,15 +354,16 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         let selectedPage = pdf.document.map { $0.index(for: page) + 1 }
         if captured != popupText || selectedPage != selectionPage {
             questionField.stringValue = ""
-            questionField.placeholderString = "Ask about this…"
+            questionField.placeholderString = "Add a question (optional)"
             explainButton.title = "Explain"
         }
         popupText = captured
         selectionPage = selectedPage
         selectionPreview.stringValue = String(text.prefix(240))
-        let y = rect.minY > 130 ? rect.minY - 128 : min(bounds.height - 128, rect.maxY + 5)
+        selectionPreview.toolTip = String(text.prefix(1000))
+        let y = rect.minY > 100 ? rect.minY - 98 : min(bounds.height - 98, rect.maxY + 5)
         selectionPopup.frame = NSRect(
-            x: max(6, min(bounds.width - 356, rect.midX - 175)), y: max(6, y), width: 350, height: 122)
+            x: max(6, min(bounds.width - 326, rect.midX - 160)), y: max(6, y), width: 320, height: 92)
         selectionPopup.isHidden = false
     }
     @objc private func explainSelection() { useSelection(explain: true) }
@@ -301,14 +371,36 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
     private func useSelection(explain: Bool) {
         guard !popupText.isEmpty, !explain || !selectionBusy else { return }
         popupWork?.cancel()
-        let sent = onSelectionAction?(popupText, explain, questionField.stringValue) ?? false
+        let question = questionField.stringValue
+        // Release the field editor before chat takes focus, not after it.
+        if !explain { closeSelection() }
+        let sent = onSelectionAction?(popupText, explain, question) ?? false
         if !explain {
-            closeSelection()
+            selectionPopup.isHidden = sent
         } else if sent {
-            questionField.stringValue = ""
-            questionField.placeholderString = "Ask a follow-up…"
-            explainButton.title = "Send"
+            if let selectionResponse {
+                closeSelectionResponse()
+                let popover = NSPopover()
+                popover.behavior = .transient
+                popover.animates = ScholiaVisualStyle.appKitAnimationsEnabled
+                popover.contentSize = NSSize(width: 460, height: 440)
+                popover.contentViewController = NSHostingController(rootView: selectionResponse { [weak self] in
+                    self?.closeSelectionResponse()
+                })
+                responsePopover = popover
+                let anchor = selectionPopup.frame
+                closeSelection()
+                popover.show(relativeTo: anchor, of: self, preferredEdge: .maxY)
+            } else {
+                questionField.stringValue = ""
+                questionField.placeholderString = "Ask a follow-up…"
+                explainButton.title = "Send"
+            }
         }
+    }
+    func closeSelectionResponse() {
+        responsePopover?.close()
+        responsePopover = nil
     }
     @objc private func closeSelection() {
         popupWork?.cancel()

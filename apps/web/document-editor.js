@@ -1,4 +1,4 @@
-import { escapeHtml as esc } from '../chrome/src/render.js';
+import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 
 export const canEditDocument = (item) => ['notebook', 'text', 'code'].includes(item?.kind);
 

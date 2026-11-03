@@ -8,13 +8,21 @@ import {
   systemPrompt
 } from '../packages/core/src/prompt.js';
 
-test('auto language recognizes Norwegian variants and preserves other document languages', () => {
-  assert.equal(normalizeLanguage('auto', 'nb-NO'), 'no');
-  assert.equal(normalizeLanguage('auto', 'en-US'), 'en');
-  assert.equal(normalizeLanguage('auto', 'es-MX'), 'es');
-  assert.equal(normalizeLanguage('auto', 'pt_BR'), 'pt');
+test('auto language follows each prompt independently of document metadata', () => {
+  for (const source of ['nb-NO', 'en-US', 'es-MX', 'pt_BR', '']) {
+    assert.equal(normalizeLanguage('auto', source), 'auto');
+  }
+  assert.equal(normalizeLanguage(), 'auto');
+  assert.equal(normalizeLanguage('nb-NO'), 'no');
+  assert.equal(normalizeLanguage('pt_BR'), 'pt');
   assert.equal(normalizeLanguage('no', 'en-US'), 'no');
   assert.match(systemPrompt('es'), /BCP-47 code "es"/);
+  const prompt = systemPrompt();
+  assert.match(prompt, /language of the user’s latest question on every turn/);
+  assert.match(prompt, /including when they switch languages/);
+  assert.match(prompt, /not from quoted text, attachments, retrieved sources/);
+  assert.match(prompt, /Honor explicit requests for a response language/);
+  assert.doesNotMatch(prompt, /Reply in English/);
 });
 
 test('initial prompt clearly delimits untrusted page material', () => {
@@ -66,14 +74,19 @@ test('conversation is bounded and roles are filtered', () => {
   assert.equal(clean.find((message) => message.content === '28')?.imageDataUrl, 'data:image/png;base64,aGVsbG8=');
 });
 
-test('guided learning graduates help, permits explicit solutions and does not require closing questions', () => {
-  const prompt = systemPrompt('en', { learningMode: true });
-  assert.match(prompt, /Guided learning mode is active/);
-  assert.match(prompt, /completed solution when explicitly requested/);
-  assert.match(prompt, /conceptual cue to a method cue to a partial step/);
-  assert.match(prompt, /ask one focused question at a time/);
-  assert.match(prompt, /Do not require every response to end in a question/);
-  assert.doesNotMatch(prompt, /even when the user asks|end every response with/);
-  assert.doesNotMatch(systemPrompt('en'), /Guided learning mode/);
+test('each mode preserves the learning boundary without an explicit-request loophole', () => {
+  for (const language of ['en', 'no', 'es']) {
+    for (const mode of ['Explain', 'Guide me', 'Practice', true, false]) {
+      const prompt = systemPrompt(language, { learningMode: mode });
+      assert.match(prompt, /never produce a complete submission/);
+      assert.match(prompt, /Do not complete the work piecemeal/);
+      assert.match(prompt, /Do not accuse, shame/);
+      assert.match(prompt, /already supplied worked steps directly/);
+      assert.doesNotMatch(prompt, /completed solution when explicitly requested|full solution when explicitly requested|unless requested/);
+    }
+  }
+  assert.match(systemPrompt('en', { learningMode: true }), /Explain mode:/);
+  assert.match(systemPrompt('en', { learningMode: 'Practice' }), /Practice mode:/);
+  assert.match(systemPrompt('en'), /Explain mode:/);
   assert.match(learningModeInstructions('no'), /Veiledet læringsmodus/);
 });

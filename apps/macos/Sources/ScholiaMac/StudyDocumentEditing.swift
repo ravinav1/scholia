@@ -94,9 +94,12 @@ enum StudyDocumentEditing {
         defer { staging.discard() }
         // Fully parse and index the replacement before touching the saved file.
         var saved = try StudyDocumentImporter.read(
-            data: data.isEmpty ? Data("\n".utf8) : data, name: document.fileName, store: staging.store, id: document.id)
+            data: data.isEmpty ? Data("\n".utf8) : data, name: document.fileName, store: staging.store, id: document.id, displayTitle: document.title)
         // An empty text file is valid; the importer uses a blank reading section.
-        if data.isEmpty { try data.write(to: staging.store.file(for: saved), options: .atomic) }
+        if data.isEmpty {
+            try data.write(to: staging.store.file(for: saved), options: .atomic)
+            saved.contentHash = revision(data)
+        }
         saved.title = document.title
         saved.sourceURL = document.sourceURL
         saved.sourceKey = document.sourceKey
@@ -110,6 +113,9 @@ enum StudyDocumentEditing {
             throw StudyError.message("The original changed while saving. Your edit draft is preserved.")
         }
         try staging.commit(saved, to: store)
+        saved.contentBytes = data.count
+        saved.contentCheckedAt = Date()
+        saved.contentIntegrity = .verified
         return saved
     }
 }

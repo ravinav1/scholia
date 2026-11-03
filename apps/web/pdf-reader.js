@@ -9,32 +9,46 @@ import {
   DownloadManager,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import 'pdfjs-dist/web/pdf_viewer.css';
-import { escapeHtml as esc } from '../chrome/src/render.js';
+import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 import {
   findPdfMatches,
   findPdfSemanticMatches,
-  buildPdfSemanticIndex,
+  createPdfSemanticIndex,
+  addPdfSemanticPage,
+  finalizePdfSemanticIndex,
 } from '../chrome/src/pdf-search.js';
 import { pdfPageNavigationTarget, normalizePdfPageInput } from '../chrome/src/pdf-view-mode.js';
 import { pdfKeyboardAction, isPdfKeyboardControl } from '../chrome/src/pdf-keyboard.js';
 import { capturePDFRegion } from './pdf-region.js';
 import { preparePdfPrint } from '../chrome/src/pdf-print.js';
+import { documentDownloadFilename } from '../../packages/core/src/document-download.js';
+import { PDFDetailRenderer } from '../chrome/src/pdf-render-quality.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.mjs';
+const MAX_RETAINED_CANVAS_PIXELS = 24_000_000;
+const MAX_RETAINED_PAGES = 6;
 const tool = (name, label, title = label) =>
   `<button type="button" data-pdf="${name}" title="${esc(title)}" aria-label="${esc(title)}">${label}</button>`;
+
+class LiteralPDFFindController extends PDFFindController {
+  match(query, pageContent) {
+    return findPdfMatches([pageContent], query).matches.map(({ start, length }) => ({ index: start, length }));
+  }
+}
 
 export class StudyPDFReader {
   constructor({
     host,
     toolbar,
     document: item,
+    course,
     token,
     request,
     onPage,
     onImage,
     onGuide,
     onChat,
+    onEntirePDF,
     onSelection,
     notify,
     page = 1,
@@ -43,12 +57,14 @@ export class StudyPDFReader {
       host,
       toolbar,
       item,
+      course,
       token,
       request,
       onPage,
       onImage,
       onGuide,
       onChat,
+      onEntirePDF,
       onSelection,
       notify,
     });
@@ -60,8 +76,14 @@ export class StudyPDFReader {
     this.abort = new AbortController();
     this.urls = [];
     this.ready = false;
-    toolbar.innerHTML = `${tool('outline', '☷', 'Table of contents')}${tool('search', '⌕', 'Search PDF (⌘F)')}<select data-pdf-select="layout" aria-label="Page layout"><option value="continuous">Continuous</option><option value="page">Single page</option><option value="spread">Two-page spread</option></select><div class="tools">${tool('zoomOut', '−', 'Zoom out')}<select data-pdf-select="zoom" aria-label="PDF zoom"><option value="auto">Automatic</option><option value="page-fit">Fit page</option><option value="page-width" selected>Fit width</option>${[50, 75, 100, 125, 150, 200].map((n) => `<option value="${n / 100}">${n}%</option>`).join('')}</select>${tool('zoomIn', '+', 'Zoom in')}${tool('crop', '⌗', 'Select a figure')}${tool('chat', 'Chat', 'Show or hide tutor')}<details class="reader-more"><summary aria-label="More PDF controls" title="More PDF controls">•••</summary><div>${tool('guide', 'Guide me')}${tool('theme', 'Light / dark reader')}${tool('download', 'Download PDF')}${tool('print', 'Print PDF (⌘P)')}${tool('original', 'Open original PDF')}<button data-action="upload">Choose file</button></div></details></div>`;
+    toolbar.innerHTML = `${tool('outline', '☷', 'Table of contents')}${tool('search', '⌕', 'Search PDF (⌘F)')}<select data-pdf-select="layout" aria-label="Page layout"><option value="continuous">Continuous</option><option value="page">Single page</option><option value="spread">Two-page spread</option></select><div class="tools">${tool('zoomOut', '−', 'Zoom out')}<select data-pdf-select="zoom" aria-label="PDF zoom"><option value="auto">Automatic</option><option value="page-fit">Fit page</option><option value="page-width" selected>Fit width</option>${[50, 75, 100, 125, 150, 200].map((n) => `<option value="${n / 100}">${n}%</option>`).join('')}</select>${tool('zoomIn', '+', 'Zoom in')}${tool('crop', '⌗', 'Select a figure')}${tool('download', '↓ Download', 'Download PDF')}${tool('chat', 'Chat', 'Show or hide tutor')}<details class="reader-more"><summary aria-label="More PDF controls" title="More PDF controls">•••</summary><div>${tool('guide', 'Explain')}${tool('theme', 'Light / dark reader')}${tool('print', 'Print PDF (⌘P)')}${tool('original', 'Open original PDF')}<button data-action="upload">Choose file</button></div></details></div>`;
     host.classList.add('pdf-active');
+    const entirePDFButton = document.createElement('button');
+    entirePDFButton.type = 'button';
+    entirePDFButton.dataset.pdf = 'entirePDF';
+    entirePDFButton.textContent = 'Send entire PDF';
+    entirePDFButton.title = 'Send every page’s extracted text to the tutor and ask for an explanation';
+    toolbar.querySelector('[data-pdf=chat]').before(entirePDFButton);
     host.innerHTML = `<section class="pdf-search-bar" hidden><select aria-label="Search mode"><option value="exact">Exact</option><option value="semantic">Semantic</option></select><input type="search" placeholder="Find words or phrases…" aria-label="Search this PDF"><small role="status"></small>${tool('findPrevious', '↑', 'Previous result')}${tool('findNext', '↓', 'Next result')}${tool('closeSearch', '×', 'Close search')}</section><div class="pdf-reading-area"><aside class="pdf-outline-panel" hidden><strong>Contents</strong><nav></nav></aside><div class="study-pdf-stage"><div class="study-pdf-viewport" tabindex="0" aria-label="PDF pages"><div class="pdfViewer"></div></div></div></div>`;
     this.viewport = host.querySelector('.study-pdf-viewport');
     this.searchBar = host.querySelector('.pdf-search-bar');
@@ -72,7 +94,14 @@ export class StudyPDFReader {
       externalLinkTarget: 2,
       externalLinkRel: 'noopener noreferrer',
     });
-    this.find = new PDFFindController({ eventBus: this.bus, linkService: this.links });
+    this.find = new LiteralPDFFindController({ eventBus: this.bus, linkService: this.links });
+    const updateFindStatus = ({ matchesCount, state }) => {
+      if (this.searchMode !== 'exact' || !this.searchQuery?.trim() || this.searchBar.hidden) return;
+      this.searchBar.querySelector('small').textContent = state === 3 ? 'Searching…'
+        : matchesCount?.total ? `${matchesCount.current} / ${matchesCount.total}` : 'No results';
+    };
+    this.bus.on('updatefindmatchescount', updateFindStatus);
+    this.bus.on('updatefindcontrolstate', updateFindStatus);
     this.viewer = new PDFViewer({
       container: this.viewport,
       viewer: this.viewport.firstElementChild,
@@ -85,11 +114,38 @@ export class StudyPDFReader {
       abortSignal: this.abort.signal,
     });
     this.links.setViewer(this.viewer);
+    this.detailRenderer = new PDFDetailRenderer({
+      container: this.viewport,
+      signal: this.abort.signal,
+      getPages: () => [...this.viewer.getCachedPageViews()].flatMap((view) => {
+        return view?.renderingState === 3 && view.canvas ? [{
+          key: view.id, page: view.pdfPage, viewport: view.viewport,
+          canvas: view.canvas, host: view.canvas.parentElement,
+          renderOptions: {
+            annotationMode: pdfjs.AnnotationMode.ENABLE,
+            optionalContentConfigPromise: this.viewer.optionalContentConfigPromise
+          }
+        }] : [];
+      })
+    });
+    this.bus.on('pagerendered', () => {
+      this.detailRenderer.schedule();
+      this.schedulePageCacheTrim();
+    });
+    this.bus.on('updateviewarea', () => this.schedulePageCacheTrim());
+    this.bus.on('scalechanging', () => this.detailRenderer.invalidate());
+    this.bus.on('rotationchanging', () => this.detailRenderer.invalidate());
+    this.bus.on('optionalcontentconfigchanged', () => {
+      this.detailRenderer.invalidate();
+      this.detailRenderer.schedule();
+    });
+    toolbar.querySelector('[data-pdf=download]').disabled = true;
     this.bus.on('pagesinit', () => {
       if (this.abort.signal.aborted) return;
       this.viewer.currentScaleValue = 'page-width';
       this.viewer.currentPageNumber = this.page;
       this.ready = true;
+      toolbar.querySelector('[data-pdf=download]').disabled = false;
     });
     this.bus.on('pagechanging', ({ pageNumber }) => {
       if (!this.ready || this.page === pageNumber) return;
@@ -145,9 +201,10 @@ export class StudyPDFReader {
     this.searchBar.addEventListener(
       'input',
       () => {
+        this.searchGeneration = (this.searchGeneration || 0) + 1;
         clearTimeout(this.searchTimer);
         this.searchTimer = setTimeout(
-          () => this.search().catch((e) => this.notify(e.message)),
+          () => this.search().catch((e) => { if (!this.abort.signal.aborted) this.notify(e.message); }),
           180
         );
       },
@@ -155,7 +212,7 @@ export class StudyPDFReader {
     );
     this.searchBar
       .querySelector('select')
-      .addEventListener('change', () => this.search().catch((e) => this.notify(e.message)), events);
+      .addEventListener('change', () => this.search().catch((e) => { if (!this.abort.signal.aborted) this.notify(e.message); }), events);
     this.searchBar.addEventListener(
       'keydown',
       (event) => {
@@ -163,7 +220,7 @@ export class StudyPDFReader {
           event.preventDefault();
           this.moveMatch(event.shiftKey ? -1 : 1);
         }
-        if (event.key === 'Escape') this.searchBar.hidden = true;
+        if (event.key === 'Escape') this.closeSearch();
       },
       events
     );
@@ -200,6 +257,62 @@ export class StudyPDFReader {
     this.pdf = pdf;
     this.links.setDocument(pdf);
     this.viewer.setDocument(pdf);
+  }
+  schedulePageCacheTrim() {
+    if (this.cacheTrimFrame || this.abort.signal.aborted) return;
+    this.cacheTrimFrame = requestAnimationFrame(() => {
+      this.cacheTrimFrame = null;
+      this.trimPageCache();
+    });
+  }
+  trimPageCache() {
+    // PDF.js bounds its cache by page count, which can retain 480 MB of base
+    // canvases at high zoom. Bound completed offscreen pages by pixels too.
+    // Its public cache is already ordered from oldest to newest, including
+    // the adjacent page prepared by the rendering queue.
+    const cached = [...this.viewer.getCachedPageViews()].filter((view) => view.canvas?.width);
+    // Detail tiles have their own viewport budget. Counting them here would
+    // repeatedly evict and redraw the prefetched page during small scrolls.
+    const pixels = (view) => [...view.div.querySelectorAll('canvas:not(.pdf-detail-canvas)')]
+      .reduce((sum, canvas) => sum + canvas.width * canvas.height, 0);
+    const pagePixels = new Map(cached.map((view) => [view, pixels(view)]));
+    let retained = [...pagePixels.values()].reduce((sum, value) => sum + value, 0);
+    let count = cached.length;
+    if (count <= MAX_RETAINED_PAGES && retained <= MAX_RETAINED_CANVAS_PIXELS) return;
+    const bounds = this.viewport.getBoundingClientRect();
+    const selection = window.getSelection();
+    const selectedRanges = selection && !selection.isCollapsed
+      ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index)) : [];
+    for (const view of cached) {
+      if (count <= MAX_RETAINED_PAGES && retained <= MAX_RETAINED_CANVAS_PIXELS) break;
+      if (view.renderingState !== 3 || view.id === this.viewer.currentPageNumber) continue;
+      const rect = view.div.getBoundingClientRect();
+      if (rect.width && rect.height && rect.right > bounds.left && rect.left < bounds.right
+        && rect.bottom > bounds.top && rect.top < bounds.bottom) continue;
+      if (view.div.contains(document.activeElement)
+        || selectedRanges.some((range) => range.intersectsNode(view.div))) continue;
+      this.releasePageView(view);
+      retained -= pagePixels.get(view);
+      count -= 1;
+    }
+  }
+  releasePageView(view) {
+    this.detailRenderer.forget(view.id);
+    const canvases = [...view.div.querySelectorAll('canvas')];
+    view.destroy();
+    for (const canvas of canvases) canvas.width = canvas.height = 0;
+  }
+  async loadOutline() {
+    await this.opened;
+    if (this.abort.signal.aborted) return;
+    this.outlinePromise ||= this.renderOutline().catch((error) => {
+      this.outlinePromise = null;
+      throw error;
+    });
+    return this.outlinePromise;
+  }
+  async renderOutline() {
+    const pdf = this.pdf;
     const outline = await pdf.getOutline();
     if (this.abort.signal.aborted) return;
     const append = (items, parent, depth = 0) => {
@@ -215,14 +328,20 @@ export class StudyPDFReader {
       }
     };
     const nav = this.outline.querySelector('nav');
-    if (outline?.length) append(outline, nav);
+    if (outline?.length) {
+      const fragment = document.createDocumentFragment();
+      append(outline, fragment);
+      nav.replaceChildren(fragment);
+    }
     else {
       nav.innerHTML = '<p>No bookmarks in this PDF. Jump to a page below.</p>';
       for (let page = 1; page <= pdf.numPages; page++) {
+        if (this.abort.signal.aborted) return;
         const b = document.createElement('button');
         b.textContent = `Page ${page}`;
         b.onclick = () => this.setPage(page, true);
         nav.append(b);
+        if (page % 100 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
   }
@@ -266,6 +385,7 @@ export class StudyPDFReader {
   }
   async control(name) {
     if (name === 'chat') return this.onChat();
+    if (name === 'entirePDF') return this.onEntirePDF();
     if (name === 'guide') return this.onGuide();
     if (name === 'theme') {
       this.host.classList.toggle('pdf-dark');
@@ -273,15 +393,20 @@ export class StudyPDFReader {
     }
     if (name === 'outline') {
       this.outline.hidden = !this.outline.hidden;
+      if (!this.outline.hidden) await this.loadOutline();
       return;
     }
     if (name === 'search') {
-      this.searchBar.hidden = !this.searchBar.hidden;
-      if (!this.searchBar.hidden) this.searchBar.querySelector('input').focus();
+      if (!this.searchBar.hidden) this.closeSearch();
+      else {
+        this.searchBar.hidden = false;
+        this.searchBar.querySelector('input').focus();
+        await this.search();
+      }
       return;
     }
     if (name === 'closeSearch') {
-      this.searchBar.hidden = true;
+      this.closeSearch();
       return;
     }
     if (!this.ready) return;
@@ -296,7 +421,7 @@ export class StudyPDFReader {
       this.urls.push(url);
       const a = document.createElement('a');
       a.href = url;
-      if (name === 'download') a.download = this.item.fileName || `${this.item.title}.pdf`;
+      if (name === 'download') a.download = documentDownloadFilename(this.item, this.course);
       else {
         a.target = '_blank';
         a.rel = 'noopener';
@@ -330,34 +455,90 @@ export class StudyPDFReader {
     }
   }
   async search() {
-    const query = this.searchBar.querySelector('input').value.trim(),
+    clearTimeout(this.searchTimer);
+    this.searchTimer = null;
+    const query = this.searchBar.querySelector('input').value,
       mode = this.searchBar.querySelector('select').value;
     const generation = (this.searchGeneration = (this.searchGeneration || 0) + 1);
-    this.indexPromise ||= this.request(`/api/index/${this.id}`);
+    this.searchQuery = query;
+    this.searchMode = mode;
+    if (!query.trim()) {
+      this.matches = [];
+      this.matchIndex = -1;
+      this.searchBar.querySelector('small').textContent = '';
+      this.highlightMatches('');
+      return;
+    }
+    // PDF.js already extracts, searches, highlights and navigates exact matches.
+    // A second server index scan duplicated the work and could disagree on
+    // offsets/page breaks, sending navigation to a different result.
+    if (mode === 'exact') {
+      this.matches = [];
+      this.matchIndex = -1;
+      this.highlightMatches(query);
+      return;
+    }
+    this.highlightMatches('');
+    this.indexPromise ||= this.request(`/api/index/${this.id}`, undefined, this.abort.signal).catch((error) => {
+      this.indexPromise = null;
+      throw error;
+    });
     const index = await this.indexPromise;
     if (generation !== this.searchGeneration || this.abort.signal.aborted) return;
     this.texts ||= index.pages.map((p) => p.text);
-    if (mode === 'semantic') this.semanticIndex ||= buildPdfSemanticIndex(this.texts);
-    this.matches = (
-      mode === 'semantic'
-        ? findPdfSemanticMatches(this.texts, query, this.semanticIndex)
-        : findPdfMatches(this.texts, query)
-    ).matches;
+    if (mode === 'semantic' && !this.semanticIndex) {
+      this.searchBar.querySelector('small').textContent = 'Indexing concepts…';
+      this.semanticPromise ||= this.buildSemanticIndex();
+      this.semanticIndex = await this.semanticPromise;
+    }
+    if (generation !== this.searchGeneration || this.abort.signal.aborted) return;
+    this.matches = findPdfSemanticMatches(this.texts, query, this.semanticIndex).matches;
     this.matchIndex = -1;
+    this.moveMatch(1);
+  }
+  async buildSemanticIndex() {
+    const index = createPdfSemanticIndex();
+    let started = performance.now();
+    for (const [page, text] of this.texts.entries()) {
+      if (this.abort.signal.aborted) return;
+      addPdfSemanticPage(index, text, page);
+      if (performance.now() - started >= 8) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        started = performance.now();
+      }
+    }
+    return finalizePdfSemanticIndex(index);
+  }
+  closeSearch() {
+    clearTimeout(this.searchTimer);
+    this.searchTimer = null;
+    this.searchGeneration = (this.searchGeneration || 0) + 1;
+    this.searchBar.hidden = true;
+    this.highlightMatches('');
+  }
+  highlightMatches(query, direction = 0) {
+    if (!query.trim()) {
+      this.bus.dispatch('findbarclose', { source: this });
+      return;
+    }
     this.bus.dispatch('find', {
       source: this,
-      type: '',
-      query: mode === 'exact' ? query : '',
+      type: 'again',
+      query,
       phraseSearch: true,
       caseSensitive: false,
       entireWord: false,
       highlightAll: true,
-      findPrevious: false,
+      findPrevious: direction < 0,
       matchDiacritics: false,
     });
-    this.moveMatch(1);
   }
   moveMatch(direction) {
+    if (this.searchBar.querySelector('select').value === 'exact') {
+      if (this.searchTimer) { this.search(); return; }
+      this.highlightMatches(this.searchBar.querySelector('input').value, direction);
+      return;
+    }
     if (this.matches.length) {
       this.matchIndex =
         this.matchIndex < 0
@@ -456,10 +637,9 @@ export class StudyPDFReader {
     bubble.setAttribute('role', 'dialog');
     bubble.setAttribute('aria-label', 'Ask about selected passage');
     bubble.innerHTML =
-      '<blockquote></blockquote><form><input aria-label="Ask about selected passage" placeholder="Ask about this…" maxlength="16000"><button type="submit">Explain</button></form><div class="popup-actions"><small>Selection + document context</small><button type="button" data-chat>Open in chat ↗</button><button type="button" data-close aria-label="Close selection popup">×</button></div>';
+      '<blockquote></blockquote><button type="button" data-close aria-label="Close selection popup">×</button><form><input aria-label="Ask about selected passage" placeholder="Add a question (optional)" maxlength="16000"><button type="submit">Explain</button></form><div class="popup-actions"><small>Passage + context</small><button type="button" data-chat>Open in chat ↗</button></div>';
     bubble.querySelector('blockquote').textContent = text.slice(0, 240);
-    bubble.style.left = `${Math.max(8, Math.min(window.innerWidth - 358, rect.left + rect.width / 2 - 175))}px`;
-    bubble.style.top = `${rect.bottom + 152 < window.innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - 145)}px`;
+    bubble.style.left = `${Math.max(8, Math.min(window.innerWidth - 328, rect.left + rect.width / 2 - 160))}px`;
     bubble.addEventListener('pointerdown', (event) => {
       if (event.target.closest('button')) event.preventDefault();
     });
@@ -482,17 +662,18 @@ export class StudyPDFReader {
         submit.disabled = false;
       }
     });
-    bubble.querySelector('[data-chat]').addEventListener('click', () => {
-      bubble.remove();
-      Promise.resolve(
-        this.onSelection(text.slice(0, 16000), page, false, bubble.querySelector('input').value)
-      ).catch((e) => this.notify(e.message));
+    bubble.querySelector('[data-chat]').addEventListener('click', async () => {
+      try {
+        if (await this.onSelection(text.slice(0, 16000), page, false, bubble.querySelector('input').value)) bubble.remove();
+      } catch (error) { this.notify(error.message); }
     });
     bubble.querySelector('[data-close]').addEventListener('click', () => bubble.remove());
     bubble.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') bubble.remove();
     });
     document.body.append(bubble);
+    const height = bubble.getBoundingClientRect().height;
+    bubble.style.top = `${rect.bottom + height + 8 < window.innerHeight ? rect.bottom + 6 : Math.max(8, rect.top - height - 6)}px`;
     this.selectionBubble = bubble;
   }
   key(event) {
@@ -511,7 +692,7 @@ export class StudyPDFReader {
     }
     if (event.key === 'Escape') {
       this.clearCrop();
-      this.searchBar.hidden = true;
+      this.closeSearch();
       return;
     }
     const command = pdfKeyboardAction(event, { viewportHeight: this.viewport.clientHeight });
@@ -536,6 +717,10 @@ export class StudyPDFReader {
     clearTimeout(this.searchTimer);
     this.resizeObserver.disconnect();
     cancelAnimationFrame(this.resizeFrame);
+    cancelAnimationFrame(this.cacheTrimFrame);
+    // setDocument(null) detaches page views, but leaves completed canvas
+    // backing stores alive until GC. Return that memory immediately.
+    for (const view of this.viewer.getCachedPageViews()) this.releasePageView(view);
     this.viewer.setDocument(null);
     this.links.setDocument(null);
     this.loading.destroy();

@@ -1,4 +1,4 @@
-import { escapeHtml as esc } from '../chrome/src/render.js';
+import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 
 export function installHostedAccount({ request, notify, update }) {
   if (!document.querySelector('meta[name="scholia-hosted"]')) return () => {};
@@ -6,8 +6,10 @@ export function installHostedAccount({ request, notify, update }) {
   const companion = document.querySelector('.companion');
   companion.innerHTML = '<span class="online-dot"></span><span>Private account</span>';
   const controls = document.querySelector('.sidebar-tools');
+  const shortcutHelp = controls.querySelector('[data-action="keyboardShortcuts"]');
   controls.innerHTML =
     '<button id="account-settings">Account settings</button><button id="sign-out">Sign out</button>';
+  if (shortcutHelp) controls.insertBefore(shortcutHelp, controls.lastElementChild);
   const dialog = document.createElement('dialog');
   dialog.setAttribute('aria-label', 'Account settings');
   dialog.innerHTML =
@@ -63,7 +65,7 @@ export function installHostedAccount({ request, notify, update }) {
         .join('');
     if (!dialog.open) select.value = state.providerID;
     dialog.querySelector('.account-email').textContent = state.account?.email || '';
-    document.querySelector('#review-due').hidden = true;
-    document.querySelector('#practice-this').hidden = true;
+    document.querySelector('#review-due').hidden = false;
+    document.querySelector('#practice-this').hidden = state.showingLibrary || !state.library.selectedCourseID;
   };
 }

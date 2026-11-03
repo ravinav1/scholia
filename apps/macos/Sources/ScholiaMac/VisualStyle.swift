@@ -6,6 +6,9 @@ enum ScholiaVisualStyle {
     static let cardCornerRadius: CGFloat = 13
     static let fastAnimation = Animation.easeOut(duration: 0.16)
     static let panelAnimation = Animation.easeInOut(duration: 0.24)
+    static let disclosureAnimation = Animation.snappy(duration: 0.22, extraBounce: 0)
+    static let pressAnimation = Animation.easeOut(duration: 0.08)
+    static let releaseAnimation = Animation.spring(duration: 0.20, bounce: 0.12)
 
     static var appKitAnimationsEnabled: Bool {
         !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -155,8 +158,9 @@ private struct ScholiaIconButtonBody: View {
                 .primary.opacity(configuration.isPressed ? 0.14 : (isHovering ? 0.075 : 0.001)),
                 in: Circle()
             )
-            .scaleEffect(!reduceMotion && configuration.isPressed ? 0.9 : 1)
-            .animation(reduceMotion ? nil : ScholiaVisualStyle.fastAnimation, value: configuration.isPressed)
+            .scaleEffect(!reduceMotion && configuration.isPressed ? 0.94 : 1)
+            .animation(reduceMotion ? nil : (configuration.isPressed
+                ? ScholiaVisualStyle.pressAnimation : ScholiaVisualStyle.releaseAnimation), value: configuration.isPressed)
             .animation(reduceMotion ? nil : ScholiaVisualStyle.fastAnimation, value: isHovering)
             .onHover { isHovering = $0 }
             .scholiaPointingCursor()
