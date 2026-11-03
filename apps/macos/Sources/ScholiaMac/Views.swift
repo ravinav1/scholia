@@ -352,6 +352,7 @@ struct ExplanationPanelView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var composerFocused = false
+    @State private var savedChatsPresented = false
 
     var body: some View {
         AttachmentDropContainer(onDrop: { model.attachFromPasteboard(isQuickAsk: false, pasteboard: $0, acceptingDrop: true) }) {
@@ -404,21 +405,14 @@ struct ExplanationPanelView: View {
             .buttonStyle(ScholiaIconButtonStyle())
             .disabled(!model.messages.contains { $0.role == .assistant && !$0.content.isEmpty })
             .help("Copy latest answer")
-            Menu {
-                if model.savedConversations.isEmpty {
-                    Text("No saved chats")
-                } else {
-                    ForEach(model.savedConversations) { conversation in
-                        Button(conversation.title) { model.openSavedConversation(conversation.id) }
-                    }
-                    Divider()
-                    Button("Clear saved chats", role: .destructive, action: model.clearSavedConversations)
-                }
-            } label: {
+            Button { savedChatsPresented = true } label: {
                 Image(systemName: "clock.arrow.circlepath")
             }
-            .menuStyle(.borderlessButton).scholiaPointingCursor()
-            .help("Saved chats")
+            .buttonStyle(ScholiaIconButtonStyle())
+            .help("Saved chats").accessibilityLabel("Saved chats")
+            .popover(isPresented: $savedChatsPresented, arrowEdge: .bottom) {
+                SavedChatsPanel(presented: $savedChatsPresented).environmentObject(model)
+            }
             Button(action: model.newConversation) {
                 Image(systemName: "square.and.pencil")
             }
@@ -1880,4 +1874,71 @@ struct ScholiaMark: View {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+/// Saved companion chats as a list with per-chat delete, in place of a menu.
+private struct SavedChatsPanel: View {
+    @EnvironmentObject private var model: AppModel
+    @Binding var presented: Bool
+    @State private var clearing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Saved chats").font(.headline)
+            if model.savedConversations.isEmpty {
+                Text("Conversations are saved here as you ask. Nothing saved yet.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(model.savedConversations) { conversation in
+                            SavedChatRow(conversation: conversation, current: model.isCurrentSavedConversation(conversation.id),
+                                open: { model.openSavedConversation(conversation.id); presented = false },
+                                delete: { model.deleteSavedConversation(conversation.id) })
+                        }
+                    }
+                }.frame(maxHeight: 320)
+                Divider()
+                HStack {
+                    Text("\(model.savedConversations.count) saved").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Clear all…", role: .destructive) { clearing = true }.controlSize(.small)
+                }
+            }
+        }
+        .padding(14).frame(width: 300)
+        .alert("Clear all saved chats?", isPresented: $clearing) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) { model.clearSavedConversations() }
+        } message: {
+            Text("Every saved companion chat is removed. The conversation that is open stays until you close it.")
+        }
+    }
+}
+
+private struct SavedChatRow: View {
+    let conversation: StoredConversation
+    var current: Bool
+    var open: () -> Void
+    var delete: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: open) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(conversation.title).font(.system(size: 12)).lineLimit(1)
+                    Text(conversation.updatedAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }.scholiaButtonStyle(.plain)
+            Button(action: delete) { Image(systemName: "trash").font(.system(size: 11)) }
+                .buttonStyle(ScholiaIconButtonStyle(size: 24))
+                .help("Delete this chat").accessibilityLabel("Delete \(conversation.title)")
+                .opacity(hovering || current ? 1 : 0.55)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(current ? Color.accentColor.opacity(0.12) : hovering ? Color.primary.opacity(0.05) : .clear,
+            in: RoundedRectangle(cornerRadius: 7))
+        .onHover { hovering = $0 }
+    }
 }

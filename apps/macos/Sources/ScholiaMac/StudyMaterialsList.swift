@@ -9,6 +9,8 @@ struct StudyMaterialsList: View {
     @AppStorage private var materialView: String
     private var materialCache: StudyMaterialListCache { workspace.materialListCache }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveredMaterialID: String?
+    @State private var removingDocumentID: UUID?
 
     init(workspace: StudyWorkspaceModel, course: StudyCourse, query: String = "", compact: Bool = false) {
         self.workspace = workspace
@@ -165,12 +167,36 @@ struct StudyMaterialsList: View {
                 Button("Update") { workspace.openCanvasMaterial(reference, courseID: course.id) }.controlSize(.small)
                     .disabled(workspace.canvasBusy)
             }
+            if !compact, let id = entry.documentID, hoveredMaterialID == entry.id || selected {
+                Button { removingDocumentID = id } label: { Image(systemName: "trash").font(.system(size: 11)) }
+                    .buttonStyle(ScholiaIconButtonStyle())
+                    .help("Remove downloaded copy of \(entry.title)")
+                    .accessibilityLabel("Remove downloaded copy of \(entry.title)")
+                    .disabled(workspace.canvasBusy || workspace.isImporting || workspace.isStreaming)
+            }
             if let source = entry.sourceURL, let url = URL(string: source), url.scheme == "https" {
                 Link(destination: url) { Image(systemName: "arrow.up.right").font(.system(size: 11)) }
                     .buttonStyle(ScholiaIconButtonStyle())
                     .help("Open original source for \(entry.title)")
                     .accessibilityLabel("Open original source for \(entry.title)")
             }
+        }
+        .onHover { hoveredMaterialID = $0 ? entry.id : nil }
+        .alert(
+            "Remove this downloaded copy?",
+            isPresented: Binding(
+                get: { removingDocumentID != nil && removingDocumentID == entry.documentID },
+                set: { if !$0 { removingDocumentID = nil } })
+        ) {
+            Button("Cancel", role: .cancel) { removingDocumentID = nil }
+            Button("Remove", role: .destructive) {
+                if let id = removingDocumentID { workspace.removeDocument(id) }
+                removingDocumentID = nil
+            }
+        } message: {
+            Text(entry.materialID == nil
+                ? "“\(entry.title)” is deleted from this workspace."
+                : "“\(entry.title)” can be downloaded again from Canvas.")
         }
     }
 }

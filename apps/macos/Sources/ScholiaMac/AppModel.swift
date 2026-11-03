@@ -117,6 +117,7 @@ final class AppModel: ObservableObject {
     private var quickParentContext: String?
     private var quickChatAncestors: [QuickChatSnapshot] = []
     private var currentConversationID: UUID?
+    func isCurrentSavedConversation(_ id: UUID) -> Bool { currentConversationID == id }
     private var currentConversationCreatedAt: Date?
     private var accessibilityPermissionPending = false
     private var screenCapturePermissionPending = false

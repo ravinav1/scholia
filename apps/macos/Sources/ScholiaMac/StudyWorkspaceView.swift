@@ -122,6 +122,8 @@ struct StudyWorkspaceView: View {
     @State private var courseName = ""
     @State private var courseCode = ""
     @State private var removeCourseID: UUID?
+    @State private var removeThreadID: UUID?
+    @State private var workspaceOptionsPresented = false
     @State private var sidebarVisible = true
     @State private var tutorVisible = true
     @State private var courseChatExpanded = false
@@ -234,6 +236,20 @@ struct StudyWorkspaceView: View {
                 tutorVisible = true
                 readerReset += 1
             }
+        }
+        .alert(
+            "Delete this conversation?",
+            isPresented: Binding(get: { removeThreadID != nil }, set: { if !$0 { removeThreadID = nil } })
+        ) {
+            Button("Cancel", role: .cancel) { removeThreadID = nil }
+            Button("Delete", role: .destructive) {
+                if let id = removeThreadID { workspace.removeThread(id) }
+                removeThreadID = nil
+            }
+        } message: {
+            Text(workspace.course?.threads.first { $0.id == removeThreadID }
+                .map { "“\($0.title)” and its messages are removed from this workspace." }
+                ?? "The conversation and its messages are removed from this workspace.")
         }
         .sheet(isPresented: $courseSheet) { courseEditor }
         .sheet(isPresented: $searchSheet) { StudySearchView(workspace: workspace, allWorkspaces: searchAllWorkspaces) }
@@ -396,24 +412,14 @@ struct StudyWorkspaceView: View {
                                 if courseWorkspaceVisible { courseChatExpanded = true }
                             }.padding(.top, 23)
                             ForEach(course.threads.reversed()) { thread in
-                                Button {
-                                    workspace.selectThread(thread.id)
-                                    if courseWorkspaceVisible { courseChatExpanded = true }
-                                } label: {
-                                    Label(thread.title, systemImage: "bubble.left")
-                                        .font(.system(size: 11)).lineLimit(1).frame(
-                                            maxWidth: .infinity, alignment: .leading
-                                        )
-                                        .padding(9).contentShape(Rectangle())
-                                        .background(
-                                            workspace.library.selectedThreadID == thread.id
-                                                ? Color.primary.opacity(0.06) : .clear,
-                                            in: RoundedRectangle(cornerRadius: 7))
-                                }.scholiaButtonStyle(.plain).contextMenu {
-                                    Button("Delete conversation", role: .destructive) {
-                                        workspace.removeThread(thread.id)
-                                    }.disabled(workspace.streamingThreadID == thread.id)
-                                }
+                                StudySidebarThreadRow(
+                                    thread: thread, selected: workspace.library.selectedThreadID == thread.id,
+                                    deletable: workspace.streamingThreadID != thread.id,
+                                    open: {
+                                        workspace.selectThread(thread.id)
+                                        if courseWorkspaceVisible { courseChatExpanded = true }
+                                    },
+                                    delete: { removeThreadID = thread.id })
                             }
                         }
                     }
@@ -510,22 +516,13 @@ struct StudyWorkspaceView: View {
             Button { ScholiaRepairCenter.shared.present(workspace: workspace, app: app) } label: { Image(systemName: "ladybug") }
                 .controlSize(.small).help("Report a bug and launch a repair agent")
                 .accessibilityLabel("Report & fix").accessibilityIdentifier("workspace-report-fix")
-            Menu {
-                Button("Review due") {
-                    workspace.practiceScreen = "review"
-                    workspace.practicePresented = true
-                }
-                if workspace.course != nil && !workspace.isShowingLibrary {
-                    Button("Practice this course") {
-                        workspace.practiceSourceScope = "course"
-                        workspace.prepareStudyPrompt(.practice)
-                    }
-                }
-                Divider()
-                Button("Exam planner") { workspace.examPlannerPresented = true }
+            Button {
+                workspace.practiceScreen = "review"
+                workspace.practicePresented = true
             } label: {
-                Label("Study", systemImage: "rectangle.stack")
-            }.controlSize(.small).fixedSize().help("Review, practice, and plan exams")
+                Label("Review", systemImage: "rectangle.stack")
+            }.controlSize(.small).fixedSize().help("Review saved questions that are due")
+                .accessibilityIdentifier("workspace-review")
             if workspace.isShowingLibrary {
                 Button("New workspace", action: showCreateCourse).controlSize(.small)
                     .scholiaButtonStyle(.borderedProminent).fixedSize()
@@ -533,35 +530,23 @@ struct StudyWorkspaceView: View {
                 Button(action: workspace.chooseDocuments) { Label("Add documents", systemImage: "plus") }.controlSize(
                     .small
                 ).disabled(workspace.isImporting).fixedSize()
-                Menu {
-                    Button(workspace.course?.isFavorite == true ? "Remove favorite" : "Favorite course") {
-                        if let id = workspace.course?.id { workspace.toggleFavorite(id) }
-                    }
-                    Button("Browse materials", action: workspace.showCourseMaterials)
-                    Toggle("Preload frequent courses", isOn: $workspace.preloadFrequentCourses)
-                        .help(
-                            "After repeated visits, save up to three small readings in the background. Paused in Low Power Mode."
-                        )
-                    Button("Rename workspace") {
-                        courseName = workspace.course?.name ?? ""
-                        courseCode = workspace.course?.code ?? ""
-                        renaming = true
-                        courseSheet = true
-                    }
-                    if !app.savedConversations.isEmpty {
-                        Menu("Bring in a saved chat") {
-                            ForEach(app.savedConversations) { conversation in
-                                Button(conversation.title) { workspace.importConversation(conversation) }
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("Remove workspace", role: .destructive) { removeCourseID = workspace.course?.id }.disabled(
-                        workspace.isStreaming || workspace.isImporting || workspace.canvasBusy)
-                } label: {
+                Button { workspaceOptionsPresented = true } label: {
                     Image(systemName: "ellipsis")
-                }.menuStyle(.borderlessButton).scholiaPointingCursor().frame(width: 22)
+                }.buttonStyle(ScholiaIconButtonStyle())
                     .help("Workspace options").accessibilityLabel("Workspace options")
+                    .accessibilityIdentifier("workspace-options")
+                    .popover(isPresented: $workspaceOptionsPresented, arrowEdge: .bottom) {
+                        StudyWorkspaceOptionsPanel(
+                            workspace: workspace, presented: $workspaceOptionsPresented,
+                            rename: {
+                                courseName = workspace.course?.name ?? ""
+                                courseCode = workspace.course?.code ?? ""
+                                renaming = true
+                                courseSheet = true
+                            },
+                            remove: { removeCourseID = workspace.course?.id }
+                        ).environmentObject(app)
+                    }
             }
         }.padding(.horizontal, 16).frame(height: 53).padding(.top, 8)
     }
@@ -1077,24 +1062,23 @@ private struct StudyReaderPane: View {
                         .help(documentFocused ? "Leave document focus (⌘⇧F)" : "Focus on this document with the chat beside it (⌘⇧F)")
                         .accessibilityLabel(documentFocused ? "Leave document focus" : "Focus on document")
                         .accessibilityIdentifier("document-focus-toggle")
-                    Menu {
-                        Button("Explain") {
-                            workspace.mode = .explain
-                            tutorVisible = true
-                        }
-                        Button(pdfControls.dark ? "Light reader" : "Dark reader") { pdfControls.dark.toggle() }
-                        Button("Save a copy…") { saveCopy(document) }
-                        if document.kind == .pdf {
-                            Button("Print…", action: pdfControls.printDocument).keyboardShortcut(
-                                "p", modifiers: .command)
-                        }
-                        Button("Open original in default app") {
-                            NSWorkspace.shared.open(workspace.store.file(for: document))
-                        }
-                        Button("Choose file…", action: workspace.chooseDocuments)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                    }.menuStyle(.borderlessButton).scholiaPointingCursor().fixedSize()
+                    Button { pdfControls.dark.toggle() } label: {
+                        Image(systemName: pdfControls.dark ? "sun.max" : "moon")
+                    }.buttonStyle(ScholiaIconButtonStyle())
+                        .help(pdfControls.dark ? "Light reader" : "Dark reader")
+                        .accessibilityLabel(pdfControls.dark ? "Light reader" : "Dark reader")
+                    if document.kind == .pdf {
+                        Button(action: pdfControls.printDocument) { Image(systemName: "printer") }
+                            .buttonStyle(ScholiaIconButtonStyle()).help("Print (⌘P)").accessibilityLabel("Print")
+                            .keyboardShortcut("p", modifiers: .command)
+                    } else {
+                        Button { saveCopy(document) } label: { Image(systemName: "arrow.down.to.line") }
+                            .buttonStyle(ScholiaIconButtonStyle()).help("Save a copy").accessibilityLabel("Save a copy")
+                    }
+                    Button { NSWorkspace.shared.open(workspace.store.file(for: document)) } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                    }.buttonStyle(ScholiaIconButtonStyle()).help("Open original in default app")
+                        .accessibilityLabel("Open original in default app")
                 }
             }.padding(.horizontal, 13).frame(height: 46)
             if let error = editing.error {
@@ -1299,6 +1283,7 @@ struct StudyTutorPane: View {
     @State private var composerFocused = false
     @State private var contextPresented = false
     @State private var memoryPresented = false
+    @State private var deletingThread = false
     @State private var followOutput = true
     @State private var lastMessageLayout: StudyChatMessageLayout?
     @State private var inspectedChatAttachment: ChatAttachmentInspection?
@@ -1325,6 +1310,20 @@ struct StudyTutorPane: View {
                         .font(.system(size: 14, weight: .semibold, design: .serif)).lineLimit(1).minimumScaleFactor(0.8)
                     Spacer(minLength: 0)
                     memoryButton
+                    if workspace.thread != nil {
+                        Button { deletingThread = true } label: { Image(systemName: "trash") }
+                            .buttonStyle(ScholiaIconButtonStyle()).help("Delete this conversation")
+                            .accessibilityLabel("Delete this conversation").accessibilityIdentifier("delete-conversation")
+                            .disabled(workspace.isCurrentThreadStreaming)
+                            .alert("Delete this conversation?", isPresented: $deletingThread) {
+                                Button("Cancel", role: .cancel) {}
+                                Button("Delete", role: .destructive) {
+                                    if let id = workspace.thread?.id { workspace.removeThread(id) }
+                                }
+                            } message: {
+                                Text("The conversation and its messages are removed from this workspace.")
+                            }
+                    }
                     Button {
                         workspace.newThread()
                     } label: {
@@ -2334,5 +2333,100 @@ private struct StudyTutorComposer: View {
         if app.activeProvider.id == "codex" {
             CodexUsageIndicator(monitor: app.codexUsage, configuration: app.codexUsageConfiguration())
         }
+    }
+}
+
+/// A saved conversation in the sidebar, with its delete action visible on hover
+/// or selection rather than only in a context menu.
+private struct StudySidebarThreadRow: View {
+    let thread: StudyThread
+    var selected: Bool
+    var deletable: Bool
+    var open: () -> Void
+    var delete: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Button(action: open) {
+                Label(thread.title, systemImage: "bubble.left")
+                    .font(.system(size: 11)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(9).contentShape(Rectangle())
+            }.scholiaButtonStyle(.plain)
+            if hovering || selected {
+                Button(action: delete) { Image(systemName: "trash").font(.system(size: 11)) }
+                    .buttonStyle(ScholiaIconButtonStyle(size: 24)).disabled(!deletable)
+                    .help("Delete conversation").accessibilityLabel("Delete \(thread.title)")
+                    .padding(.trailing, 4)
+            }
+        }
+        .background(selected ? Color.primary.opacity(0.06) : .clear, in: RoundedRectangle(cornerRadius: 7))
+        .onHover { hovering = $0 }
+        .contextMenu { Button("Delete conversation", role: .destructive, action: delete).disabled(!deletable) }
+    }
+}
+
+/// Workspace options as labelled controls in a popover instead of a menu.
+private struct StudyWorkspaceOptionsPanel: View {
+    @ObservedObject var workspace: StudyWorkspaceModel
+    @Binding var presented: Bool
+    var rename: () -> Void
+    var remove: () -> Void
+    @EnvironmentObject private var app: AppModel
+
+    private func dismiss(then action: @escaping () -> Void) {
+        presented = false
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(200))
+            action()
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(workspace.course?.displayName ?? "Workspace").font(.headline).lineLimit(1)
+                if let code = workspace.course?.displayCode, !code.isEmpty {
+                    Text(code).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Toggle("Favorite", isOn: Binding(
+                get: { workspace.course?.isFavorite == true },
+                set: { _ in if let id = workspace.course?.id { workspace.toggleFavorite(id) } }
+            )).toggleStyle(.switch)
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle("Preload frequent courses", isOn: $workspace.preloadFrequentCourses).toggleStyle(.switch)
+                Text("After repeated visits, save up to three small readings in the background. Paused in Low Power Mode.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button("Browse materials") { dismiss(then: workspace.showCourseMaterials) }
+                Button("Rename…") { dismiss(then: rename) }
+            }.controlSize(.small)
+            if !app.savedConversations.isEmpty {
+                Divider()
+                Text("Bring in a saved chat").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(app.savedConversations) { conversation in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(conversation.title).font(.system(size: 12)).lineLimit(1)
+                                    Text(conversation.updatedAt, style: .relative).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                Button("Add") { dismiss { workspace.importConversation(conversation) } }.controlSize(.small)
+                                    .accessibilityLabel("Bring in \(conversation.title)")
+                            }.padding(.vertical, 3)
+                        }
+                    }
+                }.frame(maxHeight: 160)
+            }
+            Divider()
+            Button("Remove workspace…", role: .destructive) { dismiss(then: remove) }
+                .controlSize(.small)
+                .disabled(workspace.isStreaming || workspace.isImporting || workspace.canvasBusy)
+        }
+        .padding(16).frame(width: 300)
     }
 }

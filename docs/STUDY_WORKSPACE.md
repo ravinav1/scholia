@@ -237,6 +237,12 @@ course library; **Focus PDF + chat** returns to the focused view. The compact
 **Included files** menu switches attachments without leaving the assignment.
 Switching views keeps the current PDF page, conversation, and unsent draft.
 
+Saved conversations are listed in the sidebar; hover one to delete it, or use
+the trash button in the chat header for the open conversation. The workspace
+options button (**⋯**) opens a panel with favorite and preload switches, rename,
+saved companion chats to bring in, and removal. On the Mac, the companion's
+**Saved chats** button opens a list where each chat can be opened or deleted.
+
 Any open document can take the whole screen for a lecture: press the focus
 button in the reader toolbar, **⌘⇧F**, or **View → Toggle Document Focus**. The
 Mac app hides the sidebar and top bar, enters full screen, and keeps the chat
@@ -584,8 +590,10 @@ without fetching every file. Favorite workspaces stay at the top. Canvas stars
 are imported until you make a local favorite choice; Scholia never changes the
 Canvas favorite or course data.
 
-The PDF reader has a visible **Download** button. Downloads and **Save a copy**
-use the original uploaded or Canvas filename. Older files without a saved filename
+The PDF reader has a visible **Download** button; other documents show
+**Save a copy** in the reader toolbar, beside the light/dark reader, print, and
+open-original buttons. Downloads and saved copies use the original uploaded or
+Canvas filename. Older files without a saved filename
 use the course code (or course name) and document title. On Mac, choose a
 destination in the save dialog.
 
