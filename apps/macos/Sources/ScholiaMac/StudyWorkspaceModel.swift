@@ -96,7 +96,9 @@ final class StudyWorkspaceModel: ObservableObject {
     }
     private var draftSaveTask: Task<Void, Never>?
     @Published var practicePresented = false
-    @Published var examPlannerPresented = false
+    @Published var examPlannerPresented = false {
+        didSet { if examPlannerPresented { exitDocumentFocusIfIneligible() } }
+    }
     @Published var examRecommendationBusy = false
     @Published var studentwebImportRequested = false
     // Deliberately outside StudyLibrary and every web/provider serialization.
@@ -117,6 +119,9 @@ final class StudyWorkspaceModel: ObservableObject {
     @Published private(set) var assignmentFileNotices: [String: String] = [:]
     @Published private(set) var assignmentPreparing = false
     @Published var assignmentPDFFocused = true
+    /// Document focus hides the sidebar and top bar and pairs with native full
+    /// screen; the study window mirrors it. Transient, never persisted.
+    @Published var documentFocused = false
     @Published private(set) var assignmentPreparingFileID: String?
     @Published private(set) var assignmentActivity: [ConversationActivity] = []
     @Published private(set) var feedbackRefreshing: Set<String> = []
@@ -224,6 +229,7 @@ final class StudyWorkspaceModel: ObservableObject {
         loadSelectedDocument()
         loadAssignmentText()
         setPage(target.page)
+        exitDocumentFocusIfIneligible()
         save()
     }
     private func saveBeforeNavigating() {
@@ -426,6 +432,7 @@ final class StudyWorkspaceModel: ObservableObject {
         library.showingCourseLibrary = true
         if courseLibraryView == .assignments { library.courseLibraryView = .all }
         library.selectedAssignmentID = nil
+        exitDocumentFocusIfIneligible()
         save()
     }
     func showAssignments() {
@@ -437,6 +444,7 @@ final class StudyWorkspaceModel: ObservableObject {
         library.showingCourseLibrary = true
         library.courseLibraryView = .assignments
         library.selectedAssignmentID = nil
+        exitDocumentFocusIfIneligible()
         save()
         Task { await self.refreshCanvasAssignmentsIfNeeded() }
     }
@@ -452,6 +460,7 @@ final class StudyWorkspaceModel: ObservableObject {
         library.selectedThreadID = course?.threads.last(where: { $0.documentID == nil && $0.assignmentID == nil })?.id
         restoreThread()
         loadSelectedDocument()
+        exitDocumentFocusIfIneligible()
         save()
     }
     func askAboutCourse(question: String? = nil) {
@@ -468,6 +477,22 @@ final class StudyWorkspaceModel: ObservableObject {
         focusTutor()
     }
     func focusTutor() { tutorFocusRequest += 1 }
+    static func canFocusDocument(hasDocument: Bool, showingLibrary: Bool, examPlannerPresented: Bool) -> Bool {
+        hasDocument && !showingLibrary && !examPlannerPresented
+    }
+    var canFocusDocument: Bool {
+        Self.canFocusDocument(hasDocument: document != nil, showingLibrary: isShowingLibrary,
+            examPlannerPresented: examPlannerPresented)
+    }
+    func toggleDocumentFocus() {
+        if documentFocused { documentFocused = false } else if canFocusDocument { documentFocused = true }
+    }
+    func exitDocumentFocus() {
+        if documentFocused { documentFocused = false }
+    }
+    private func exitDocumentFocusIfIneligible() {
+        if documentFocused && !canFocusDocument { documentFocused = false }
+    }
     /// Citation browsing can leave a course conversation beside an open reading.
     /// Explicit reader actions return to that reading's own saved conversation.
     func useOpenDocumentConversation() {
@@ -756,6 +781,7 @@ final class StudyWorkspaceModel: ObservableObject {
         restoreThread()
         loadSelectedDocument()
         visitedCourse()
+        exitDocumentFocusIfIneligible()
         save()
     }
     func selectDocument(
@@ -773,6 +799,7 @@ final class StudyWorkspaceModel: ObservableObject {
         }
         restoreThread()
         loadSelectedDocument()
+        exitDocumentFocusIfIneligible()
         save()
         if let document, document.needsCanvasHTMLUpgrade, !canvasBusy,
             let course, let ref = course.materials.first(where: { $0.id == document.sourceKey }),
@@ -788,6 +815,7 @@ final class StudyWorkspaceModel: ObservableObject {
             library.selectedThreadID = nil
             restoreThread()
             loadSelectedDocument()
+            exitDocumentFocusIfIneligible()
         }
         save()
     }

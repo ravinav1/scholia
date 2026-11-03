@@ -237,6 +237,13 @@ course library; **Focus PDF + chat** returns to the focused view. The compact
 **Included files** menu switches attachments without leaving the assignment.
 Switching views keeps the current PDF page, conversation, and unsent draft.
 
+Any open document can take the whole screen for a lecture: press the focus
+button in the reader toolbar, **⌘⇧F**, or **View → Toggle Document Focus**. The
+Mac app hides the sidebar and top bar, enters full screen, and keeps the chat
+beside the reading. **Esc**, the green window button, the shortcut, or the same
+toolbar button return to the normal layout; opening the dashboard, assignments,
+or exam dates also leaves focus. Switching chats or documents keeps it.
+
 Opening an assignment prepares its linked files for the study companion.
 Instructions and readable attachment content receive their own context budget,
 even when **Include relevant course materials** is off. File labels distinguish

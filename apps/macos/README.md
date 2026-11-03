@@ -147,6 +147,10 @@ The brain button opens workspace or assignment memory: save notes and pin refere
 files to carry them into new chats. Assignments inherit course memory and keep their
 own notes and references separate from other assignments.
 
+Press **⌘⇧F** with a document open to focus on it: the sidebar and top bar
+hide, the window enters full screen, and the chat stays beside the reading.
+**Esc** or the shortcut returns to the normal layout.
+
 ### Report & fix
 
 Choose **Scholia → Report & fix…** (⌘⇧B), or the bug button in the workspace toolbar.

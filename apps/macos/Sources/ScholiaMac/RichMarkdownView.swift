@@ -431,7 +431,7 @@ private extension NSAttributedString.Key {
 
 final class SelfSizingTextView: NSTextView {
     var onOpenSourceLink: ((URL) -> Bool)?
-    private var renderedSource = ""
+    private(set) var renderedSource = ""
     private var renderedCompact: Bool?
     private var renderedDarkMode: Bool?
     private var mathLayoutWidth: CGFloat?

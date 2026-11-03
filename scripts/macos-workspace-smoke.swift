@@ -39,6 +39,8 @@ struct StudyWorkspaceSmoke {
                     try await checkCourseUI(); exit(0)
                 }
                 if CommandLine.arguments.contains("--ai-workspace-only") { try await checkAIWorkspace(); exit(0) }
+                if CommandLine.arguments.contains("--document-focus-only") { try await checkDocumentFocus(); exit(0) }
+                if CommandLine.arguments.contains("--document-focus-preview") { try await previewDocumentFocus(); exit(0) }
                 if CommandLine.arguments.contains("--reference-shortcuts-only") { try await checkReferenceLinksAndShortcuts(); exit(0) }
                 if CommandLine.arguments.contains("--sync-status-only") { try await checkSyncStatusUI(); exit(0) }
                 if CommandLine.arguments.contains("--ocr-only") { try await checkDocumentOCR(); exit(0) }
@@ -175,6 +177,103 @@ struct StudyWorkspaceSmoke {
         precondition(legacy.courses.count == 4 && legacy.courseLibraryView == nil)
     }
 
+    static func checkDocumentFocus() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-focus-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        workspace.createCourse(name: "Focus fixture", code: "TEST")
+        workspace.toggleDocumentFocus()
+        precondition(!workspace.documentFocused, "Focus needs an open document")
+        let source = root.appendingPathComponent("Slides.pdf")
+        try fixturePDF().write(to: source)
+        workspace.importDocuments([source])
+        for _ in 0..<500 where workspace.isImporting || workspace.document == nil { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(workspace.document != nil)
+        let controller = StudyWindowController(app: AppModel.shared, workspace: workspace, autosave: false)
+        workspace.toggleDocumentFocus()
+        precondition(workspace.documentFocused)
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(controller.windowButtonsHidden, "Focus hides the window buttons while the top bar is gone")
+        precondition(!controller.isFullScreen, "A hidden window must not enter full screen")
+        workspace.newThread()
+        precondition(workspace.documentFocused, "Starting a chat beside the document keeps focus")
+        workspace.showCourseLibrary()
+        precondition(!workspace.documentFocused, "Leaving the document ends focus")
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(!controller.windowButtonsHidden, "Window buttons return after focus")
+        workspace.selectDocument(try unwrap(workspace.course?.documents.first?.id))
+        workspace.toggleDocumentFocus()
+        precondition(workspace.documentFocused)
+        workspace.examPlannerPresented = true
+        precondition(!workspace.documentFocused, "The exam planner covers the reader, so focus ends")
+        workspace.examPlannerPresented = false
+
+        // Native full screen on a visible window, in both directions.
+        func settle() async throws {
+            for _ in 0..<200 where controller.fullScreenTransitioning { try await Task.sleep(for: .milliseconds(50)) }
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        controller.show()
+        try await Task.sleep(for: .milliseconds(400))
+        workspace.toggleDocumentFocus()
+        try await Task.sleep(for: .milliseconds(200)); try await settle()
+        precondition(controller.isFullScreen, "Focus enters native full screen")
+        workspace.toggleDocumentFocus()
+        try await Task.sleep(for: .milliseconds(200)); try await settle()
+        precondition(!controller.isFullScreen && !controller.windowButtonsHidden, "Leaving focus leaves full screen")
+        // Esc or the green button: the window leaves full screen on its own and focus ends with it.
+        workspace.toggleDocumentFocus()
+        try await Task.sleep(for: .milliseconds(200)); try await settle()
+        precondition(controller.isFullScreen)
+        controller.window.toggleFullScreen(nil)
+        try await Task.sleep(for: .milliseconds(200)); try await settle()
+        precondition(!controller.isFullScreen && !workspace.documentFocused, "Exiting full screen ends focus")
+        // A window the user already put in full screen stays there after leaving focus.
+        controller.window.toggleFullScreen(nil)
+        try await Task.sleep(for: .milliseconds(200)); try await settle()
+        precondition(controller.isFullScreen && !workspace.documentFocused, "Plain full screen keeps the chrome")
+        workspace.toggleDocumentFocus()
+        try await Task.sleep(for: .milliseconds(300))
+        workspace.toggleDocumentFocus()
+        try await Task.sleep(for: .milliseconds(300)); try await settle()
+        precondition(controller.isFullScreen && !workspace.documentFocused, "Leaving focus keeps a full screen the user chose")
+        controller.window.toggleFullScreen(nil)
+        try await Task.sleep(for: .milliseconds(200)); try await settle()
+        precondition(!controller.isFullScreen)
+        controller.window.close()
+        print("PASS: document focus needs an open document, survives new chats, ends on navigation, hides window buttons and follows native full screen")
+    }
+    /// Renders the reader beside an empty chat at the minimum window size, then
+    /// the same workspace in document focus, so header cropping is visible.
+    static func previewDocumentFocus() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-focus-preview-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "/private/tmp")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        let workspace = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        workspace.createCourse(name: "Random processes", code: "TTK4255")
+        let source = root.appendingPathComponent("Week_41_Canonical_decompositions_and_random_processes.pdf")
+        try fixturePDF().write(to: source)
+        workspace.importDocuments([source])
+        for _ in 0..<500 where workspace.isImporting || workspace.documentIndex == nil { try await Task.sleep(for: .milliseconds(20)) }
+        precondition(workspace.document != nil)
+        let controller = StudyWindowController(app: AppModel.shared, workspace: workspace, autosave: false)
+        controller.window.appearance = NSAppearance(named: .darkAqua)
+        controller.show()
+        controller.window.setContentSize(NSSize(width: 1_020, height: 640))
+        try await Task.sleep(for: .milliseconds(800))
+        try snapshot(controller.window, at: output.appendingPathComponent("document-chat-minimum.png"))
+        controller.window.close()
+        workspace.documentFocused = true
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(!controller.isFullScreen, "A hidden window must not enter full screen")
+        controller.show()
+        controller.window.setContentSize(NSSize(width: 1_020, height: 640))
+        try await Task.sleep(for: .milliseconds(800))
+        try snapshot(controller.window, at: output.appendingPathComponent("document-focus-minimum.png"))
+        controller.window.close()
+        print("PASS: wrote document-chat-minimum.png and document-focus-minimum.png")
+    }
     static func checkPDFSelectionChat() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-selection-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

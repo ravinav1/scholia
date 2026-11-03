@@ -42,6 +42,10 @@ struct ScholiaMacApp: App {
                     .keyboardShortcut("2", modifiers: .command)
                 Button("Quick Chat", action: model.showQuickAsk)
             }
+            CommandGroup(after: .sidebar) {
+                Button("Toggle Document Focus") { model.studyWorkspace.toggleDocumentFocus() }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+            }
         }
     }
 }

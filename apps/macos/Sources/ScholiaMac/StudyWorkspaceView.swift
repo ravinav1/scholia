@@ -1,4 +1,5 @@
 @preconcurrency import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -7,6 +8,9 @@ final class StudyWindowController: NSObject, NSWindowDelegate {
     let workspace: StudyWorkspaceModel
     let window: NSWindow
     private let app: AppModel
+    private var focusObservation: AnyCancellable?
+    private(set) var fullScreenTransitioning = false
+    private var enteredFullScreenForFocus = false
 
     init(app: AppModel, workspace: StudyWorkspaceModel = StudyWorkspaceModel(), autosave: Bool = true) {
         self.app = app
@@ -28,6 +32,9 @@ final class StudyWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         window.center()
         if autosave { window.setFrameAutosaveName("ScholiaStudyWorkspace") }
+        focusObservation = workspace.$documentFocused.dropFirst().removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] focused in self?.syncFullScreen(focused: focused) }
     }
     func show() {
         app.studyWindowVisibilityDidChange(true)
@@ -35,8 +42,55 @@ final class StudyWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
     func windowWillClose(_ notification: Notification) {
+        workspace.exitDocumentFocus()
         workspace.flush()
         app.studyWindowVisibilityDidChange(false)
+    }
+
+    // MARK: Document focus
+
+    var isFullScreen: Bool { window.styleMask.contains(.fullScreen) }
+    var windowButtonsHidden: Bool { window.standardWindowButton(.closeButton)?.isHidden == true }
+
+    /// Document focus hides the workspace chrome; the window follows by entering
+    /// native full screen, and leaving full screen (Esc, the green button) ends
+    /// focus. A window that was already full screen stays that way afterwards.
+    private func syncFullScreen(focused: Bool) {
+        applyFocusChrome(focused)
+        guard !fullScreenTransitioning, window.isVisible else { return }
+        if focused, !isFullScreen {
+            enteredFullScreenForFocus = true
+            window.toggleFullScreen(nil)
+        } else if !focused, isFullScreen, enteredFullScreenForFocus {
+            enteredFullScreenForFocus = false
+            window.toggleFullScreen(nil)
+        }
+    }
+    /// The top bar is gone in focus, so the traffic lights would sit on the
+    /// reader toolbar while the full-screen transition runs or if it fails.
+    private func applyFocusChrome(_ focused: Bool) {
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(kind)?.isHidden = focused
+        }
+    }
+    func windowWillEnterFullScreen(_ notification: Notification) { fullScreenTransitioning = true }
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        fullScreenTransitioning = false
+        // Focus ended while the animation ran: follow it out again.
+        if !workspace.documentFocused, enteredFullScreenForFocus { syncFullScreen(focused: false) }
+    }
+    func windowWillExitFullScreen(_ notification: Notification) {
+        fullScreenTransitioning = true
+        enteredFullScreenForFocus = false
+        workspace.exitDocumentFocus()
+    }
+    func windowDidExitFullScreen(_ notification: Notification) {
+        fullScreenTransitioning = false
+        if workspace.documentFocused { syncFullScreen(focused: true) }
+    }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        fullScreenTransitioning = false
+        enteredFullScreenForFocus = false
     }
 }
 
@@ -82,14 +136,17 @@ struct StudyWorkspaceView: View {
         workspace.assignmentPDFFocused && workspace.assignment != nil && workspace.document?.kind == .pdf
             && !workspace.isShowingLibrary && !workspace.examPlannerPresented
     }
+    private var documentFocused: Bool { workspace.documentFocused && workspace.canFocusDocument }
 
     var body: some View {
         StudySidebarSplitView(
             sidebar: sidebar.environmentObject(app).scholiaButtonStyle(.automatic)
                 .tint(ScholiaVisualStyle.accentColor(for: colorScheme)),
             content: VStack(spacing: 0) {
-                topbar
-                Divider()
+                if !documentFocused {
+                    topbar
+                    Divider()
+                }
                 if workspace.examPlannerPresented {
                     StudyExamScheduleView(workspace: workspace)
                 } else if workspace.isShowingAssignments {
@@ -102,7 +159,7 @@ struct StudyWorkspaceView: View {
                             workspace: workspace, editing: workspace.documentEditing, tutorVisible: $tutorVisible,
                             courseChatExpanded: $courseChatExpanded,
                             expandReader: { readerReset += 1 }, createCourse: { showCreateCourse() },
-                            assignmentFocused: assignmentPDFFocused,
+                            assignmentFocused: assignmentPDFFocused, documentFocused: documentFocused,
                             showAssignmentOverview: { workspace.assignmentPDFFocused = false }
                         )
                         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity).clipped()
@@ -113,15 +170,15 @@ struct StudyWorkspaceView: View {
                             }
                         }.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
                             .environmentObject(app).scholiaButtonStyle(.automatic),
-                        tutorVisible: !courseWorkspaceVisible && (assignmentPDFFocused || tutorVisible),
+                        tutorVisible: !courseWorkspaceVisible && (assignmentPDFFocused || documentFocused || tutorVisible),
                         readerReset: readerReset,
-                        minimumReaderWidth: assignmentPDFFocused ? 420
+                        minimumReaderWidth: assignmentPDFFocused || documentFocused ? 420
                             : workspace.document == nil && workspace.assignment == nil ? 380 : 80
                     )
                 }
             }.environmentObject(app).scholiaButtonStyle(.automatic)
                 .tint(ScholiaVisualStyle.accentColor(for: colorScheme)),
-            sidebarVisible: sidebarVisible && !assignmentPDFFocused
+            sidebarVisible: sidebarVisible && !assignmentPDFFocused && !documentFocused
         )
         .background(StudyPalette.paper(dark))
         .tint(ScholiaVisualStyle.accentColor(for: colorScheme))
@@ -169,6 +226,7 @@ struct StudyWorkspaceView: View {
         .onChange(of: assignmentPDFFocused) { _, focused in
             if focused { readerReset += 1 }
         }
+        .onChange(of: documentFocused) { _, _ in readerReset += 1 }
         .onChange(of: workspace.tutorFocusRequest) { _, _ in
             if courseWorkspaceVisible {
                 courseChatExpanded = true
@@ -600,6 +658,7 @@ private struct StudyReaderPane: View {
     var expandReader: () -> Void
     var createCourse: () -> Void
     var assignmentFocused = false
+    var documentFocused = false
     var showAssignmentOverview: () -> Void = {}
     @EnvironmentObject private var app: AppModel
     @StateObject private var pdfControls = StudyPDFControls()
@@ -1007,13 +1066,17 @@ private struct StudyReaderPane: View {
                             editing.busy
                         ).help("Edit this local document")
                     }
-                    if !assignmentFocused {
-                        Button {
-                            tutorVisible.toggle()
-                        } label: {
+                    if !assignmentFocused && !documentFocused {
+                        Button { tutorVisible.toggle() } label: {
                             Image(systemName: "bubble.left.and.bubble.right")
-                        }.buttonStyle(ScholiaIconButtonStyle()).help(tutorVisible ? "Hide tutor" : "Show tutor")
+                        }.buttonStyle(ScholiaIconButtonStyle()).help(tutorVisible ? "Hide chat" : "Show chat")
                     }
+                    Button { workspace.toggleDocumentFocus() } label: {
+                        Image(systemName: documentFocused ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    }.buttonStyle(ScholiaIconButtonStyle())
+                        .help(documentFocused ? "Leave document focus (⌘⇧F)" : "Focus on this document with the chat beside it (⌘⇧F)")
+                        .accessibilityLabel(documentFocused ? "Leave document focus" : "Focus on document")
+                        .accessibilityIdentifier("document-focus-toggle")
                     Menu {
                         Button("Explain") {
                             workspace.mode = .explain

@@ -105,6 +105,43 @@ final class StudyWorkspaceTests: XCTestCase {
         XCTAssertEqual(reopened.messages.count, 2)
     }
 
+    func testDocumentFocusEligibilityIsPure() {
+        XCTAssertTrue(StudyWorkspaceModel.canFocusDocument(hasDocument: true, showingLibrary: false, examPlannerPresented: false))
+        XCTAssertFalse(StudyWorkspaceModel.canFocusDocument(hasDocument: false, showingLibrary: false, examPlannerPresented: false))
+        XCTAssertFalse(StudyWorkspaceModel.canFocusDocument(hasDocument: true, showingLibrary: true, examPlannerPresented: false))
+        XCTAssertFalse(StudyWorkspaceModel.canFocusDocument(hasDocument: true, showingLibrary: false, examPlannerPresented: true))
+    }
+
+    @MainActor
+    func testDocumentFocusTogglesAndClearsWhenLeavingTheDocument() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = StudyWorkspaceModel(store: StudyLibraryStore(root: root))
+        model.createCourse(name: "Random processes", code: "TTK4255")
+        model.toggleDocumentFocus()
+        XCTAssertFalse(model.documentFocused, "Nothing to focus without an open document")
+        let slides = StudyDocument(title: "Week 41", kind: .pdf, fileName: "original.pdf", pageCount: 2, contentHash: "slides")
+        try model.store.write(document: slides, index: StudyDocumentIndex(pages: [StudyPage(number: 1, text: "Canonical decompositions")]), data: Data("Fixture".utf8))
+        model.library.courses[0].documents.append(slides)
+        model.selectDocument(slides.id)
+        model.toggleDocumentFocus()
+        XCTAssertTrue(model.documentFocused)
+        model.newThread()
+        XCTAssertTrue(model.documentFocused, "Starting a chat beside the slides keeps focus")
+        model.toggleDocumentFocus()
+        XCTAssertFalse(model.documentFocused)
+        model.toggleDocumentFocus()
+        model.showCourseLibrary()
+        XCTAssertFalse(model.documentFocused, "Leaving the document ends focus")
+        model.selectDocument(slides.id)
+        model.toggleDocumentFocus()
+        model.examPlannerPresented = true
+        XCTAssertFalse(model.documentFocused, "The exam planner covers the reader, so focus ends")
+        let thread = try XCTUnwrap(model.library.courses[0].threads.first)
+        model.removeThread(thread.id)
+        XCTAssertFalse(model.library.courses[0].threads.contains { $0.id == thread.id })
+    }
+
     func testStudyWindowKeepsAppInDockIndependentlyOfQuickChat() {
         XCTAssertEqual(scholiaApplicationActivationPolicy(explanationWindowParticipates: false, quickChatWindowVisible: false, studyWindowVisible: true), .regular)
     }

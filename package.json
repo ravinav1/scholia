@@ -39,6 +39,7 @@
     "smoke:macos:paper:ui": "zsh scripts/smoke-macos-paper-ui.sh",
     "smoke:macos:paper:live": "zsh scripts/smoke-macos-paper-live.sh",
     "smoke:macos:course-ui": "zsh scripts/smoke-macos-workspace.sh --course-ui-only",
+    "smoke:macos:focus": "zsh scripts/smoke-macos-workspace.sh --document-focus-only",
     "test": "node --test",
     "benchmark:search": "node scripts/benchmark-workspace-search.mjs",
     "benchmark:search:semantic": "node scripts/benchmark-semantic-search.mjs",

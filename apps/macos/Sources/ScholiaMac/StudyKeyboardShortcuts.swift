@@ -13,7 +13,8 @@ private enum StudyWorkspaceShortcuts {
         ("Send message", "Return"), ("New line", "⇧ Return")
     ])
     static let readerAndEditor = StudyShortcutGroup(title: "Reader and editor", shortcuts: [
-        ("Find in document", "⌘ F"), ("Print PDF", "⌘ P"), ("Save edits", "⌘ S")
+        ("Find in document", "⌘ F"), ("Print PDF", "⌘ P"), ("Save edits", "⌘ S"),
+        ("Focus on document (full screen)", "⌘ ⇧ F"), ("Leave document focus", "Esc")
     ])
     static let dialogs = StudyShortcutGroup(title: "Dialogs", shortcuts: [
         ("Move through search results", "↑ / ↓"),
