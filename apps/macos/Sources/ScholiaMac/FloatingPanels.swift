@@ -776,7 +776,7 @@ private struct QuickAskPanelView: View {
                         ? "Ask Scholia anything…"
                         : "Ask about the pasted image…",
                     font: .systemFont(ofSize: 17, weight: .medium),
-                    height: 42,
+                    minHeight: 42, maxHeight: 120,
                     onSubmit: model.submitQuickAsk,
                     onPasteAttachment: { model.attachFromPasteboard(isQuickAsk: true) },
                     onDropAttachment: { model.attachFromPasteboard(isQuickAsk: true, pasteboard: $0, acceptingDrop: true) }
@@ -921,7 +921,7 @@ private struct QuickAskPanelView: View {
                             ? "Ask a follow-up…"
                             : "Ask about the pasted image…",
                         font: .systemFont(ofSize: 14, weight: .medium),
-                        height: 42,
+                        minHeight: 36, maxHeight: 120,
                         onSubmit: model.submitQuickAsk,
                         onPasteAttachment: { model.attachFromPasteboard(isQuickAsk: true) },
                     onDropAttachment: { model.attachFromPasteboard(isQuickAsk: true, pasteboard: $0, acceptingDrop: true) }

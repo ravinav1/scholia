@@ -271,6 +271,11 @@ struct StudyWorkspaceSmoke {
         controller.window.setContentSize(NSSize(width: 1_020, height: 640))
         try await Task.sleep(for: .milliseconds(800))
         try snapshot(controller.window, at: output.appendingPathComponent("document-focus-minimum.png"))
+        if let host = find(StudyPDFHost.self, in: try unwrap(controller.window.contentView)), let page = host.pdf.currentPage {
+            let rect = host.pdf.convert(page.bounds(for: host.pdf.displayBox), from: page)
+            let margins = (rect.minX, host.pdf.bounds.width - rect.maxX)
+            precondition(abs(margins.0 - margins.1) < 2, "A fitted page must sit centred in the reader, not beside a scroller strip: \(margins)")
+        }
         controller.window.close()
         print("PASS: wrote document-chat-minimum.png and document-focus-minimum.png")
     }

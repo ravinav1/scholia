@@ -243,6 +243,14 @@ options button (**⋯**) opens a panel with favorite and preload switches, renam
 saved companion chats to bring in, and removal. On the Mac, the companion's
 **Saved chats** button opens a list where each chat can be opened or deleted.
 
+The chat column keeps its header to one line: the mode picker and a context
+chip such as **Document · p. 12** or **Course context**. Click the chip to see
+what the next question will include, switch document or course context off,
+add the course library and memory, or ask about the course instead. The
+message box starts one line tall and grows with what you type. The reader
+centres a fitted page and stays on the current page when its width changes,
+for example when entering focus.
+
 Any open document can take the whole screen for a lecture: press the focus
 button in the reader toolbar, **⌘⇧F**, or **View → Toggle Document Focus**. The
 Mac app hides the sidebar and top bar, enters full screen, and keeps the chat

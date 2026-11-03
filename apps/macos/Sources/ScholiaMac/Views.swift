@@ -527,7 +527,7 @@ struct ExplanationPanelView: View {
                             ? "What would you like to understand?"
                             : "Ask a follow-up…"),
                     font: .systemFont(ofSize: NSFont.systemFontSize),
-                    height: 52,
+                    minHeight: 36, maxHeight: 160,
                     onSubmit: {
                         if !model.isStreaming { model.askDraft() }
                     },

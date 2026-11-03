@@ -276,7 +276,17 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         super.layout()
         pdf.frame = bounds
         crop.frame = bounds
+        // Legacy scrollers reserve a strip on the right, which leaves a fitted
+        // page visibly off-centre. Overlay scrollers keep the page centred.
+        if let scrollView = pdf.documentView?.enclosingScrollView, scrollView.scrollerStyle != .overlay {
+            scrollView.scrollerStyle = .overlay
+            scrollView.autohidesScrollers = true
+        }
         fitZoom()
+        if abs(bounds.width - centeredWidth) > 0.5 {
+            centeredWidth = bounds.width
+            centerHorizontally()
+        }
         // PDFKit cannot restore a page accurately while SwiftUI's reader still
         // has a zero-sized frame. Navigate after its first real zoom/layout.
         if bounds.width > 20, bounds.height > 20, let number = pendingPage,
@@ -322,7 +332,27 @@ final class StudyPDFHost: NSView, NSTextFieldDelegate {
         pdf.autoScales = false
         pdf.minScaleFactor = min(0.01, target)
         pdf.maxScaleFactor = max(8, target)
-        if abs(pdf.scaleFactor - target) > 0.005 { pdf.scaleFactor = target }
+        let previous = pdf.scaleFactor
+        if abs(previous - target) > 0.005 {
+            pdf.scaleFactor = target
+            // A sidebar or focus change rescales the page in one step; keep the
+            // reader on the same page top instead of an arbitrary scroll offset.
+            if pendingPage == nil, abs(target / max(0.01, previous) - 1) > 0.1 { pdf.go(to: page) }
+            centerHorizontally()
+        }
+    }
+    private var centeredWidth: CGFloat = 0
+    /// PDFKit keeps the horizontal scroll offset across rescaling, which leaves
+    /// a fitted page sitting off-centre after the reader changes width.
+    func centerHorizontally() {
+        guard let scrollView = pdf.documentView?.enclosingScrollView else { return }
+        let clip = scrollView.contentView
+        let documentWidth = scrollView.documentView?.frame.width ?? 0
+        guard documentWidth > clip.bounds.width + 1 else { return }
+        let x = (documentWidth - clip.bounds.width) / 2
+        guard abs(clip.bounds.origin.x - x) > 1 else { return }
+        clip.scroll(to: NSPoint(x: x, y: clip.bounds.origin.y))
+        scrollView.reflectScrolledClipView(clip)
     }
     func scheduleSelectionPopup() {
         popupWork?.cancel()

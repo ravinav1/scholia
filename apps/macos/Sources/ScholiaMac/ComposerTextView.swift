@@ -26,13 +26,17 @@ struct ComposerTextView: View {
     @Binding var isFocused: Bool
     var placeholder: String
     var font: NSFont
-    var height: CGFloat
+    /// The editor starts one line tall and grows with the draft up to `maxHeight`,
+    /// after which it scrolls.
+    var minHeight: CGFloat = 36
+    var maxHeight: CGFloat = 180
     var isEnabled = true
     var maximumUTF16Units = TextInputPolicy.maximumMessageUTF16Units
     var onSubmit: () -> Void
     var onPasteAttachment: (() -> Bool)? = nil
     var onPasteImage: ((NSImage) -> Void)? = nil
     var onDropAttachment: ((NSPasteboard) -> Bool)? = nil
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -52,11 +56,15 @@ struct ComposerTextView: View {
                 onSubmit: onSubmit,
                 onPasteAttachment: onPasteAttachment,
                 onPasteImage: onPasteImage,
-                onDropAttachment: onDropAttachment
+                onDropAttachment: onDropAttachment,
+                onContentHeightChange: { height in
+                    if abs(contentHeight - height) > 0.5 { contentHeight = height }
+                }
             )
         }
         .frame(minWidth: 0, maxWidth: .infinity)
-        .frame(height: height)
+        .frame(height: min(maxHeight, max(minHeight, contentHeight)))
+        .animation(.easeOut(duration: 0.12), value: min(maxHeight, max(minHeight, contentHeight)))
         .contentShape(Rectangle())
         .help(onPasteAttachment == nil && onPasteImage == nil
             ? "Return sends · Shift-Return inserts a new line"
@@ -74,6 +82,7 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
     var onPasteAttachment: (() -> Bool)?
     var onPasteImage: ((NSImage) -> Void)?
     var onDropAttachment: ((NSPasteboard) -> Bool)?
+    var onContentHeightChange: (CGFloat) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -95,6 +104,7 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
         editor.onPasteImage = onPasteImage
         editor.onDropAttachment = onDropAttachment
         editor.registerForDraggedTypes(AttachmentDropReader.draggedTypes)
+        scrollView.onContentHeightChange = onContentHeightChange
 
         let bounded = TextInputPolicy.bounded(text, maximumUTF16Units: maximumUTF16Units)
         if bounded != text {
@@ -109,6 +119,7 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
             let length = (bounded as NSString).length
             editor.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
             context.coordinator.isSynchronizing = false
+            DispatchQueue.main.async { scrollView.reportContentHeight() }
         }
         if scrollView.wantsEditorFocus != (isFocused && isEnabled) {
             scrollView.wantsEditorFocus = isFocused && isEnabled
@@ -148,6 +159,7 @@ private struct ComposerEditorRepresentable: NSViewRepresentable {
                 maximumUTF16Units: parent.maximumUTF16Units
             )
             if parent.text != bounded { parent.text = bounded }
+            (editor.enclosingScrollView as? ComposerScrollView)?.reportContentHeight()
         }
 
         func textView(
@@ -180,6 +192,27 @@ private final class ComposerScrollView: NSScrollView {
     var wantsEditorFocus = false {
         didSet { focusEditorIfNeeded() }
     }
+    var onContentHeightChange: ((CGFloat) -> Void)?
+    private var reportedContentHeight: CGFloat = 0
+
+    override func layout() {
+        super.layout()
+        reportContentHeight()
+    }
+
+    /// Reports the height the draft needs so the SwiftUI frame can grow and
+    /// shrink with it. Wrapping changes with the width, so layout reports too.
+    func reportContentHeight() {
+        guard let container = editor.textContainer, let layoutManager = editor.layoutManager else { return }
+        layoutManager.ensureLayout(for: container)
+        let font = editor.font ?? .systemFont(ofSize: NSFont.systemFontSize)
+        let used = max(layoutManager.usedRect(for: container).height, layoutManager.defaultLineHeight(for: font))
+        let height = ceil(used + editor.textContainerInset.height * 2)
+        guard abs(height - reportedContentHeight) > 0.5 else { return }
+        reportedContentHeight = height
+        let report = onContentHeightChange
+        DispatchQueue.main.async { report?(height) }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -203,6 +236,7 @@ private final class ComposerScrollView: NSScrollView {
         editor.textContainerInset = NSSize(width: 0, height: 3)
         editor.textContainer?.widthTracksTextView = true
         editor.textContainer?.heightTracksTextView = false
+        _ = editor.layoutManager  // Commit to TextKit 1 before any text arrives; height reporting reads its layout.
         editor.isContinuousSpellCheckingEnabled = false
         editor.isGrammarCheckingEnabled = false
         editor.isAutomaticSpellingCorrectionEnabled = false

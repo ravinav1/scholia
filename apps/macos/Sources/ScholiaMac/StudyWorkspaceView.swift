@@ -1331,7 +1331,7 @@ struct StudyTutorPane: View {
                     }.buttonStyle(ScholiaIconButtonStyle()).help("New conversation").disabled(workspace.course == nil)
                 }.padding(.horizontal, 19).frame(height: 46)
                 Divider()
-                VStack(spacing: 8) {
+                HStack(spacing: 8) {
                     ViewThatFits(in: .horizontal) {
                         Picker("Conversation mode", selection: $workspace.mode) {
                             ForEach(StudyTeachingMode.allCases) { Text($0.rawValue).tag($0) }
@@ -1339,15 +1339,17 @@ struct StudyTutorPane: View {
                         Picker("Conversation mode", selection: $workspace.mode) {
                             ForEach(StudyTeachingMode.allCases) { Text($0.rawValue).tag($0) }
                         }.pickerStyle(.menu).labelsHidden()
-                    }.scholiaPointingCursor().disabled(workspace.isCurrentThreadStreaming)
-                    Text(workspace.mode.summary).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
-                    if workspace.mode == .practice {
-                        Button("Start a saved practice session") { workspace.prepareStudyPrompt(.practice) }
-                    }
-                }.padding(.horizontal, 19).padding(.top, 12).padding(.bottom, 10)
+                    }.controlSize(.small).scholiaPointingCursor().disabled(workspace.isCurrentThreadStreaming)
+                        .help(workspace.mode.summary)
+                    Spacer(minLength: 4)
+                    contextChip
+                }.padding(.horizontal, 14).padding(.vertical, 8)
+                if workspace.mode == .practice {
+                    Button("Start a saved practice session") { workspace.prepareStudyPrompt(.practice) }
+                        .controlSize(.small).padding(.horizontal, 14).padding(.bottom, 8)
+                }
+                Divider()
             }
-            contextControl
             conversation.frame(minHeight: 0, maxHeight: .infinity).clipped()
             if let error = workspace.error {
                 HStack(alignment: .top, spacing: 8) {
@@ -1383,55 +1385,34 @@ struct StudyTutorPane: View {
             .accessibilityLabel("Workspace memory").accessibilityIdentifier("workspace-memory")
             .disabled(workspace.course == nil)
     }
-    private var contextControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Toggle(contextTitle, isOn: $workspace.automaticContextEnabled)
-                    .toggleStyle(.switch).controlSize(.mini).font(.system(size: 11, weight: .medium))
-                    .accessibilityIdentifier("study-automatic-context")
-                    .disabled(workspace.isCurrentThreadStreaming)
-                    .onChange(of: workspace.automaticContextEnabled) { _, _ in workspace.saveDraft() }
-                Spacer(minLength: 4)
-                Button("Inspect") { contextPresented.toggle() }
-                    .font(.system(size: 11)).scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
-                    .popover(isPresented: $contextPresented) { contextDetails }
-                    .accessibilityLabel("Inspect chat context")
+    /// One small chip summarises what the next question will see; the popover
+    /// behind it holds the switches, so the column stays free for answers.
+    private var contextChip: some View {
+        Button { contextPresented.toggle() } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(workspace.automaticContextEnabled && (workspace.isCourseConversation || workspace.documentIndex != nil || workspace.assignment != nil)
+                        ? Color.accentColor : Color.secondary.opacity(0.4))
+                    .frame(width: 5, height: 5)
+                Text(contextChipTitle).font(.system(size: 10, weight: .medium)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold))
             }
-            if let document = workspace.document, !workspace.isCourseConversation {
-                Text(document.title).font(.system(size: 11, weight: .medium)).lineLimit(1).help(document.title)
-            }
-            Text(nextContextDescription)
-                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(nextContextDescription)
-            if workspace.document != nil && workspace.isCourseConversation {
-                Button {
-                    workspace.askAboutOpenDocument()
-                    composerFocused = true
-                } label: {
-                    Label("Use open document for this question", systemImage: "doc.text.magnifyingglass")
-                        .font(.system(size: 11))
-                }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
-                    .disabled(workspace.isStreaming || workspace.isIngestingAttachment)
-            } else if workspace.document != nil {
-                Toggle("Also use course library and memory", isOn: $workspace.includeCourseContext)
-                    .toggleStyle(.checkbox).font(.system(size: 10))
-                    .disabled(!workspace.automaticContextEnabled || workspace.isStreaming || workspace.includeEntirePDF)
-                    .onChange(of: workspace.includeCourseContext) { _, _ in workspace.saveDraft() }
-                    .help("Optional: add relevant saved course files and workspace memory. Whole document sends the open document's text.")
-            }
-            if workspace.course != nil && !workspace.isCourseConversation && !assignmentFocused {
-                Button {
-                    workspace.askAboutCourse()
-                    composerFocused = true
-                } label: {
-                    Label("Ask about this course", systemImage: "books.vertical").font(.system(size: 11))
-                }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
-            }
-            if !workspace.contextSummary.isEmpty {
-                Text("Last sent: " + workspace.contextSummary)
-                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(workspace.contextSummary)
-            }
-        }.padding(.horizontal, inlineCourse ? 14 : 19).padding(.vertical, 10)
-            .background(Color.accentColor.opacity(0.035))
+            .foregroundStyle(.secondary).padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Color.primary.opacity(0.05), in: Capsule()).contentShape(Capsule())
+        }.scholiaButtonStyle(.plain).help(nextContextDescription)
+            .popover(isPresented: $contextPresented) { contextDetails }
+            .accessibilityLabel("Chat context: \(nextContextDescription)")
+            .accessibilityIdentifier("study-context-chip")
+    }
+    private var contextChipTitle: String {
+        guard workspace.automaticContextEnabled else { return "Context off" }
+        if workspace.isCourseConversation { return "Course context" }
+        if workspace.assignment != nil { return "Assignment context" }
+        if let document = workspace.document {
+            return workspace.includeEntirePDF ? "Whole document"
+                : document.kind == .notebook ? "Cell \(workspace.currentPage)" : "Document · p. \(workspace.currentPage)"
+        }
+        return workspace.course == nil ? "No course" : "Course materials"
     }
     private var contextTitle: String {
         workspace.isCourseConversation ? "Course context" : workspace.document == nil ? "Project context" : "Document context"
@@ -1467,6 +1448,7 @@ struct StudyTutorPane: View {
                 Button { contextPresented.toggle() } label: { Image(systemName: "info.circle") }
                     .buttonStyle(ScholiaIconButtonStyle()).help("Course context")
                     .accessibilityLabel("Course context")
+                    .popover(isPresented: $contextPresented) { contextDetails }
 
                 Button { workspace.newThread() } label: { Image(systemName: "square.and.pencil") }
                     .buttonStyle(ScholiaIconButtonStyle()).help("New course conversation")
@@ -1769,9 +1751,28 @@ struct StudyTutorPane: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 13) {
                 Text("What the tutor can see").font(.headline)
-                Toggle(contextTitle, isOn: $workspace.automaticContextEnabled).font(.caption)
+                Toggle(contextTitle, isOn: $workspace.automaticContextEnabled).font(.caption).toggleStyle(.switch)
                     .disabled(workspace.isCurrentThreadStreaming)
+                    .accessibilityIdentifier("study-automatic-context")
                     .onChange(of: workspace.automaticContextEnabled) { _, _ in workspace.saveDraft() }
+                if workspace.document != nil && workspace.isCourseConversation {
+                    Button {
+                        workspace.askAboutOpenDocument()
+                        composerFocused = true
+                        contextPresented = false
+                    } label: {
+                        Label("Use open document for this question", systemImage: "doc.text.magnifyingglass").font(.caption)
+                    }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
+                        .disabled(workspace.isStreaming || workspace.isIngestingAttachment)
+                } else if workspace.course != nil && !workspace.isCourseConversation && !assignmentFocused {
+                    Button {
+                        workspace.askAboutCourse()
+                        composerFocused = true
+                        contextPresented = false
+                    } label: {
+                        Label("Ask about this course", systemImage: "books.vertical").font(.caption)
+                    }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
+                }
                 Text(workspace.automaticContextEnabled
                     ? nextContextDescription
                     : "Off: no course, assignment, current document, page images, or workspace memory will be added to your next question.")
@@ -1796,7 +1797,9 @@ struct StudyTutorPane: View {
                     }
                     if !workspace.isCourseConversation {
                         Toggle("Also use course library and memory", isOn: $workspace.includeCourseContext).font(.caption)
+                            .toggleStyle(.checkbox)
                             .disabled(workspace.isCurrentThreadStreaming || workspace.includeEntirePDF)
+                            .help("Optional: add relevant saved course files and workspace memory. Whole document sends the open document's text.")
                             .onChange(of: workspace.includeCourseContext) { _, _ in workspace.saveDraft() }
                         Text("Off: use the open document and your explicit messages, selections, and attachments. Assignment conversations still include their project instructions and files.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -2204,7 +2207,8 @@ private struct StudyTutorComposer: View {
                             ? "Ask a question about your attachments…" : workspace.mode == .chat
                             ? "Ask anything, or talk through an idea…" : workspace.isCourseConversation
                             ? "Ask about this course, its topics or deadlines…" : "Ask about what you're reading…",
-                    font: .systemFont(ofSize: 13), height: compact ? 44 : 70, isEnabled: workspace.course != nil,
+                    font: .systemFont(ofSize: 13), minHeight: compact ? 30 : 34, maxHeight: compact ? 120 : 180,
+                    isEnabled: workspace.course != nil,
                     onSubmit: { workspace.send(using: app) },
                     onPasteAttachment: { workspace.attachFromPasteboard() },
                     onDropAttachment: { workspace.attachFromPasteboard($0, acceptingDrop: true) })
@@ -2264,8 +2268,6 @@ private struct StudyTutorComposer: View {
                 dark ? Color.primary.opacity(0.035) : .white, in: RoundedRectangle(cornerRadius: 12)
             )
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.13), lineWidth: 1))
-            Text("Drop files or a project folder anywhere in this chat")
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
             HStack(spacing: 4) {
                 Image(systemName: visionAvailable ? "eye" : "text.alignleft")
                 Text(
