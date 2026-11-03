@@ -91,10 +91,15 @@ enum AttachmentDropReader {
 /// promises and an NSTextView otherwise inserts a file's path into the question.
 struct AttachmentDropContainer<Content: View>: NSViewRepresentable {
     var onDrop: (NSPasteboard) -> Bool
+    /// Fill the space SwiftUI offers instead of growing to the content's ideal
+    /// height. A column with its own scroll view needs this; otherwise the
+    /// hosting view takes the ideal height and the column is cropped at both ends.
+    var fillsProposedSize = false
     @ViewBuilder var content: () -> Content
 
     func makeNSView(context: Context) -> AttachmentDropHostingView<Content> {
         let view = AttachmentDropHostingView(rootView: content())
+        if fillsProposedSize { view.sizingOptions = [] }
         view.onDropAttachment = onDrop
         return view
     }

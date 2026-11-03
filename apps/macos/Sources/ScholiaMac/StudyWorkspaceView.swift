@@ -1247,7 +1247,7 @@ struct StudyTutorPane: View {
     }
 
     var body: some View {
-        AttachmentDropContainer(onDrop: { workspace.attachFromPasteboard($0, acceptingDrop: true) }) {
+        AttachmentDropContainer(onDrop: { workspace.attachFromPasteboard($0, acceptingDrop: true) }, fillsProposedSize: true) {
             tutorBody.environmentObject(app)
         }
     }
