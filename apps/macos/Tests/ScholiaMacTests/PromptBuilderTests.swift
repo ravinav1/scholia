@@ -304,6 +304,26 @@ final class PromptBuilderTests: XCTestCase {
         XCTAssertEqual(expression, .init(latex: "a+b>c", style: .inline))
     }
 
+    func testMathNormalizerRewritesMacrosSwiftMathLacks() {
+        XCTAssertEqual(
+            NativeMathLaTeX.normalize(#"\operatorname{Corr}(X,Y)=\dfrac{\operatorname*{Cov}(X,Y)}{\sqrt{\operatorname{Var}(X)}}"#),
+            #"\mathrm{Corr}(X,Y)=\frac{\mathrm{Cov}(X,Y)}{\sqrt{\mathrm{Var}(X)}}"#)
+        XCTAssertEqual(
+            NativeMathLaTeX.normalize(#"\begin{align*} a &= b \\[4pt] c &= d \tag{1} \end{align*}"#),
+            #"\begin{aligned} a &= b \\ c &= d  \end{aligned}"#)
+        XCTAssertEqual(NativeMathLaTeX.normalize(#"\lvert x \rvert \implies \boldsymbol{v}"#), #"| x | \Rightarrow \bm{v}"#)
+        XCTAssertEqual(NativeMathLaTeX.normalize(#"\frac{a}{b}"#), #"\frac{a}{b}"#)
+    }
+
+    func testInlineMathSurvivesOneSoftLineBreak() {
+        let prepared = RichMarkdownMath.prepare(
+            "variance: $\n\\operatorname{Cov}(X,X)=\\operatorname{Var}(X)$.\nNext $a +\nb$ done.")
+        XCTAssertFalse(prepared.contains("$"))
+        XCTAssertEqual(prepared.components(separatedBy: "scholia-math-inline:").count, 3)
+        XCTAssertEqual(RichMarkdownMath.prepare("costs $5\nand $10 later"), "costs $5\nand $10 later")
+        XCTAssertEqual(RichMarkdownMath.prepare("open $x\n\ny$ closed"), "open $x\n\ny$ closed")
+    }
+
     func testMathPreprocessorLeavesCodeLiteralAndProtectsTableMathPipes() {
         let code = "`$inline$`\n\n```tex\n$display$\n```"
         XCTAssertEqual(RichMarkdownMath.prepare(code), code)

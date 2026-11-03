@@ -47,6 +47,15 @@ struct PanelLayoutSmoke {
             if let value = value as? String { copied.append(value) }
         }
         precondition(copied.first == code && copied.count == 2, "Code copy must preserve indentation, leading/trailing blank lines and literal LaTeX")
+        // Macros SwiftMath lacks and a span wrapped onto the next line must still render as equations.
+        let wrapped = RichMarkdownDocumentRenderer(compact: false, colorScheme: .light, availableWidth: 570).render(
+            "At zero lag: $\n\\operatorname{Cov}(X(t),X(t))=\\operatorname{Var}(X(t))$.\n\n$$\\operatorname{Corr}(X,Y)=\n\\dfrac{\\operatorname{Cov}(X,Y)}{\\sqrt{\\operatorname{Var}(X)\\operatorname{Var}(Y)}}$$")
+        var equations = 0
+        wrapped.enumerateAttribute(.attachment, in: NSRange(location: 0, length: wrapped.length)) { value, _, _ in
+            if value is NSTextAttachment { equations += 1 }
+        }
+        precondition(equations == 2 && !wrapped.string.contains("operatorname"),
+            "\\operatorname and a soft line break inside $…$ must render as equations, not raw LaTeX (\(equations))")
         precondition(!NativeCodeHighlight.runs(code, language: "swift").isEmpty)
         precondition(!NativeCodeHighlight.runs("\\frac{a}{b}", language: "latex").isEmpty)
         var message = ConversationMessage(role: .assistant, content: source)

@@ -586,6 +586,15 @@ final class QuickAskPanelController: NSWindowController, NSWindowDelegate {
             context.allowsImplicitAnimation = true
             panel.animator().setFrame(frame, display: true)
         }
+        // Window animations do not progress while the display sleeps or the
+        // app sits in the background; the panel must still end at its size.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak panel] in
+            guard let panel, panel.frame.size != frame.size else { return }
+            var target = panel.frame
+            target.size = frame.size
+            target.origin.y = target.maxY - frame.size.height
+            panel.setFrame(target, display: true)
+        }
     }
 
     private func resizePrompt(hasAttachments: Bool, hasError: Bool) {

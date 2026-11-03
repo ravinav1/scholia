@@ -233,7 +233,7 @@ enum RichMarkdownMath {
         let contentStart = source.index(after: index)
         guard contentStart < source.endIndex,
               source[contentStart] != "$",
-              !source[contentStart].isWhitespace,
+              source[contentStart] == "\n" || !source[contentStart].isWhitespace,
               let close = closingInlineDollar(in: source, after: contentStart) else { return nil }
         let latex = source[contentStart..<close].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !latex.isEmpty else { return nil }
@@ -248,9 +248,16 @@ enum RichMarkdownMath {
         after start: String.Index
     ) -> String.Index? {
         var cursor = start
+        var sawLineBreak = false
         while cursor < source.endIndex {
             let character = source[cursor]
-            if character == "\n" { return nil }
+            if character == "\n" {
+                // Models wrap long sentences, so one soft line break may fall
+                // inside a span. A second break or a blank line ends it.
+                let next = source.index(after: cursor)
+                guard !sawLineBreak, next < source.endIndex, !source[next].isWhitespace else { return nil }
+                sawLineBreak = true
+            }
             if character == "$", !isEscaped(source, at: cursor) {
                 let next = source.index(after: cursor)
                 let previous = source.index(before: cursor)
@@ -1273,6 +1280,7 @@ private enum NativeMathImageRenderer {
         fontSize: CGFloat,
         colorScheme: ColorScheme
     ) -> NSImage? {
+        let latex = NativeMathLaTeX.normalize(latex)
         let key = "\(display)|\(Int((fontSize * 10).rounded()))|\(colorScheme == .dark)|\(latex)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
 
