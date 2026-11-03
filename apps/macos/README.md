@@ -116,7 +116,7 @@ with `--migrate-permissions` does not fix this Keychain behavior.
    context. Grant Screen Recording for desktop region capture. Reading a
    document and capturing its PDF figure inside Scholia do not need those grants.
 
-Accessibility and Screen Recording prompts open from **Request Access** controls.
+Accessibility and Screen Recording prompts open from **Request access** controls.
 macOS may also request folder access when you ask Scholia to find or read a local file.
 Settings refreshes status when you return from System Settings. Quick Ask,
 clipboard input, and Services remain useful without Accessibility.

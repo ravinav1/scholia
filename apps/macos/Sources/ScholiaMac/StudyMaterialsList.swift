@@ -112,7 +112,7 @@ struct StudyMaterialsList: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(entry.title).font(
                             .system(size: compact ? 11 : 13, weight: selected ? .semibold : .regular)
-                        ).lineLimit(compact ? 2 : 3).truncationMode(.middle)
+                        ).lineLimit(compact ? 2 : 3).truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         if !compact {
                             if showTopic, let topic = entry.topic { Text(topic).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2) }
@@ -167,7 +167,7 @@ struct StudyMaterialsList: View {
             }
             if let source = entry.sourceURL, let url = URL(string: source), url.scheme == "https" {
                 Link(destination: url) { Image(systemName: "arrow.up.right").font(.system(size: 11)) }
-                    .buttonStyle(ScholiaIconButtonStyle(size: 28))
+                    .buttonStyle(ScholiaIconButtonStyle())
                     .help("Open original source for \(entry.title)")
                     .accessibilityLabel("Open original source for \(entry.title)")
             }

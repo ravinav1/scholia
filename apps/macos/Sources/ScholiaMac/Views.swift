@@ -934,7 +934,7 @@ private struct ErrorCard: View {
                 if !message.localizedCaseInsensitiveContains("Accessibility") {
                     Button("Try again", action: retry).controlSize(.small)
                 }
-                ForegroundSettingsButton("Open Settings").controlSize(.small)
+                ForegroundSettingsButton("Open settings").controlSize(.small)
             }
         }
         .padding(12)
@@ -1455,7 +1455,7 @@ struct SettingsView: View {
                     Text("Click a shortcut, then press a new combination.")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Restore Defaults", action: model.resetShortcuts)
+                    Button("Restore defaults", action: model.resetShortcuts)
                         .controlSize(.small)
                 }
                 if !model.hotKeysAvailable {
@@ -1595,8 +1595,8 @@ struct SettingsView: View {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 if !granted {
-                    if !needsRelaunch { Button("Request Access", action: request) }
-                    Button("Open Settings", action: open)
+                    if !needsRelaunch { Button("Request access", action: request) }
+                    Button("Open settings", action: open)
                 }
             }
         }

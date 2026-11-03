@@ -85,7 +85,7 @@ struct StudyAssignmentPageView: View {
                                 }.padding(.vertical, 3)
                             }
                         }.padding(.trailing, 4)
-                    }.frame(height: min(170, CGFloat(workspace.assignmentFiles.count) * 48))
+                    }.frame(height: min(170, CGFloat(workspace.assignmentFiles.count) * 60))
                 }.font(.system(size: 11, weight: .semibold)).controlSize(.small)
             } else if !workspace.assignmentPreparing && assignment.assignment?.linkedFileIDs != nil
                 && workspace.assignmentNotice == nil

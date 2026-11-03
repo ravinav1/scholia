@@ -111,7 +111,7 @@ struct StudyWorkspaceView: View {
                             if !courseWorkspaceVisible {
                                 StudyTutorPane(workspace: workspace, assignmentFocused: assignmentPDFFocused)
                             }
-                        }.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity).clipped()
+                        }.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .top).clipped()
                             .environmentObject(app).scholiaButtonStyle(.automatic),
                         tutorVisible: !courseWorkspaceVisible && (assignmentPDFFocused || tutorVisible),
                         readerReset: readerReset,
@@ -1269,7 +1269,7 @@ struct StudyTutorPane: View {
                     }.buttonStyle(ScholiaIconButtonStyle()).help("New conversation").disabled(workspace.course == nil)
                 }.padding(.horizontal, 19).frame(height: 46)
                 Divider()
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     ViewThatFits(in: .horizontal) {
                         Picker("Conversation mode", selection: $workspace.mode) {
                             ForEach(StudyTeachingMode.allCases) { Text($0.rawValue).tag($0) }
@@ -1283,42 +1283,7 @@ struct StudyTutorPane: View {
                     if workspace.mode == .practice {
                         Button("Start a saved practice session") { workspace.prepareStudyPrompt(.practice) }
                     }
-                    Button {
-                        contextPresented.toggle()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Circle().fill(workspace.automaticContextEnabled && (workspace.isCourseConversation || workspace.documentIndex != nil) ? Color.accentColor : Color.secondary.opacity(0.4))
-                                .frame(width: 5, height: 5)
-                            Text(
-                                !workspace.automaticContextEnabled ? "Saved reading sources are off" : workspace.isCourseConversation
-                                    ? "Whole course · \(workspace.course?.displayCode.isEmpty == false ? workspace.course!.displayCode : workspace.course?.displayName ?? "")"
-                                    : workspace.assignment != nil
-                                    ? "Assignment instructions + included files"
-                                    : workspace.document.map {
-                                        $0.kind == .notebook
-                                            ? "Cell \(workspace.currentPage) · Full notebook indexed"
-                                            : "Page \(workspace.currentPage) · \($0.pageCount) pages indexed"
-                                    }
-                                        ?? (workspace.course == nil
-                                            ? "Choose a course to begin" : "Course materials available")
-                            )
-                            .font(.system(size: 10)).lineLimit(1)
-                            Spacer()
-                            Image(systemName: "info.circle").font(.system(size: 11))
-                        }.foregroundStyle(.secondary)
-                    }.scholiaButtonStyle(.plain)
-
-                    if workspace.course != nil && !workspace.isCourseConversation && !assignmentFocused {
-                        Button {
-                            workspace.askAboutCourse()
-                            composerFocused = true
-                        } label: {
-                            Label("Ask about this course", systemImage: "books.vertical")
-                                .font(.system(size: 11))
-                        }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }.padding(.horizontal, 19).padding(.top, 17).padding(.bottom, 12)
+                }.padding(.horizontal, 19).padding(.top, 12).padding(.bottom, 10)
             }
             contextControl
             conversation.frame(minHeight: 0, maxHeight: .infinity).clipped()
@@ -1344,7 +1309,7 @@ struct StudyTutorPane: View {
             }
             StudyTutorComposer(workspace: workspace, draftState: workspace.composerDraft,
                                composerFocused: $composerFocused, compact: inlineCourse)
-        }.frame(minWidth: 0, maxWidth: .infinity).background(StudyPalette.paper(dark))
+        }.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .top).background(StudyPalette.paper(dark))
             .sheet(isPresented: $memoryPresented) { StudyWorkspaceMemoryView(workspace: workspace) }
             .sheet(item: $inspectedChatAttachment) { ChatAttachmentInspector(inspection: $0) }
             .onChange(of: workspace.tutorFocusRequest) { _, _ in composerFocused = true }
@@ -1366,7 +1331,7 @@ struct StudyTutorPane: View {
                     .onChange(of: workspace.automaticContextEnabled) { _, _ in workspace.saveDraft() }
                 Spacer(minLength: 4)
                 Button("Inspect") { contextPresented.toggle() }
-                    .font(.system(size: 11)).scholiaButtonStyle(.plain)
+                    .font(.system(size: 11)).scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
                     .popover(isPresented: $contextPresented) { contextDetails }
                     .accessibilityLabel("Inspect chat context")
             }
@@ -1374,7 +1339,7 @@ struct StudyTutorPane: View {
                 Text(document.title).font(.system(size: 11, weight: .medium)).lineLimit(1).help(document.title)
             }
             Text(nextContextDescription)
-                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2)
+                .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(nextContextDescription)
             if workspace.document != nil && workspace.isCourseConversation {
                 Button {
                     workspace.askAboutOpenDocument()
@@ -1391,9 +1356,17 @@ struct StudyTutorPane: View {
                     .onChange(of: workspace.includeCourseContext) { _, _ in workspace.saveDraft() }
                     .help("Optional: add relevant saved course files and workspace memory. Whole document sends the open document's text.")
             }
+            if workspace.course != nil && !workspace.isCourseConversation && !assignmentFocused {
+                Button {
+                    workspace.askAboutCourse()
+                    composerFocused = true
+                } label: {
+                    Label("Ask about this course", systemImage: "books.vertical").font(.system(size: 11))
+                }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
+            }
             if !workspace.contextSummary.isEmpty {
                 Text("Last sent: " + workspace.contextSummary)
-                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).help(workspace.contextSummary)
+                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).help(workspace.contextSummary)
             }
         }.padding(.horizontal, inlineCourse ? 14 : 19).padding(.vertical, 10)
             .background(Color.accentColor.opacity(0.035))
@@ -1732,98 +1705,98 @@ struct StudyTutorPane: View {
     }
     private var contextDetails: some View {
         ScrollView {
-        VStack(alignment: .leading, spacing: 13) {
-            Text("What the tutor can see").font(.headline)
-            Toggle(contextTitle, isOn: $workspace.automaticContextEnabled).font(.caption)
-                .disabled(workspace.isCurrentThreadStreaming)
-                .onChange(of: workspace.automaticContextEnabled) { _, _ in workspace.saveDraft() }
-            Text(workspace.automaticContextEnabled
-                ? nextContextDescription
-                : "Off: no course, assignment, current document, page images, or workspace memory will be added to your next question.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("Your messages, explicit attachments, and selected passages remain available. Earlier replies remain in the conversation.")
-                .font(.caption).foregroundStyle(.secondary)
-            if workspace.automaticContextEnabled {
-            if let course = workspace.course { Label(course.displayName, systemImage: "books.vertical").font(.caption) }
-            if let document = workspace.document { Label(document.title, systemImage: "doc.text").font(.caption) }
-            if let assignment = workspace.assignment { Label(assignment.title, systemImage: "checklist").font(.caption) }
-            Text(
-                workspace.isCourseConversation
-                    ? "Course details, the material inventory, and saved assignment deadlines and status are included. Relevant passages are selected across your saved readings. Catalog-only materials provide titles and metadata; their unread contents are not included."
-                    : "Focused reading starts with your current page and selection. Every question can search the whole indexed document and bring in relevant pages, even far away. Whole document sends all extracted text when it fits. Searching a page does not mean its full contents were sent; the last-request list below shows the pages actually included."
-            )
-            .font(.caption).foregroundStyle(.secondary)
-            if workspace.assignment != nil {
-                Text(
-                    "This assignment's instructions and readable included files are prepared for the companion, independently of the course-materials option below. Each file shows whether its content is ready."
-                )
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            if !workspace.isCourseConversation {
-                Toggle("Also use course library and memory", isOn: $workspace.includeCourseContext).font(.caption)
-                    .disabled(workspace.isCurrentThreadStreaming || workspace.includeEntirePDF)
-                    .onChange(of: workspace.includeCourseContext) { _, _ in workspace.saveDraft() }
-                Text("Off: use the open document and your explicit messages, selections, and attachments. Assignment conversations still include their project instructions and files.")
+            VStack(alignment: .leading, spacing: 13) {
+                Text("What the tutor can see").font(.headline)
+                Toggle(contextTitle, isOn: $workspace.automaticContextEnabled).font(.caption)
+                    .disabled(workspace.isCurrentThreadStreaming)
+                    .onChange(of: workspace.automaticContextEnabled) { _, _ in workspace.saveDraft() }
+                Text(workspace.automaticContextEnabled
+                    ? nextContextDescription
+                    : "Off: no course, assignment, current document, page images, or workspace memory will be added to your next question.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-            }
-            if !lastContextSources.isEmpty {
-                Divider()
-                Text("Pages sent with the last question").font(.subheadline.weight(.semibold))
-                ForEach(lastContextSources) { source in
-                    Button {
-                        workspace.navigate(to: source)
-                    } label: {
-                        Label("\(source.title) · p. \(source.page)", systemImage: "doc.text.magnifyingglass")
-                            .font(.caption).multilineTextAlignment(.leading)
-                    }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
+                Text("Your messages, explicit attachments, and selected passages remain available. Earlier replies remain in the conversation.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if workspace.automaticContextEnabled {
+                    if let course = workspace.course { Label(course.displayName, systemImage: "books.vertical").font(.caption) }
+                    if let document = workspace.document { Label(document.title, systemImage: "doc.text").font(.caption) }
+                    if let assignment = workspace.assignment { Label(assignment.title, systemImage: "checklist").font(.caption) }
+                    Text(
+                        workspace.isCourseConversation
+                            ? "Course details, the material inventory, and saved assignment deadlines and status are included. Relevant passages are selected across your saved readings. Catalog-only materials provide titles and metadata; their unread contents are not included."
+                            : "Focused reading starts with your current page and selection. Every question can search the whole indexed document and bring in relevant pages, even far away. Whole document sends all extracted text when it fits. Searching a page does not mean its full contents were sent; the last-request list below shows the pages actually included."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                    if workspace.assignment != nil {
+                        Text(
+                            "This assignment's instructions and readable included files are prepared for the companion, independently of the course-materials option below. Each file shows whether its content is ready."
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !workspace.isCourseConversation {
+                        Toggle("Also use course library and memory", isOn: $workspace.includeCourseContext).font(.caption)
+                            .disabled(workspace.isCurrentThreadStreaming || workspace.includeEntirePDF)
+                            .onChange(of: workspace.includeCourseContext) { _, _ in workspace.saveDraft() }
+                        Text("Off: use the open document and your explicit messages, selections, and attachments. Assignment conversations still include their project instructions and files.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-            }
-            let files = contextAttachments
-            if !files.isEmpty {
-                Divider()
-                Text("Explicit attachments · \(files.count)").font(.subheadline.weight(.semibold))
-                ForEach(files) { file in
-                    DisclosureGroup {
-                        Text(file.readingDetailsText).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        if !file.extractedText.isEmpty {
-                            Text("Saved attachment preview. Focused questions may send selected excerpts; the last-sent summary reports coverage.")
-                                .font(.caption2).foregroundStyle(.secondary)
-                            Text(String(file.extractedText.prefix(3_000)))
-                                .font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
-                            if file.extractedText.count > 3_000 {
-                                Text("Preview shows the first 3,000 characters; \((file.textCorpusUTF16Count ?? file.extractedText.utf16.count).formatted()) extracted characters are saved for search.")
+                if !lastContextSources.isEmpty {
+                    Divider()
+                    Text("Pages sent with the last question").font(.subheadline.weight(.semibold))
+                    ForEach(lastContextSources) { source in
+                        Button {
+                            workspace.navigate(to: source)
+                        } label: {
+                            Label("\(source.title) · p. \(source.page)", systemImage: "doc.text.magnifyingglass")
+                                .font(.caption).multilineTextAlignment(.leading)
+                        }.scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
+                    }
+                }
+                let files = contextAttachments
+                if !files.isEmpty {
+                    Divider()
+                    Text("Explicit attachments · \(files.count)").font(.subheadline.weight(.semibold))
+                    ForEach(files) { file in
+                        DisclosureGroup {
+                            Text(file.readingDetailsText).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                            if !file.extractedText.isEmpty {
+                                Text("Saved attachment preview. Focused questions may send selected excerpts; the last-sent summary reports coverage.")
                                     .font(.caption2).foregroundStyle(.secondary)
+                                Text(String(file.extractedText.prefix(3_000)))
+                                    .font(.system(size: 10, design: .monospaced)).textSelection(.enabled)
+                                if file.extractedText.count > 3_000 {
+                                    Text("Preview shows the first 3,000 characters; \((file.textCorpusUTF16Count ?? file.extractedText.utf16.count).formatted()) extracted characters are saved for search.")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
                             }
-                        }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Toggle(isOn: Binding(get: { file.includedInContext }, set: { workspace.setAttachmentIncluded(file.id, included: $0) })) {
-                                Text(file.fileName).font(.caption).lineLimit(2)
-                            }.toggleStyle(.checkbox).disabled(workspace.isCurrentThreadStreaming)
-                            Text(file.readStatusLabel).font(.caption2)
-                                .foregroundStyle(file.effectiveReadStatus == .complete ? Color.secondary : Color.orange)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle(isOn: Binding(get: { file.includedInContext }, set: { workspace.setAttachmentIncluded(file.id, included: $0) })) {
+                                    Text(file.fileName).font(.caption).lineLimit(2)
+                                }.toggleStyle(.checkbox).disabled(workspace.isCurrentThreadStreaming)
+                                Text(file.readStatusLabel).font(.caption2)
+                                    .foregroundStyle(file.effectiveReadStatus == .complete ? Color.secondary : Color.orange)
+                            }
                         }
                     }
                 }
-            }
-            if !workspace.contextSummary.isEmpty { Text("Last question: \(workspace.contextSummary)").font(.caption) }
-            if workspace.automaticContextEnabled {
-            Text(
-                workspace.isCourseConversation
-                    ? "Questions use the saved course information, which may need refreshing in Canvas. Your chosen provider receives this context only when you send a question."
-                    : workspace.includeEntirePDF
-                    ? "Whole document includes extracted text. Attach specific figures as images when their visual details matter. Your chosen provider receives the text only when you send a question."
-                    : "For PDFs and images, vision models also receive the current page and up to three requested or relevant page images. Your chosen provider receives this context only when you send a question."
-            )
-            .font(.caption).foregroundStyle(.secondary)
-            }
-            if let document = workspace.document, document.unreadablePages > 0 {
-                Text(
-                    "\(document.unreadablePages) pages have no extracted text after OCR. Open those pages and use a vision model to inspect them."
-                ).font(.caption).foregroundStyle(.orange)
-            }
-        }.padding(20)
+                if !workspace.contextSummary.isEmpty { Text("Last question: \(workspace.contextSummary)").font(.caption) }
+                if workspace.automaticContextEnabled {
+                    Text(
+                        workspace.isCourseConversation
+                            ? "Questions use the saved course information, which may need refreshing in Canvas. Your chosen provider receives this context only when you send a question."
+                            : workspace.includeEntirePDF
+                            ? "Whole document includes extracted text. Attach specific figures as images when their visual details matter. Your chosen provider receives the text only when you send a question."
+                            : "For PDFs and images, vision models also receive the current page and up to three requested or relevant page images. Your chosen provider receives this context only when you send a question."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                if let document = workspace.document, document.unreadablePages > 0 {
+                    Text(
+                        "\(document.unreadablePages) pages have no extracted text after OCR. Open those pages and use a vision model to inspect them."
+                    ).font(.caption).foregroundStyle(.orange)
+                }
+            }.padding(20)
         }.frame(width: 360).frame(maxHeight: 540)
     }
     private var contextAttachments: [MessageAttachment] {
