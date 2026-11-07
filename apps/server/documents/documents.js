@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import { mkdir, writeFile, readFile, rename, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join, basename, extname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hash } from '../store.js';
@@ -30,6 +30,10 @@ export class Documents {
     if (![user, id].every((v) => /^[\da-f-]{36}$/i.test(v)))
       throw new Error('Invalid document identifier.');
     return join(this.root, 'files', user, id);
+  }
+  async available(user, document) {
+    try { return (await stat(this.originalPath(user, document))).isFile(); }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
   }
   async import(
     user,

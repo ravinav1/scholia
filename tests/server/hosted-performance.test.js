@@ -56,3 +56,38 @@ test('session navigation avoids account saves while durable edits still save',as
   assert.equal(f.counts().writes,before+1);
   assert.equal(f.store.account(f.account.id).library.courses[0].favorite,true);
 });
+test('atomic reading validates before mutation, restores bounds and preserves the correct conversation',async t=>{
+  const f=await fixture(t);
+  f.workspaces.upgradeOpenedDocument=()=>{};
+  const previous=structuredClone(f.session.navigation);
+  for(const command of [{id:'missing'},{id:f.doc.id,page:0},{id:f.doc.id,page:1.5},{id:f.doc.id,conversationPolicy:'unknown'}]) {
+    await assert.rejects(f.workspaces.action(f.session,{action:'openReading',...command}));
+    assert.deepEqual(f.session.navigation,previous);
+  }
+  const opened=await f.workspaces.action(f.session,{action:'openReading',id:f.doc.id,page:999,navigationID:'destination-1'});
+  assert.equal(opened.page,10);assert.equal(f.doc.lastPage,10);
+  assert.equal(opened.library.navigationID,'destination-1');assert.equal(opened.draft,'Complete draft');
+  const other={...f.doc,id:randomUUID(),lastPage:2};f.course.documents.push(other);
+  const cited=await f.workspaces.action(f.session,{action:'openReading',id:other.id,page:2,conversationPolicy:'preserve'});
+  assert.equal(cited.library.selectedThreadID,f.thread.id);assert.equal(cited.draft,'Complete draft');
+  const own=await f.workspaces.action(f.session,{action:'openReading',id:other.id});
+  assert.equal(own.library.selectedThreadID,null);assert.equal(own.draft,'');assert.equal(f.thread.draft,'Complete draft');
+});
+test('newer navigation generations win even when an older command is already queued',async t=>{
+  const f=await fixture(t);f.workspaces.upgradeOpenedDocument=()=>{};
+  let release;const blocked=f.workspaces.serial(f.account.id,()=>new Promise(r=>{release=r;}));
+  await new Promise(r=>setImmediate(r));
+  const old=f.workspaces.action(f.session,{action:'openReading',id:f.doc.id,page:2,navigationClientID:'test-tab',navigationGeneration:1});
+  const rejected=assert.rejects(old,/superseded/);
+  const newer=f.workspaces.action(f.session,{action:'openReading',id:f.doc.id,page:7,navigationClientID:'test-tab',navigationGeneration:2});
+  release();await blocked;await rejected;
+  assert.equal((await newer).page,7);
+  await assert.rejects(f.workspaces.action(f.session,{action:'openReading',id:f.doc.id,page:1,navigationClientID:'test-tab',navigationGeneration:1}),/superseded/);
+  assert.equal(f.session.navigation.page,7);
+});
+test('atomic reading does not publish a document deleted during availability validation',async t=>{
+ const f=await fixture(t),previous=structuredClone(f.session.navigation);
+ f.workspaces.documents.available=async()=>{f.course.documents=[];return true;};
+ await assert.rejects(f.workspaces.action(f.session,{action:'openReading',id:f.doc.id,page:7}),/changed/);
+ assert.deepEqual(f.session.navigation,previous);
+});

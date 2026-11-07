@@ -181,6 +181,7 @@ export class Workspaces {
     this.options = options;
     this.accounts = new Map();
     this.queues = new Map();
+    this.navigationRequests = new Map();
     this.analysisJobs = new Map();
     this.materialCatalogs = new WeakMap();
     this.search = new WorkspaceSearch(documents);
@@ -1096,6 +1097,55 @@ export class Workspaces {
     nav.mode = teachingModeLabel(this.thread(course, nav)?.mode);
     return doc;
   }
+  async openReading(account, nav, command, current = () => true) {
+    const course = account.library.courses.find(c => (!command.courseID || c.id === command.courseID)
+      && c.documents.some(d => d.id === command.id));
+    if (!course) fail('Document not found in this workspace.', 404);
+    const document = course.documents.find(d => d.id === command.id);
+    const policy = command.conversationPolicy || 'document';
+    if (!['document', 'preserve'].includes(policy)) fail('Unknown conversation policy.');
+    if (policy === 'preserve' && course.id !== nav.selectedCourseID)
+      fail('The conversation belongs to another workspace.', 409);
+    if (command.page !== undefined && (!Number.isSafeInteger(command.page) || command.page < 1))
+      fail('Choose a positive whole page number.');
+    if (document.indexUnavailable) fail('This document is unavailable. Download it again.', 409);
+    if (this.documents.available && !await this.documents.available(account.id, document))
+      fail('The document file is unavailable. Download it again.', 404);
+    // A background replacement/deletion may finish while file availability is checked.
+    if (!account.library.courses.includes(course) || !course.documents.includes(document))
+      fail('The document changed while opening it. Try again.', 409);
+    if (!current()) fail('This navigation was superseded.', 409);
+    const page = Math.max(1, Math.min(command.page ?? document.lastPage ?? 1, document.pageCount || 1));
+    const thread = policy === 'preserve' ? this.thread(course, nav)
+      : course.threads.findLast(t => t.documentID === document.id && !t.assignmentID);
+    const assignment = policy === 'preserve' && course.canvasMaterials?.find(ref => ref.id === nav.selectedAssignmentID);
+    const related = assignment && (document.sourceKey === assignment.id ||
+      assignmentFileReferences(course, assignment).some(ref => ref.id === document.sourceKey));
+    Object.assign(nav, { selectedCourseID: course.id, selectedDocumentID: document.id,
+      selectedThreadID: thread?.id || null, selectedAssignmentID: related ? assignment.id : null,
+      showingCourseLibrary: false, page, selection: '', assignmentNotice: null,
+      mode: policy === 'preserve' ? nav.mode : teachingModeLabel(thread?.mode),
+      navigationID: command.navigationID || null });
+    document.lastPage = page;
+    document.lastOpenedAt = now();
+    this.upgradeOpenedDocument(account, document);
+    return document;
+  }
+  registerNavigation(session, command) {
+    if (command?.navigationGeneration === undefined) return () => true;
+    if (!Number.isSafeInteger(command.navigationGeneration) || command.navigationGeneration < 1 ||
+      typeof command.navigationClientID !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(command.navigationClientID))
+      fail('Invalid navigation generation.');
+    const key = `${session.token}:${command.navigationClientID}`;
+    const current = this.navigationRequests.get(key) || 0;
+    if (command.navigationGeneration <= current) fail('This navigation was superseded.', 409);
+    this.navigationRequests.delete(key);
+    this.navigationRequests.set(key, command.navigationGeneration);
+    // At most 16 clients per cached account; stale clients recover through a snapshot.
+    while (this.navigationRequests.size > (this.options.maxCachedAccounts || 128) * 16)
+      this.navigationRequests.delete(this.navigationRequests.keys().next().value);
+    return () => this.navigationRequests.get(key) === command.navigationGeneration;
+  }
   async recommendExams(session, command, signal) {
     const account = this.account(session.user_id);
     if (account.examRecommendationBusy) fail('An exam recommendation is already running.', 409);
@@ -1153,8 +1203,10 @@ export class Workspaces {
   }
 
   async action(session, command) {
+    const currentNavigation = this.registerNavigation(session, command);
     return this.serial(session.user_id, async () => {
       this.store.refreshNavigation(session);
+      if (!currentNavigation()) fail('This navigation was superseded.', 409);
       const account = this.account(session.user_id),
         nav = session.navigation;
       if (['connect', 'index', 'downloadAll', 'import', 'saveDocument'].includes(command?.action))
@@ -1237,17 +1289,15 @@ export class Workspaces {
         case 'materials':
           this.selectCourse(account, nav, nav.selectedCourseID);
           break;
+        case 'openReading':
+          await this.openReading(account, nav, command, currentNavigation);
+          break;
         case 'document':
-          this.upgradeOpenedDocument(account, this.selectDocument(course, nav, command.id));
+          await this.openReading(account, nav, { ...command, courseID: nav.selectedCourseID }, currentNavigation);
           break;
-        case 'resume': {
-          const c =
-            account.library.courses.find((c) => c.documents.some((d) => d.id === command.id)) ||
-            fail('Document not found.', 404);
-          this.selectCourse(account, nav, c.id);
-          this.upgradeOpenedDocument(account, this.selectDocument(c, nav, command.id));
+        case 'resume':
+          await this.openReading(account, nav, command, currentNavigation);
           break;
-        }
         case 'page': {
           const doc =
             course?.documents.find((d) => d.id === nav.selectedDocumentID) ||
@@ -1258,25 +1308,10 @@ export class Workspaces {
           nav.selection = '';
           break;
         }
-        case 'source': {
-          const assignment = course?.canvasMaterials.find(
-            (ref) => ref.id === nav.selectedAssignmentID && ref.kind === 'assignments'
-          );
-          const source = course?.documents.find((document) => document.id === command.id);
-          const related =
-            assignment &&
-            (source?.sourceKey === assignment.id ||
-              assignmentFileReferences(course, assignment).some(
-                (ref) => ref.id === source?.sourceKey
-              ));
-          const threadID = nav.selectedThreadID;
-          const mode = nav.mode;
-          const target = this.selectDocument(course, nav, command.id, !!related);
-          nav.selectedThreadID = threadID;
-          nav.mode = mode;
-          nav.page = Math.max(1, Math.min(target.pageCount, Number(command.page) || 1));
+        case 'source':
+          await this.openReading(account, nav, { ...command, courseID: nav.selectedCourseID,
+            page: Math.max(1, Math.floor(Number(command.page) || 1)), conversationPolicy: 'preserve' }, currentNavigation);
           break;
-        }
         case 'thread': {
           const thread =
             course?.threads.find((t) => t.id === command.id) ||
