@@ -7,24 +7,32 @@ const normalize = (value) =>
     .replace(/\p{M}/gu, '')
     .toLocaleLowerCase();
 
-export function workspaceQuickItems(state, query = '') {
+let quickCatalog;
+export function workspaceQuickCatalog(state) {
+  const key = JSON.stringify([Intl.DateTimeFormat().resolvedOptions().locale,
+    state.library.courses.map((c) => [c.id, c.name, c.code, c.term, c.favorite, c.canvasFavorite]),
+    state.library.selectedCourseID, state.showingLibrary, state.streaming, state.busy]);
+  if (quickCatalog?.key === key) return quickCatalog.items;
+  const items = buildWorkspaceQuickCatalog(state).map((item) => ({ ...item,
+    search: normalize(`${item.title} ${item.detail} ${item.keywords || ''}`), titleSearch: normalize(item.title) }));
+  quickCatalog = { key, items };
+  return items;
+}
+export function workspaceQuickItems(state, query = '', catalog = workspaceQuickCatalog(state)) {
   const commandsOnly = query.trimStart().startsWith('>');
-  const terms = normalize(commandsOnly ? query.trimStart().slice(1) : query)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  const matches = (item) =>
-    terms.every((term) =>
-      normalize(`${item.title} ${item.detail} ${item.keywords || ''}`).includes(term)
-    );
-  const rank = (item) => (terms.every((term) => normalize(item.title).includes(term)) ? 0 : 1);
+  const terms = normalize(commandsOnly ? query.trimStart().slice(1) : query).trim().split(/\s+/).filter(Boolean);
+  const matches = (item) => terms.every((term) => item.search.includes(term));
+  const rank = (item) => Number(!terms.every((term) => item.titleSearch.includes(term)));
+  const courses = commandsOnly ? [] : catalog.filter((item) => item.action === 'course' && matches(item));
+  const actions = catalog.filter((item) => item.action !== 'course' && matches(item)).sort((a,b) => rank(a)-rank(b));
+  return [...(terms.length ? courses : courses.slice(0,6)), ...actions];
+}
+function buildWorkspaceQuickCatalog(state) {
   const current = state.library.courses.find(
     (course) => course.id === state.library.selectedCourseID
   );
   const inCourse = !!current && !state.showingLibrary;
-  const courses = commandsOnly
-    ? []
-    : [...state.library.courses]
+  const courses = [...state.library.courses]
         .sort(
           (a, b) =>
             Number(inCourse && a.id === current.id) - Number(inCourse && b.id === current.id) ||
@@ -46,8 +54,7 @@ export function workspaceQuickItems(state, query = '') {
             .filter(Boolean)
             .join(' · '),
           icon: (course.favorite ?? course.canvasFavorite) ? '★' : '▦',
-        }))
-        .filter(matches);
+        }));
   const actions = [
     {
       id: 'search',
@@ -142,11 +149,8 @@ export function workspaceQuickItems(state, query = '') {
       icon: '+',
     },
   ]
-    .map((item) => ({ ...item, action: item.id, group: 'Quick actions' }))
-    .filter(matches)
-    .sort((a, b) => rank(a) - rank(b));
-  // Keep actions discoverable on opening; typing searches every workspace.
-  return [...(terms.length ? courses : courses.slice(0, 6)), ...actions];
+    .map((item) => ({ ...item, action: item.id, group: 'Quick actions' }));
+  return [...courses, ...actions];
 }
 
 export function installWorkspaceShortcuts({ getState, onRun, notify, beforeOpen = () => {} }) {
@@ -194,21 +198,22 @@ export function installWorkspaceShortcuts({ getState, onRun, notify, beforeOpen 
   let items = [],
     selected = 0,
     opener,
-    running = false;
+    running = false,
+    catalog;
   function select(index) {
+    const previous = list.querySelector(`[data-index="${selected}"]`);
+    previous?.setAttribute('aria-selected', 'false');
     selected = Math.max(0, Math.min(index, items.length - 1));
-    for (const row of list.querySelectorAll('[role=option]')) {
-      row.setAttribute('aria-selected', String(Number(row.dataset.index) === selected));
-    }
     const row = list.querySelector(`[data-index="${selected}"]`);
     if (row) {
+      row.setAttribute('aria-selected', 'true');
       input.setAttribute('aria-activedescendant', row.id);
       row.scrollIntoView({ block: 'nearest' });
     } else input.removeAttribute('aria-activedescendant');
   }
   function render() {
     const state = getState();
-    items = state ? workspaceQuickItems(state, input.value) : [];
+    items = state ? workspaceQuickItems(state, input.value, catalog) : [];
     let group = '';
     list.innerHTML = items
       .map((item, index) => {
@@ -233,6 +238,7 @@ export function installWorkspaceShortcuts({ getState, onRun, notify, beforeOpen 
     beforeOpen();
     opener = document.activeElement;
     input.value = '';
+    catalog = workspaceQuickCatalog(getState());
     dialog.showModal();
     render();
     input.focus();

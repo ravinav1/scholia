@@ -265,16 +265,27 @@ function assignmentAgendaDaysMarkup(days, now) {
 
 export function assignmentAgendaMarkup(
   courses,
-  { query = '', filter = 'due', semesters = [], busy = false, refreshError = '', dedicated = false, now = new Date() } = {}
+  { query = '', filter = 'due', semesters = [], busy = false, refreshError = '', dedicated = false, limit = dedicated ? 100 : 30, now = new Date() } = {}
 ) {
-  const groups = assignmentGroups(courses, { query, filter, semesters, now });
+  const allGroups = assignmentGroups(courses, { query, filter, semesters, now });
+  const count = allGroups.reduce((sum, group) => sum + group.items.length, 0);
+  // Show the nearest upcoming work first when space is bounded. Totals and filters
+  // describe the complete result, and the complete view can reveal every row.
+  const ordered = [...allGroups].sort((a, b) =>
+    ['upcoming', 'overdue', 'handedIn', 'excused', 'undated', 'archive'].indexOf(a.timeframe) -
+    ['upcoming', 'overdue', 'handedIn', 'excused', 'undated', 'archive'].indexOf(b.timeframe));
+  const visible = new Set(ordered.flatMap((group) =>
+    group.timeframe === 'overdue' ? [...group.items].reverse() : group.items
+  ).slice(0, Math.max(1, limit)).map(({course, material}) => `${course.id}:${material.id}`));
+  const groups = allGroups.map((group) => ({...group,
+    items: group.items.filter(({course, material}) => visible.has(`${course.id}:${material.id}`))
+  })).filter((group) => group.items.length);
   const timeline = assignmentTimeline(groups);
   const showTimeline = filter !== 'all' && (filter === 'due' || timeline.past.length > 0 || timeline.upcoming.length > 0);
   const allOrder = ['upcoming', 'overdue', 'handedIn', 'excused', 'undated'];
   const otherGroups = filter === 'all'
     ? [...groups].sort((a, b) => allOrder.indexOf(a.timeframe) - allOrder.indexOf(b.timeframe))
     : groups.filter((group) => !['overdue', 'upcoming'].includes(group.timeframe));
-  const count = groups.reduce((sum, group) => sum + group.items.length, 0);
   const handedIn = assignmentList(courses, { includeCompleted: true }).filter(({ details }) =>
     isHandedIn(details?.status)
   ).length;
@@ -334,6 +345,7 @@ export function assignmentAgendaMarkup(
         )
         .join('')}
       ${!count ? `<div class="agenda-empty"><h3>${query.trim() ? 'No matching assignments.' : filter === 'hidden' ? 'No hidden assignments.' : filter === 'handedIn' ? 'No handed-in assignments yet.' : filter === 'all' ? 'No assignments yet.' : filter === 'archive' ? 'Nothing in the archive.' : 'No outstanding deadlines.'}</h3><p>${query.trim() ? 'Try an assignment title or course code.' : filter === 'hidden' ? 'Assignments you hide stay here. Choose Unhide to show them in your lists again.' : filter === 'handedIn' || filter === 'all' ? 'Sync Canvas to refresh submission status.' : filter === 'archive' ? 'Undated and completed assignments will be kept here.' : 'Use Handed in for submitted work, or All assignments to see everything.'}</p></div>` : ''}
+      ${count > visible.size ? `<p class="agenda-more" role="status">Showing ${visible.size} of ${count} matching assignments. <button class="text-button" data-action="${dedicated ? 'moreAssignments' : 'assignments'}">${dedicated ? 'Show 100 more' : 'View all matches'}</button></p>` : ''}
     </div><p class="agenda-timezone">${filter === 'hidden' ? 'Unhide assignments to show them in your lists again' : filter === 'due' ? 'Earlier deadlines above · Upcoming below' : filter === 'handedIn' ? 'Submitted &amp; graded in Canvas' : filter === 'all' ? 'Includes hidden assignments' : 'Undated &amp; completed'} · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}${courses.some((course) => course.canvasID) ? ' · Canvas status refreshes every 2 minutes' : ''}</p>
   </aside>`;
 }

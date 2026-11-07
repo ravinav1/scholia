@@ -110,7 +110,7 @@ export function installWorkspaceSearch({ request, getState, onOpen, notify }) {
       if (ticket === generation && error.name !== 'AbortError') status(error.message);
     }
   }
-  function open({ allWorkspaces = true } = {}) {
+  function open({ allWorkspaces = false } = {}) {
     if (dialog.open) {
       input.focus();
       return;
@@ -158,6 +158,7 @@ export function installWorkspaceSearch({ request, getState, onOpen, notify }) {
     }
   });
   dialog.addEventListener('keydown', (event) => {
+    if (event.isComposing) return;
     const buttons = [...dialog.querySelectorAll('[data-hit]')];
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();

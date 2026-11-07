@@ -7,7 +7,9 @@ import {
   courseLibraryMarkup,
   workspacePanelMarkup,
   courseDisplayName,
-  courseLibraryRenderKey,
+  workspacePanelRenderKey,
+  assignmentPanelRenderKey,
+  filterWorkspacePanel,
   catalogChangeSummary,
 } from './workspace/course-library.js';
 import { installHostedAccount } from './hosted-account.js';
@@ -41,7 +43,7 @@ import { courseLinkTarget, isHTMLDocument, safeDocumentURL, restoreCourseLinks, 
 import { installWorkspaceSearch } from './workspace/workspace-search.js';
 import { installWorkspaceMemory } from './workspace-memory.js';
 import { installWorkspaceShortcuts } from './workspace-shortcuts.js';
-import { installExamPlanner } from './exams/exam-planner.js';
+import { installExamPlanner, examDashboardMarkup } from './exams/exam-planner.js';
 import './styles/style.css';
 import './styles/dashboard.css';
 import './styles/assignment-page.css';
@@ -180,9 +182,12 @@ let assignmentsPageFilter = 'all';
 const showingAssignments = () => state?.showingLibrary && state.library.courseLibraryView === 'assignments';
 let agendaNeedsTodayFocus = true;
 let dashboardPanel = 'workspaces';
+const libraryViews = new Map();
+let agendaLimit = 100;
 let pdfReader,
   notebookReader,
   readerGeneration = 0,
+  readerController,
   readerURLs = [];
 let documentEditor;
 const editDocuments = new Map();
@@ -417,7 +422,7 @@ async function poll() {
       if (next) update(next);
       // Deadlines and answer timers still advance when the payload is unchanged.
       else if (state && Math.floor(Date.now() / 60000) !== lastClockMinute) update(state);
-      else if (state?.streaming) renderMessages();
+      else if (state?.streaming && !state.showingLibrary) renderMessages();
     }
     $('#connection-error').hidden = true;
     pollFailed = false;
@@ -537,38 +542,26 @@ function update(next) {
   for (const id of ['reader-content', 'reader-toolbar', 'reader-footer'])
     $(`#${id}`).hidden = !!assignment && !doc();
   renderTutorPlacement();
-  if (state.showingLibrary && pdfReader) {
-    pdfReader.destroy();
-    pdfReader = null;
-  }
-  if (state.showingLibrary && notebookReader) {
-    notebookReader.destroy();
-    notebookReader = null;
-  }
-  if (state.showingLibrary && documentEditor) {
-    documentEditor.destroy();
-    documentEditor = null;
-  }
-  const layout = state.showingLibrary ? courseLibraryRenderKey(state) : readerRenderKey(state);
-  // Chat bodies aren't part of course() in the API: streaming doesn't recreate the PDF.
-  if (layout !== lastLayout) {
-    if (state.showingLibrary) {
-      // Also invalidate pending module, image and document requests.
-      readerGeneration++;
-      renderLibrary();
+  if (state.showingLibrary) {
+    if (lastLayout) {
+      releaseReader();
+      lastLayout = '';
     }
-    else {
+    renderLibrary();
+  } else {
+    const layout = readerRenderKey(state);
+    if (layout !== lastLayout) {
       const rendering = renderReader();
       const generation = readerGeneration;
       rendering.catch((error) => {
-        if (generation !== readerGeneration) return;
+        if (generation !== readerGeneration || error.name === 'AbortError') return;
         lastLayout = '';
         $('#reader-content').innerHTML =
           `<div class="reader-loading" role="status">Could not open this reading. ${button('Try again', 'retryReading')}</div>`;
         notify(error.message);
       });
+      lastLayout = layout;
     }
-    lastLayout = layout;
   }
   const title = examPlanner.isOpen() ? 'Exam dates' : showingAssignments() ? 'Assignments' : state.showingLibrary
     ? 'Dashboard'
@@ -577,7 +570,7 @@ function update(next) {
   $('#breadcrumb').innerHTML =
     `${button(esc(title), showingAssignments() ? 'assignments' : state.showingLibrary ? 'library' : 'materials', '', 'breadcrumb-parent')}${currentTitle ? `<span class="breadcrumb-separator" aria-hidden="true">/</span><span class="breadcrumb-current" aria-current="page" title="${esc(currentTitle)}">${esc(currentTitle)}</span>` : ''}`;
   if (!currentTitle) $('#breadcrumb .breadcrumb-parent').setAttribute('aria-current', 'page');
-  const messages = studyRenderKey([
+  const messages = state.showingLibrary ? null : studyRenderKey([
     state.messages,
     state.sources,
     state.streaming,
@@ -587,7 +580,7 @@ function update(next) {
     conversationScope(state),
     state.mode,
   ]);
-  if (messages !== lastMessages) {
+  if (messages !== null && messages !== lastMessages) {
     renderMessages();
     lastMessages = messages;
   }
@@ -836,51 +829,67 @@ function renderNavigation() {
   }
 }
 function renderLibrary(panel) {
+  const dedicated = showingAssignments();
+  const viewID = dedicated ? 'assignments' : 'dashboard';
+  const options = { refreshError: state.library.canvasAssignmentsError, query: agendaQuery,
+    filter: dedicated ? assignmentsPageFilter : agendaFilter, dedicated, limit: dedicated ? agendaLimit : 30 };
+  const workspaceKey = workspacePanelRenderKey(state);
+  const assignmentKey = assignmentPanelRenderKey(state, options);
+  const examsKey = JSON.stringify(state.library.examPlan);
+  let view = libraryViews.get(viewID);
+  const focus = document.activeElement;
+  const selection = focus?.tagName === 'INPUT' ? [focus.selectionStart, focus.selectionEnd] : null;
+  const scroll = ['.workspace-scroll', '.agenda-scroll'].map((selector) => [selector, $(selector)?.scrollTop || 0]);
+  if (!view) {
+    const template = document.createElement('template');
+    template.innerHTML = courseLibraryMarkup(state, courseQuery, options, { retainCards: true });
+    view = { node: template.content.firstElementChild, workspaceKey, assignmentKey, examsKey };
+    libraryViews.set(viewID, view);
+  }
+  if ($('#library').firstElementChild !== view.node) $('#library').replaceChildren(view.node);
   const previousAgendaView = $('.agenda-scroll')?.dataset.agendaView;
-  const focused = [
-    'course-search',
-    'assignment-search',
-    'workspace-filter',
-    'semester-picker',
-    'agenda-filter',
-  ].includes(document.activeElement?.id)
-    ? document.activeElement
-    : null;
-  const selection =
-    focused?.tagName === 'INPUT' ? [focused.selectionStart, focused.selectionEnd] : null;
-  const scroll = ['.workspace-scroll', '.agenda-scroll'].map((selector) => [
-    selector,
-    $(selector)?.scrollTop || 0,
-  ]);
-  const assignmentOptions = {
-    refreshError: state.library.canvasAssignmentsError,
-    query: agendaQuery,
-    filter: showingAssignments() ? assignmentsPageFilter : agendaFilter,
-    dedicated: showingAssignments(),
-  };
-  if (panel === 'workspaces' && $('.workspace-panel')) {
-    $('.workspace-panel').outerHTML = workspacePanelMarkup(state, courseQuery);
-  } else if (panel === 'assignments' && $('.assignment-agenda')) {
+  if (!dedicated && view.workspaceKey !== workspaceKey) {
+    $('.workspace-panel').outerHTML = workspacePanelMarkup(state, courseQuery, { retainCards: true });
+    view.workspaceKey = workspaceKey;
+  }
+  if (view.assignmentKey !== assignmentKey) {
     $('.assignment-agenda').outerHTML = assignmentAgendaMarkup(state.library.courses, {
-      ...assignmentOptions,
-      semesters: state.semesters,
-      busy: state.busy,
+      ...options, semesters: state.semesters, busy: state.busy,
     });
-  } else {
-    $('#library').innerHTML = courseLibraryMarkup(state, courseQuery, assignmentOptions);
+    view.assignmentKey = assignmentKey;
+  }
+  if (!dedicated && view.examsKey !== examsKey) {
+    $('.exam-dashboard').outerHTML = examDashboardMarkup(state);
+    view.examsKey = examsKey;
+  }
+  const refresh = view.node.querySelector('.refresh-courses');
+  refresh.disabled = !!state.busy || (dedicated && !!state.assignmentRefreshBusy);
+  refresh.textContent = dedicated ? (state.assignmentRefreshBusy ? 'Refreshing…' : '↻ Refresh status') :
+    (state.busy ? 'Refreshing…' : '↻ Refresh Canvas');
+  if (!dedicated) {
+    filterWorkspacePanel($('.workspace-panel'), courseQuery);
+    // A hidden preview need not inspect reading history during typing.
+    if (!courseQuery.trim() && state.library.courseLibraryView !== 'favorites') {
+      const recent = recentReadings(state.library.courses, 2);
+      const recentKey = JSON.stringify(recent.map(({course, document}) => [course.id, course.name, course.code,
+        document.id, document.title, document.kind, document.lastPage, document.pageCount]));
+      if (view.recentKey !== recentKey) $('.workspace-recents').innerHTML = continueReadingMarkup(recent);
+      view.recentKey = recentKey;
+    }
   }
   if ($('.agenda-scroll')?.dataset.agendaView !== previousAgendaView) {
-    agendaNeedsTodayFocus = assignmentOptions.filter === 'due' && !agendaQuery.trim();
-    const savedAgendaScroll = scroll.find(([selector]) => selector === '.agenda-scroll');
-    if (savedAgendaScroll) savedAgendaScroll[1] = 0;
+    agendaNeedsTodayFocus = options.filter === 'due' && !agendaQuery.trim();
+    const saved = scroll.find(([selector]) => selector === '.agenda-scroll');
+    if (saved) saved[1] = 0;
   }
   renderDashboardPanel();
   for (const [selector, top] of scroll) if ($(selector)) $(selector).scrollTop = top;
-  if (focused && $(`#${focused.id}`)) {
-    $(`#${focused.id}`).focus({ preventScroll: true });
-    if (selection) $(`#${focused.id}`).setSelectionRange(...selection);
+  if (!focus?.isConnected && focus?.id && document.getElementById(focus.id)) {
+    document.getElementById(focus.id).focus({ preventScroll: true });
+    if (selection) document.getElementById(focus.id).setSelectionRange(...selection);
   }
 }
+
 function renderDashboardPanel() {
   const dashboard = $('.study-dashboard');
   if (!dashboard) return;
@@ -906,8 +915,22 @@ function scrollAgendaToToday(focus = false) {
   agendaNeedsTodayFocus = false;
 }
 
+function releaseReader() {
+  readerGeneration++;
+  readerController?.abort();
+  pdfReader?.destroy(); pdfReader = null;
+  notebookReader?.destroy(); notebookReader = null;
+  documentEditor?.destroy(); documentEditor = null;
+  for (const url of readerURLs) URL.revokeObjectURL(url);
+  readerURLs = [];
+  $('#reader-content').replaceChildren();
+  delete $('#reader-content').dataset.document;
+}
 async function renderReader() {
   const generation = ++readerGeneration;
+  readerController?.abort();
+  readerController = new AbortController();
+  const signal = readerController.signal;
   const item = doc(),
     c = course();
   const savedLabel = hosted ? 'Saved to your account' : 'Saved offline';
@@ -1044,7 +1067,7 @@ async function renderReader() {
     ? `<p class="document-notice">${esc(item.contentNotice.replace('Use Original layout', 'Open Original layout in the Mac app'))}</p>`
     : '';
   if (isHTMLDocument(item) && !readingViews.has(item.id)) {
-    const response = await fetch(`/api/document/${item.id}`, { headers: { 'X-Scholia-Token': token } });
+    const response = await fetch(`/api/document/${item.id}`, { headers: { 'X-Scholia-Token': token }, signal });
     if (!response.ok) throw new Error('The original page is unavailable.');
     const html = await response.text();
     if (generation !== readerGeneration) return;
@@ -1089,11 +1112,11 @@ async function renderReader() {
     $('#reader-content').innerHTML =
       `${notice}<article class="paper ${item.kind === 'code' ? 'source-code' : ''}">${renderMarkdown(restoreCourseLinks(state.pageText || '*This section has no saved text.*', c, item))}<div class="embedded-images"></div></article>`;
     if (item.kind === 'office') {
-      const index = await request(`/api/index/${item.id}`);
+      const index = await request(`/api/index/${item.id}`, null, signal);
       if (generation !== readerGeneration) return;
       for (const name of index.pages.find((p) => p.number === state.page)?.images || []) {
         const response = await fetch(`/api/image/${item.id}/${encodeURIComponent(name)}`, {
-          headers: { 'X-Scholia-Token': token },
+          headers: { 'X-Scholia-Token': token }, signal,
         });
         if (!response.ok) continue;
         const blob = await response.blob();
@@ -1114,7 +1137,7 @@ async function renderReader() {
   }
   if (item.kind === 'image') {
     const blob = await (
-      await fetch(`/api/document/${item.id}`, { headers: { 'X-Scholia-Token': token } })
+      await fetch(`/api/document/${item.id}`, { headers: { 'X-Scholia-Token': token }, signal })
     ).blob();
     if (generation !== readerGeneration) return;
     const url = URL.createObjectURL(blob);
@@ -1508,10 +1531,15 @@ document.addEventListener('click', async (event) => {
     if (
       ['library', 'assignments', 'course', 'document', 'thread', 'materials', 'newThread', 'resume'].includes(name)
     ) {
+      if (name === 'assignments' && target.closest('.assignment-agenda')) assignmentsPageFilter = agendaFilter;
       await navigate(name, { id });
       return;
     }
     switch (name) {
+      case 'moreAssignments':
+        agendaLimit += 100;
+        renderLibrary('assignments');
+        break;
       case 'retryReading':
         pdfReader?.destroy();
         pdfReader = null;
@@ -1902,15 +1930,13 @@ $('#reader-content').addEventListener('mouseup', () => {
 });
 document.addEventListener('input', (event) => {
   if (event.target.id === 'assignment-search') {
+    agendaLimit = 100;
     agendaQuery = event.target.value;
     renderLibrary('assignments');
   }
   if (event.target.id === 'course-search') {
-    const position = event.target.selectionStart;
     courseQuery = event.target.value;
-    renderLibrary('workspaces');
-    $('#course-search').focus();
-    $('#course-search').setSelectionRange(position, position);
+    filterWorkspacePanel($('.workspace-panel'), courseQuery);
   }
   if (['material-search', 'sidebar-material-search'].includes(event.target.id)) {
     const id = event.target.id,
