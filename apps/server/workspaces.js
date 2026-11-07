@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events';
+import { stateSurfaceNames, partitionState, mergeStateSurfaces } from '../../packages/core/src/state-surfaces.js';
 import { teachingModeLabel } from '../../packages/core/src/tutoring.js';
 import { normalizeFileAttachments } from '../../packages/core/src/file-attachments.js';
 import { AttachmentCorpus } from './attachment-corpus.js';
@@ -173,8 +175,13 @@ export function materialInventory(course) {
     files: files.sort(sortNames),
   };
 }
-export class Workspaces {
+export class Workspaces extends EventEmitter {
   constructor(store, documents, options = {}) {
+    super();
+    this.setMaxListeners(0);
+    this.epoch = randomUUID();
+    this.stateCaches = new Map();
+    this.metrics = { projections: 0, serializations: 0, conditionalHits: 0 };
     this.store = store;
     this.documents = documents;
     this.attachmentCorpus = new AttachmentCorpus(store.root, options);
@@ -186,6 +193,87 @@ export class Workspaces {
     this.materialCatalogs = new WeakMap();
     this.search = new WorkspaceSearch(documents);
     this.learning = new HostedLearning(this);
+    store.on?.('saved', (account, surfaces) => this.invalidate(account, surfaces));
+    store.on?.('navigated', session => this.emit('change', { accountID: session.user_id, sessionToken: session.token }));
+  }
+  invalidate(account, surfaces = stateSurfaceNames) {
+    account.surfaceRevisions ||= Object.fromEntries(stateSurfaceNames.map(name => [name, 1]));
+    for (const name of surfaces) account.surfaceRevisions[name]++;
+    this.emit('change', { accountID: account.id });
+  }
+  revisions(session) {
+    const account = this.account(session.user_id);
+    account.surfaceRevisions ||= Object.fromEntries(stateSurfaceNames.map(name => [name, 1]));
+    const navigation = hash(JSON.stringify(session.navigation));
+    // Dashboard due dates advance without a database mutation.
+    const clock = Math.floor(Date.now() / 60_000);
+    return Object.fromEntries(stateSurfaceNames.map(name => [name,
+      `${account.stateEpoch ||= randomUUID()}:${account.surfaceRevisions[name]}${['reader', 'conversation'].includes(name) ? ':' + navigation : ''}${name === 'dashboard' ? ':' + clock : ''}`]));
+  }
+  async stateResponse(session, { protocol = false, known = null, ifNoneMatch = '' } = {}) {
+    // Periodic reconciliation is scheduled before the revision check, never by projection.
+    const account = this.account(session.user_id);
+    void this.refreshMathWiki(account, session.navigation.selectedCourseID);
+    void this.refreshCanvasContent(account, session.navigation.selectedCourseID);
+    void this.refreshCanvasAssignments(account);
+    let revisions = this.revisions(session);
+    const validator = values => '"' + hash(JSON.stringify([this.epoch, session.user_id, session.token, protocol, values])) + '"';
+    const etag = validator(revisions);
+    if (String(ifNoneMatch).split(',').some(value => value.trim().replace(/^W\//, '') === etag)) {
+      this.metrics.conditionalHits++;
+      return { status: 304, etag, data: '' };
+    }
+    const key = `${session.user_id}:${session.token}`;
+    let cache = this.stateCaches.get(key);
+    if (!cache) cache = { surfaces: {}, revisions: {}, surfaceBytes: {} };
+    this.stateCaches.delete(key); this.stateCaches.set(key, cache);
+    while (this.stateCaches.size > 256) this.stateCaches.delete(this.stateCaches.keys().next().value);
+    const validBase = protocol && known?.epoch === this.epoch && known.revisions &&
+      stateSurfaceNames.every(name => typeof known.revisions[name] === 'string') &&
+      // Only a revision this session was actually served may be used as a delta base.
+      cache.accepted?.some(base => stateSurfaceNames.every(name => base[name] === known.revisions[name]));
+    let needed = stateSurfaceNames.filter(name => cache.revisions[name] !== revisions[name]);
+    if (needed.length) {
+      let projected;
+      // Reader I/O can overlap a background update; retry with the new changed surfaces.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        projected = partitionState(await this.state(session, { surfaces: needed }));
+        const latest = this.revisions(session);
+        const raced = stateSurfaceNames.filter(name => latest[name] !== revisions[name]);
+        revisions = latest;
+        if (!raced.length) break;
+        needed = [...new Set([...needed, ...raced])];
+        if (attempt === 2) {
+          projected = partitionState(await this.state(session));
+          revisions = this.revisions(session); needed = stateSurfaceNames;
+        }
+      }
+      for (const name of needed) {
+        // Serialize immediately: cached surfaces must not retain mutable account objects.
+        const encoded = JSON.stringify(projected[name]); this.metrics.serializations++;
+        cache.surfaces[name] = JSON.parse(encoded); cache.revisions[name] = revisions[name];
+        cache.surfaceBytes[name] = Buffer.byteLength(encoded);
+      }
+    }
+    const full = !validBase;
+    let body;
+    if (!protocol) body = mergeStateSurfaces(null, cache.surfaces);
+    else {
+      body = { protocol: 1, epoch: this.epoch, revisions, base: full ? null : known };
+      if (full) body.snapshot = mergeStateSurfaces(null, cache.surfaces);
+      else body.patches = Object.fromEntries(stateSurfaceNames.filter(name => known.revisions[name] !== revisions[name])
+        .map(name => [name, cache.surfaces[name]]));
+    }
+    const data = JSON.stringify(body); this.metrics.serializations++;
+    cache.accepted = [...(cache.accepted || []), { ...revisions }].slice(-4);
+    // Bound retained snapshots as well as entry counts. Large accounts remain correct without retention.
+    cache.bytes = Object.values(cache.surfaceBytes).reduce((sum, bytes) => sum + bytes, 0);
+    let retained = [...this.stateCaches.values()].reduce((sum, item) => sum + (item.bytes || 0), 0);
+    for (const [id, item] of this.stateCaches) {
+      if (retained <= 32_000_000) break;
+      this.stateCaches.delete(id); retained -= item.bytes || 0;
+    }
+    return { status: 200, etag: validator(revisions), data };
   }
   account(id) {
     const time = Date.now(),
@@ -212,14 +300,19 @@ export class Workspaces {
         if (!idle.length) fail('The server is busy. Try again shortly.', 503);
         this.accounts.delete(idle[0][0]);
       }
-      this.accounts.set(id, {
+      this.accounts.set(id, new Proxy({
         ...this.store.account(id),
         busy: false,
         streaming: false,
         error: null,
         status: null,
         controller: null,
-      });
+      }, { set: (target, property, value) => {
+        const changed = target[property] !== value; target[property] = value;
+        if (changed && ['busy', 'streaming', 'status', 'error', 'assignmentRefresh'].includes(property))
+          this.invalidate(target, ['activity', 'conversation']);
+        return true;
+      } }));
     }
     const account = this.accounts.get(id);
     account.lastAccess = time;
@@ -253,6 +346,7 @@ export class Workspaces {
       if (command.action === 'practiceGenerate') this.learning.generate(account, session.navigation, command);
       else if (command.action === 'practice') this.learning.command(account, command.learning);
       else fail('Unknown practice action.');
+      this.invalidate(account, ['dashboard', 'activity']);
       return this.learning.view(account, session.navigation);
     });
   }
@@ -316,7 +410,9 @@ export class Workspaces {
         409
       );
   }
-  async state(session) {
+  async state(session, { surfaces = stateSurfaceNames } = {}) {
+    this.metrics.projections++;
+    const want = name => surfaces.includes(name);
     const account = this.account(session.user_id),
       nav = session.navigation;
     void this.refreshMathWiki(account, nav.selectedCourseID);
@@ -327,9 +423,9 @@ export class Workspaces {
       thread = this.thread(course, nav);
     const showingLibrary = nav.showingCourseLibrary !== false;
     const contextScope = courseContextScope(thread, nav);
-    if (!showingLibrary) void this.analyzeStoredMaterials(account, course);
-    const index = !showingLibrary && doc ? await this.documents.index(account.id, doc).catch(() => null) : null;
-    const assignment = !showingLibrary && nav.selectedAssignmentID
+    if (want('reader') && !showingLibrary) void this.analyzeStoredMaterials(account, course);
+    const index = want('reader') && !showingLibrary && doc ? await this.documents.index(account.id, doc).catch(() => null) : null;
+    const assignment = want('reader') && !showingLibrary && nav.selectedAssignmentID
       ? course?.canvasMaterials?.find((m) => m.id === nav.selectedAssignmentID) : null,
       instructions = assignment?.id
         ? course?.documents.find((d) => d.sourceKey === assignment.id) : null;
@@ -340,11 +436,11 @@ export class Workspaces {
       : '';
     if (assignment) await this.normalizeAssignmentIndexes(account, course, assignment, doc, index);
     const files = assignmentFileReferences(course, assignment);
-    const inventory = showingLibrary ? { groups: [], files: [] } : this.materialInventory(course),
+    const inventory = !want('reader') || showingLibrary ? { groups: [], files: [] } : this.materialInventory(course),
       provider =
         hostedProviders.find((p) => p.id === account.settings.providerID) || hostedProviders[0];
     const semesters = new Map();
-    for (const c of account.library.courses) {
+    for (const c of want('catalog') ? account.library.courses : []) {
       const title = c.term || 'No semester',
         id = c.term ? `term:${c.term}` : 'unassigned';
       if (!semesters.has(id)) semesters.set(id, { id, title, courseIDs: [], isCurrent: false });
@@ -354,11 +450,11 @@ export class Workspaces {
     return {
       hosted: true,
       account: { email: account.email },
-      capabilities: { practiceReview: true },
+      capabilities: { practiceReview: true, stateSurfaces: 1, changeNotifications: true, atomicNavigation: true },
       library: {
         ...account.library,
         ...nav,
-        courses: account.library.courses.map((c) => ({
+        courses: want('catalog') ? account.library.courses.map((c) => ({
           ...c,
           threads: c.threads.map((t) => ({
             id: t.id,
@@ -366,7 +462,7 @@ export class Workspaces {
             documentID: t.documentID,
             assignmentID: t.assignmentID,
           })),
-        })),
+        })) : [],
       },
       showingLibrary,
       assignmentRefreshBusy: !!account.assignmentRefresh,
@@ -374,8 +470,8 @@ export class Workspaces {
       semesters: [...semesters.values()].sort((a, b) => b.title.localeCompare(a.title)),
       materialGroups: inventory.groups,
       materialFiles: inventory.files,
-      messages: showingLibrary ? [] : thread?.messages || [],
-      sources: showingLibrary ? {} : thread?.sources || {},
+      messages: !want('conversation') || showingLibrary ? [] : thread?.messages || [],
+      sources: !want('conversation') || showingLibrary ? {} : thread?.sources || {},
       page,
       pageText: index?.pages[page - 1]?.text || '',
       draft: thread?.draft || '',
@@ -386,7 +482,7 @@ export class Workspaces {
       language: account.settings.language || 'auto',
       entirePDF: !!doc && !['image', 'preview'].includes(doc.kind) && thread?.entirePDF === true,
       editing: nav.editing || null,
-      models: hostedProviders.flatMap((p) =>
+      models: want('settings') ? hostedProviders.flatMap((p) =>
         p.models.map((m) => ({
           id: typeof m === 'string' ? m : m.id,
           label: typeof m === 'string' ? m : m.label,
@@ -397,7 +493,7 @@ export class Workspaces {
           reasoningEfforts: m.reasoning?.efforts || [],
           defaultReasoningEffort: m.reasoning?.default || null,
         }))
-      ),
+      ) : [],
       providerID: provider.id,
       modelID: account.settings.modelID || provider.defaultModel,
       studyModelMode: normalizeStudyModelMode(account.settings.studyModelMode),
@@ -416,7 +512,7 @@ export class Workspaces {
       busy: account.busy,
       loadingDocument: false,
       status: account.status,
-      warnings: account.library.courses.flatMap((c) => c.catalogWarnings || []),
+      warnings: want('catalog') ? account.library.courses.flatMap((c) => c.catalogWarnings || []) : [],
       error: account.error,
       contextScope,
       workspaceMemory: { courseID: course?.id || null,
@@ -424,7 +520,7 @@ export class Workspaces {
         ...workspaceMemory(course, contextScope === 'assignment' ? thread?.assignmentID || nav.selectedAssignmentID : null) },
       context:
         contextScope === 'course'
-          ? courseContextSummary(course)
+          ? want('reader') ? courseContextSummary(course) : ''
           : assignment
             ? `${assignment.title} · ${files.filter((ref) => course.documents.some((document) => document.sourceKey === ref.id && document.kind !== 'preview' && (document.unreadablePages || 0) < document.pageCount)).length} of ${files.length} files indexed for the companion`
             : doc
@@ -652,6 +748,7 @@ export class Workspaces {
         account.library.canvasAssignmentsError = error.message;
     }).finally(() => {
       account.assignmentRefresh = null;
+      this.invalidate(account, ['activity', 'dashboard']);
       account.assignmentRefreshController = null;
     });
     return account.assignmentRefresh;
@@ -663,6 +760,7 @@ export class Workspaces {
     account.error = null;
     const controller = new AbortController();
     account.controller = controller;
+    this.invalidate(account, ['activity', 'conversation']);
     const job = Promise.resolve()
       .then(() => work(controller.signal))
       .catch((error) => {
@@ -1202,7 +1300,7 @@ export class Workspaces {
     } finally { account.examRecommendationBusy = false; }
   }
 
-  async action(session, command) {
+  async action(session, command, { project = true } = {}) {
     const currentNavigation = this.registerNavigation(session, command);
     return this.serial(session.user_id, async () => {
       this.store.refreshNavigation(session);
@@ -1710,6 +1808,7 @@ export class Workspaces {
                     (text) => {
                       if (responseSignal.aborted) return;
                       reply.content += text;
+                      this.invalidate(account, ['conversation', 'activity']);
                       reply.metadata = 'Writing answer…';
                       activity(reply.metadata);
                     },
@@ -1753,7 +1852,8 @@ export class Workspaces {
       }
       if (!sessionOnlyActions.has(command.action)) this.store.save(account);
       this.store.navigate(session);
-      return this.state(session);
+      this.invalidate(account, ['activity', 'conversation']);
+      return project ? this.state(session) : null;
     });
   }
   async edit(account, id) {

@@ -91,3 +91,20 @@ test('atomic reading does not publish a document deleted during availability val
  await assert.rejects(f.workspaces.action(f.session,{action:'openReading',id:f.doc.id,page:7}),/changed/);
  assert.deepEqual(f.session.navigation,previous);
 });
+test('revision validators avoid projection and encoding; navigation patches omit unchanged catalogs',async t=>{
+ const f=await fixture(t);f.session.navigation.showingCourseLibrary=true;
+ const first=await f.workspaces.stateResponse(f.session,{protocol:true});
+ const initial=JSON.parse(first.data), before={...f.workspaces.metrics};
+ const unchanged=await f.workspaces.stateResponse(f.session,{protocol:true,ifNoneMatch:first.etag});
+ assert.equal(unchanged.status,304);assert.equal(unchanged.data,'');
+ assert.equal(f.workspaces.metrics.projections,before.projections);
+ assert.equal(f.workspaces.metrics.serializations,before.serializations);
+ await f.workspaces.action(f.session,{action:'course',id:f.course.id},{project:false});
+ const changed=JSON.parse((await f.workspaces.stateResponse(f.session,{protocol:true,known:{epoch:initial.epoch,revisions:initial.revisions}})).data);
+ assert.equal(changed.snapshot,undefined);assert.equal(changed.patches.catalog,undefined);
+ assert.equal(changed.patches.reader.library.selectedCourseID,f.course.id);
+ const conflict=JSON.parse((await f.workspaces.stateResponse(f.session,{protocol:true,known:{epoch:initial.epoch,revisions:{...initial.revisions,catalog:'invented'}}})).data);
+ assert.ok(conflict.snapshot);assert.equal(conflict.base,null);
+ const restarted=JSON.parse((await f.workspaces.stateResponse(f.session,{protocol:true,known:{epoch:'old',revisions:initial.revisions}})).data);
+ assert.ok(restarted.snapshot);
+});

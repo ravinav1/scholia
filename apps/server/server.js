@@ -79,6 +79,7 @@ export function createHostedServer({
     workspaces = new Workspaces(store, documents, { canvasHosts, ...options });
   const secure = publicURL.protocol === 'https:',
     attempts = new Map();
+  const eventStreams = new Set();
   let authActive = 0,
     uploads = 0,
     closing = false;
@@ -203,13 +204,48 @@ export function createHostedServer({
           send(200, { ok: true }, undefined, { 'Set-Cookie': cookie('', true) });
           return;
         }
+        const stateOptions = (protocol) => {
+          let known = null;
+          try {
+            const value = request.headers['x-scholia-revisions'];
+            if (typeof value === 'string' && value.length < 4096) known = JSON.parse(value);
+          } catch { /* An authoritative snapshot recovers a malformed revision token. */ }
+          return { protocol, known, ifNoneMatch: request.headers['if-none-match'] };
+        };
+        const sendState = async protocol => {
+          const result = await workspaces.stateResponse(session, stateOptions(protocol));
+          send(result.status, result.data, undefined, { ETag: result.etag });
+        };
         if (path === '/api/state' && request.method === 'GET') {
-          const data = JSON.stringify(await workspaces.state(session));
-          const etag = `"${hash(data)}"`;
-          const unchanged = matchesETag(request.headers['if-none-match'], etag);
-          // Keep account state out of the browser's HTTP cache. The workspace
-          // explicitly retains its last accepted validator in memory instead.
-          send(unchanged ? 304 : 200, unchanged ? '' : data, undefined, { ETag: etag });
+          await sendState(new URL(request.url, origin).searchParams.get('surfaces') === '1');
+          return;
+        }
+        if (path === '/api/events' && request.method === 'GET') {
+          if (eventStreams.size >= 256 || [...eventStreams].filter(item => item.token === session.token).length >= 4)
+            throw httpError(429, 'Too many change listeners. Conditional polling is available.');
+          writeHeaders(200, 'text/event-stream', { 'X-Accel-Buffering': 'no' });
+          const listener = { token: session.token, response };
+          eventStreams.add(listener);
+          let pending;
+          const write = event => {
+            if (response.destroyed || response.writableEnded) return;
+            if (!response.write(`event: ${event}\ndata: {"epoch":"${workspaces.epoch}"}\n\n`)) response.end();
+          };
+          const changed = event => {
+            if (event.accountID !== session.user_id || (event.sessionToken && event.sessionToken !== session.token) || pending) return;
+            pending = setTimeout(() => { pending = null; write('change'); }, 40);
+          };
+          const heartbeat = setInterval(() => {
+            if (!store.session(parseCookie(request))) response.end();
+            else write('heartbeat');
+          }, 25000);
+          heartbeat.unref();
+          workspaces.on('change', changed);
+          response.once('close', () => {
+            clearTimeout(pending); clearInterval(heartbeat);
+            workspaces.off('change', changed); eventStreams.delete(listener);
+          });
+          write('ready');
           return;
         }
         if (path === '/api/learning' && request.method === 'GET') {
@@ -274,7 +310,9 @@ export function createHostedServer({
           if (uploads >= 8) throw httpError(503, 'The server is busy. Try again shortly.');
           uploads++;
           try {
-            send(200, await workspaces.action(session, await body(request)));
+            const protocol = request.headers['x-scholia-state-protocol'] === '1';
+            await workspaces.action(session, await body(request), { project: false });
+            await sendState(protocol);
           } finally {
             uploads--;
           }
@@ -318,6 +356,7 @@ export function createHostedServer({
     workspaces,
     async close() {
       closing = true;
+      for (const stream of eventStreams) stream.response.end();
       const closed = new Promise((resolve) => server.close(resolve));
       await workspaces.stop();
       await closed;

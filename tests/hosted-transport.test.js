@@ -185,3 +185,34 @@ test('material inventory reuse survives reading and chat changes but observes ca
   assert.notEqual(renamed, updated);
   assert.equal(renamed.groups[0].items[0].title, 'Renamed lecture');
 });
+
+test('surface transport skips unchanged work and recovers unrecognized revisions without cross-account reuse', async t => {
+  const app=await fixture(t), alice=await app.login('surface-a@example.com'), bob=await app.login('surface-b@example.com');
+  const initial=await app.request('/api/state?surfaces=1',alice), envelope=JSON.parse(initial.text);
+  assert.equal(envelope.protocol,1);assert.ok(envelope.snapshot);
+  const metrics={...app.workspaces.metrics};
+  const unchanged=await app.request('/api/state?surfaces=1',alice,{headers:{'If-None-Match':initial.headers.get('etag')}});
+  assert.equal(unchanged.status,304);assert.equal(app.workspaces.metrics.projections,metrics.projections);
+  assert.equal(app.workspaces.metrics.serializations,metrics.serializations);
+  const known=JSON.stringify({epoch:envelope.epoch,revisions:envelope.revisions});
+  const changed=await app.request('/api/action',alice,{method:'POST',headers:{'Content-Type':'application/json','X-Scholia-State-Protocol':'1','X-Scholia-Revisions':known},body:JSON.stringify({action:'semester',id:'all'})});
+  const delta=JSON.parse(changed.text);assert.equal(delta.snapshot,undefined);assert.equal(delta.patches.catalog,undefined);
+  const separate=JSON.parse((await app.request('/api/state?surfaces=1',bob,{headers:{'X-Scholia-Revisions':known}})).text);
+  assert.ok(separate.snapshot);assert.deepEqual(separate.snapshot.library.courses,[]);
+  const malformed=JSON.parse((await app.request('/api/state?surfaces=1',alice,{headers:{'X-Scholia-Revisions':'{invalid'}})).text);
+  assert.ok(malformed.snapshot);
+});
+
+test('change stream authenticates, announces mutations and closes cleanly',async t=>{
+ const app=await fixture(t),alice=await app.login('events@example.com');
+ assert.equal((await app.request('/api/events')).status,401);
+ const controller=new AbortController();
+ const response=await fetch(app.origin+'/api/events',{headers:{Cookie:alice.cookie,'X-Scholia-Token':alice.csrf},signal:controller.signal});
+ assert.match(response.headers.get('content-type'),/event-stream/);
+ const reader=response.body.getReader();const decoder=new TextDecoder();
+ assert.match(decoder.decode((await reader.read()).value),/event: ready/);
+ await app.action(alice,{action:'create',name:'Event workspace'});
+ const next=await Promise.race([reader.read(),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('No invalidation event')),3000);timer.unref();})]);
+ assert.match(decoder.decode(next.value),/event: change/);
+ controller.abort();await reader.cancel().catch(()=>{});
+});

@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,8 +22,9 @@ export const emptyLibrary = () => ({
   courseLibraryView: 'all',
 });
 
-export class AccountStore {
+export class AccountStore extends EventEmitter {
   constructor(root, { secret } = {}) {
+    super();
     this.root = root;
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const keyPath = join(root, 'encryption.key');
@@ -114,6 +116,7 @@ export class AccountStore {
     this.db
       .prepare('UPDATE users SET library=?,settings=? WHERE id=?')
       .run(JSON.stringify(account.library), JSON.stringify(account.settings), account.id);
+    this.emit('saved', account, ['catalog', 'dashboard', 'reader', 'conversation', 'activity', 'settings']);
   }
   learning(id, state, expectedRevision = 0) {
     if (state === undefined) {
@@ -131,11 +134,16 @@ export class AccountStore {
       .get(session.token, session.user_id, Date.now());
     if (!row) throw Object.assign(new Error('Sign in to continue.'), { status: 401 });
     session.navigation = JSON.parse(row.navigation);
+    session.encodedNavigation = row.navigation;
   }
   navigate(session) {
+    const encoded = JSON.stringify(session.navigation);
+    if (encoded === session.encodedNavigation) return;
     this.db
       .prepare('UPDATE sessions SET navigation=? WHERE token=? AND user_id=?')
-      .run(JSON.stringify(session.navigation), session.token, session.user_id);
+      .run(encoded, session.token, session.user_id);
+    session.encodedNavigation = encoded;
+    this.emit('navigated', session);
   }
   credential(id, name, value) {
     if (value !== undefined) {
