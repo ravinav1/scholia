@@ -3,9 +3,9 @@ dist/
 .release/
 .DS_Store
 *.log
-scripts/.claude-bridge-env
-scripts/.codex-bridge-env
-scripts/.opencode-env
+scripts/**/.claude-bridge-env
+scripts/**/.codex-bridge-env
+scripts/**/.opencode-env
 .swiftpm/
 apps/macos/.build/
 apps/macos/.swiftpm/
@@ -14,7 +14,7 @@ apps/macos/.swiftpm/
 .data/
 .env
 .env.*
-!.env.example
+!apps/server/.env.example
 
 # Generated benchmark logs, screenshots, fixtures and live-model reports
 output/

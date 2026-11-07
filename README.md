@@ -51,7 +51,7 @@ npm ci
 
 Requires macOS 14 or newer and Apple's developer tools.
 
-Double-click **[Update Scholia.command](Update%20Scholia.command)**, or run:
+Double-click **[Update Scholia.command](scripts/macos/Update%20Scholia.command)**, or run:
 
 ```sh
 npm run update:macos
@@ -119,12 +119,14 @@ npm run build           # extension in dist/chrome
 npm run check:dist      # validate the extension package
 npm run package:chrome  # Web Store ZIP
 npm run smoke:macos:workspace -- --data-only
-node scripts/smoke-hosted-web.mjs
+node scripts/smoke/browser/smoke-hosted-web.mjs
 ```
 
 Browser verification uses Chromium. See [architecture](docs/ARCHITECTURE.md)
 for component boundaries, [practice and review](docs/PRACTICE.md) for the native
-learning model, and [Chrome release instructions](docs/CHROME_WEB_STORE.md) for
+learning model, and [Chrome release instructions](apps/chrome/README.md) for
 packaging. Generated output belongs in ignored build directories.
 
 [MIT license](LICENSE)
+
+See [Contributing](docs/CONTRIBUTING.md) for the repository layout and verification commands.

@@ -40,7 +40,7 @@ There is no public registration form.
 | `PORT`                 | `3000`                          | Listening port                                                   |
 
 The application does not load `.env` automatically. Export variables with your
-process manager, or use Docker's `--env-file`. `.env.example` is a starting point
+process manager, or use Docker's `--env-file`. `apps/server/.env.example` is a starting point
 for a container deployment. Keep secrets and data outside version control.
 
 The Docker image includes Tesseract and English/Norwegian language data. For a
@@ -67,8 +67,8 @@ publicly when a proxy is handling TLS.
 From the repository root:
 
 ```sh
-docker build -t scholia-web .
-cp .env.example .env
+docker build -f apps/server/Dockerfile -t scholia-web .
+cp apps/server/.env.example .env
 # Set SCHOLIA_ORIGIN to your HTTPS address and configure allowed Canvas hosts.
 docker volume create scholia-data
 docker run -d --name scholia --restart unless-stopped \
@@ -85,7 +85,7 @@ writable by the container's user and restrict access to the service operator.
 Create the first account with a private, single-line password file:
 
 ```sh
-docker exec -i scholia node scripts/web-user.mjs \
+docker exec -i scholia node apps/server/user.mjs \
   --email you@example.com < /secure/path/scholia-password.txt
 ```
 
@@ -125,7 +125,7 @@ To reset a password, pass `--reset`; this also revokes the account's existing
 sessions:
 
 ```sh
-docker exec -i scholia node scripts/web-user.mjs \
+docker exec -i scholia node apps/server/user.mjs \
   --email person@example.com --reset < /secure/path/new-password.txt
 ```
 
@@ -190,7 +190,7 @@ Run the checks before deployment:
 ```sh
 npm run check
 npm run build:web
-node scripts/smoke-hosted-web.mjs
+node scripts/smoke/browser/smoke-hosted-web.mjs
 ```
 
 The hosted integration tests check account separation and revision conflicts;

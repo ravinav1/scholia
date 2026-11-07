@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 // Dense, repeated matches exercise the expensive text-layer path, without
 // depending on an external textbook or network access. Chromium disables GPU

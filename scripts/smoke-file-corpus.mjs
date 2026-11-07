@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
-import { chromiumSession } from './lib/chromium.mjs';
+import { chromiumSession } from './smoke/browser/lib/chromium.mjs';
 
 const root = process.cwd();
 const server = createServer(async (request, response) => {
@@ -32,7 +32,7 @@ try {
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   await until('document.title === "Attachment corpus smoke"');
   const saved = await evaluate(`(async () => {
-    const { saveChat, CHAT_HISTORY_KEY } = await import('/apps/chrome/src/chat-history.js');
+    const { saveChat, CHAT_HISTORY_KEY } = await import('/apps/chrome/src/chat/chat-history.js');
     const source = 'Routine project source.\\n'.repeat(90000);
     const record = await saveChat({ id: 'corpus-smoke', createdAt: Date.now(), updatedAt: Date.now(), capture: {}, messages: [
       { role: 'user', content: 'What is tailparameter?', files: [
@@ -50,7 +50,7 @@ try {
   await send('Page.reload');
   await until('document.title === "Attachment corpus smoke" && document.readyState === "complete"');
   const restored = await evaluate(`(async () => {
-    const { getChat } = await import('/apps/chrome/src/chat-history.js');
+    const { getChat } = await import('/apps/chrome/src/chat/chat-history.js');
     const { sanitizeConversation } = await import('/packages/core/src/prompt.js');
     const record = await getChat('corpus-smoke', ${area});
     const request = sanitizeConversation([...record.messages, { role: 'assistant', content: 'Let us examine it.' }, { role: 'user', content: 'Why?' }]);

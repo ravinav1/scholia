@@ -1,4 +1,4 @@
-import { extractPdfContext } from './pdf-context.js';
+import { extractPdfContext } from './pdf/pdf-context.js';
 import { normalizeImageFile } from './image-input.js';
 import { extractOfficeText } from './office-text.js';
 import { decodeFileText, extractArchiveText } from './archive-text.js';

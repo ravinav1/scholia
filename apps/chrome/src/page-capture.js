@@ -1,4 +1,4 @@
-import { createHtmlElement } from './html-elements.js';
+import { createHtmlElement } from './ui-primitives.js';
 import { pageContextWithHtml, sanitizedPageHtml } from './page-html.js';
 import { collectLivePageText } from './deep-page.js';
 import { mailContextForSelection } from './mail-context.js';

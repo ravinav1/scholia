@@ -63,10 +63,10 @@ Run:
 ```sh
 npm run check
 npm run build && npm run check:dist
-node scripts/smoke-chromium-history.mjs
-zsh scripts/smoke-macos-workspace.sh --learning-only
-zsh scripts/smoke-macos-workspace.sh --data-only
-zsh scripts/smoke-macos-workspace.sh
+node scripts/smoke/browser/smoke-chromium-history.mjs
+zsh scripts/smoke/macos/run.sh workspace --learning-only
+zsh scripts/smoke/macos/run.sh workspace --data-only
+zsh scripts/smoke/macos/run.sh workspace
 ```
 
 The native smoke uses an isolated library and deterministic generation/feedback. It checks original/revised answers, confidence and assistance, hidden solutions, disputes, self-checks, source versions, restart, duplicate events, competing writers, scheduler outcomes and offline/late feedback. The full smoke drives Chromium through generation, submission, feedback, reload/resume, hints, revision, reveal, recap, review saving/snooze, and responsive layouts. It also checks the actual API rejects a draft delayed across a second window's navigation. A separate Chromium smoke loads the built extension and checks concurrent writes from two extension pages. Unit tests cover extension history concurrency, failed Canvas refresh retention, changed deadlines and the tutoring contract. No live provider completion or Canvas account is needed for these checks.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { chromiumSession } from './lib/chromium.mjs';
+import { chromiumSession } from './smoke/browser/lib/chromium.mjs';
 
 const source = await readFile(new URL('../apps/macos/Sources/ScholiaMac/StudentwebResults.swift', import.meta.url), 'utf8');
 const script = source.match(/static let script = #"""\n([\s\S]*?)\n\s*"""#/)[1];

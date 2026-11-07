@@ -1,0 +1,12 @@
+.git
+node_modules
+dist
+.release
+.data
+**/.env*
+scripts/**/.*-env
+apps/macos/.build
+apps/macos/.swiftpm
+*.log
+.DS_Store
+output

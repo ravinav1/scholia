@@ -4,7 +4,7 @@ import { pipeline } from 'node:stream/promises';
 import { resolve, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AccountStore, hash } from './store.js';
-import { Documents, documentMime } from './documents.js';
+import { Documents, documentMime } from './documents/documents.js';
 import { Workspaces } from './workspaces.js';
 const source = dirname(fileURLToPath(import.meta.url));
 const types = {

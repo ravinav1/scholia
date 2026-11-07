@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHostedServer } from '../apps/server/server.js';
-import { chromiumSession } from './lib/chromium.mjs';
+import { chromiumSession } from './smoke/browser/lib/chromium.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'scholia-chat-files-'));
 const reserve = createServer();

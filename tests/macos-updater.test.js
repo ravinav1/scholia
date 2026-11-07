@@ -25,15 +25,15 @@ test('macOS updater force quits exact running copies, including apps that refuse
     await rm(root, { recursive: true, force: true });
   });
 
-  const scripts = join(root, 'scripts');
+  const scripts = join(root, 'scripts', 'macos');
   const bin = join(root, 'bin');
   const destination = join(root, 'Applications [test]', 'Scholia.app');
   const source = join(root, 'dist', 'macos', 'Scholia.app');
   const unrelated = join(root, 'Other', 'Scholia.app');
-  await mkdir(scripts);
+  await mkdir(scripts, { recursive: true });
   await mkdir(bin);
   for (const name of ['install-macos-app.sh', 'quit-macos-apps.js']) {
-    await copyFile(new URL(`../scripts/${name}`, import.meta.url), join(scripts, name));
+    await copyFile(new URL(`../scripts/macos/${name}`, import.meta.url), join(scripts, name));
   }
   await writeFile(join(bin, 'codesign'), '#!/bin/sh\necho "designated => identifier \\"fixture\\""\n', { mode: 0o755 });
   const fixtureSource = join(root, 'Fixture.m');
@@ -164,14 +164,14 @@ test('Enter closes only the updater Terminal window after success or failure', {
     }
     await rm(root, { recursive: true, force: true });
   });
-  await mkdir(join(root, 'scripts'));
-  await copyFile(new URL('../Update Scholia.command', import.meta.url), join(root, 'Update Scholia.command'));
+  await mkdir(join(root, 'scripts', 'macos'), { recursive: true });
+  await copyFile(new URL('../scripts/macos/Update Scholia.command', import.meta.url), join(root, 'scripts/macos/Update Scholia.command'));
   await copyFile(new URL('../scripts/close-updater-terminal.applescript', import.meta.url), join(root, 'scripts', 'close-updater-terminal.applescript'));
   // Run the real launcher; replace only the installer so no app is rebuilt or installed.
-  await writeFile(join(root, 'scripts', 'install-macos-app.sh'), '#!/bin/zsh\nexit "$2"\n');
+  await writeFile(join(root, 'scripts', 'macos', 'install-macos-app.sh'), '#!/bin/zsh\nexit "$2"\n');
   for (const exitCode of [0, 7]) {
     const resultPath = join(root, `result-${exitCode}`);
-    const command = `/bin/zsh ${shellQuote(join(root, 'Update Scholia.command'))} ${exitCode}; update_result=$?; print -r -- "$update_result" > ${shellQuote(resultPath)}; exit "$update_result"`;
+    const command = `/bin/zsh ${shellQuote(join(root, 'scripts/macos/Update Scholia.command'))} ${exitCode}; update_result=$?; print -r -- "$update_result" > ${shellQuote(resultPath)}; exit "$update_result"`;
     const updater = await openWindow(`exec /bin/zsh -c ${shellQuote(command)}`);
     const promptDeadline = Date.now() + 10_000;
     while (true) {

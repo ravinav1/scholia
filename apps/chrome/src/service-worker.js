@@ -1,4 +1,4 @@
-import { ownChatHistoryMutations, mutateChatHistory } from './chat-history.js';
+import { ownChatHistoryMutations, mutateChatHistory } from './chat/chat-history.js';
 ownChatHistoryMutations();
 
 import { panelSourceTab } from './panel-source.js';
@@ -14,21 +14,21 @@ import {
 } from '../../../packages/core/src/providers.js';
 import { checkBridgeStatus, discoverCodexModels, discoverOpencodeModels, runCompletion } from './provider-runtime.js';
 import { RECENT_MODELS_KEY, recordRecentModel } from '../../../packages/core/src/recent-models.js';
-import { openExplanationChat } from './explanation-chat.js';
-import { pdfWrapperDownloadUrl } from './pdf-context.js';
-import { forwardOcrRequest } from './ocr-broker.js';
-import { pdfMimeHandlerEnabled, pdfMimeHandlerFrameId } from './pdf-mime-handler.js';
+import { openExplanationChat } from './chat/explanation-chat.js';
+import { pdfWrapperDownloadUrl } from './pdf/pdf-context.js';
+import { forwardOcrRequest } from './pdf/ocr-broker.js';
+import { pdfMimeHandlerEnabled, pdfMimeHandlerFrameId } from './pdf/pdf-mime-handler.js';
 import {
   loadPdfSourceRecord,
   prunePdfSourceRecords,
   storePdfSourceRecord
-} from './pdf-source-store.js';
+} from './pdf/pdf-source-store.js';
 import {
   loadLocalPdfFileRecord,
   localPdfFileSource,
   pruneLocalPdfFileHandles
-} from './pdf-local-file-store.js';
-import { restoredPdfTabTarget } from './pdf-tab-restore.js';
+} from './pdf/pdf-local-file-store.js';
+import { restoredPdfTabTarget } from './pdf/pdf-tab-restore.js';
 import {
   chatGptMemoryLooksLikePersonalizationPage,
   isChatGptWebUrl
@@ -78,7 +78,7 @@ import { embeddedFrameContext, MAX_DEEP_PAGE_TILES } from './deep-page.js';
 import { MAX_MAIL_THREAD_CONTEXT_CHARACTERS } from './mail-context.js';
 import { researchUrl } from './research-links.js';
 import { configurePdfMimeHandling } from './browser-compat.js';
-import { nativePdfProgressFromScriptResults } from './pdf-progress.js';
+import { nativePdfProgressFromScriptResults } from './pdf/pdf-progress.js';
 import {
   closeQuickChatFromSignal,
   toggleQuickChatFromCommandTab

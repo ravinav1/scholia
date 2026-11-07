@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { entirePdfContext, readEntirePdf, MAX_ENTIRE_PDF_CHARS } from '../packages/core/src/entire-pdf.js';
-import { normalizeChatRecord } from '../apps/chrome/src/chat-history.js';
+import { normalizeChatRecord } from '../apps/chrome/src/chat/chat-history.js';
 import { buildProviderRequest } from '../apps/chrome/src/provider-runtime.js';
 import { mergeSettings } from '../packages/core/src/providers.js';
 

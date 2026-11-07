@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { workspaceMemory, saveWorkspaceMemory, buildWorkspaceMemory } from '../apps/server/workspace-memory.js';
 import { FileNameSearch } from '../apps/server/file-search.js';
-import { WorkspaceSearch } from '../apps/server/workspace-search.js';
+import { WorkspaceSearch } from '../apps/server/search/workspace-search.js';
 
 test('persistent workspace and assignment memory keeps scopes separate and pins relevant file pages', async () => {
   let course = { id: 'course', documents: [{ id: 'book', title: 'Course book', kind: 'pdf' }, { id: 'other', title: 'Lab data', kind: 'text' }],

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'scholia-pdf-quality-'));
 const output = resolve('dist/verification/pdf-quality');
@@ -40,7 +40,7 @@ const pdf = fixturePdf();
 const pdfFile = join(root, 'detail.pdf');
 await writeFile(pdfFile, pdf);
 await build({
-  stdin: { contents: `import { StudyPDFReader } from './apps/web/pdf-reader.js';
+  stdin: { contents: `import { StudyPDFReader } from './apps/web/reader/pdf-reader.js';
     window.mountReader = () => window.reader = new StudyPDFReader({
       host: document.querySelector('#host'), toolbar: document.querySelector('#toolbar'),
       document: { id: 'quality', pageCount: 2 }, course: {}, token: 'fixture',

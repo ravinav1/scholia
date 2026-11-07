@@ -174,9 +174,9 @@ punctuation and short-query semantics would still need verification.
 ## Reproduction and raw evidence
 
 Commands and the recall argument are in [SEARCH.md](SEARCH.md). Sources:
-[application benchmark](../scripts/benchmark-workspace-search.mjs),
-[native scan benchmark](../scripts/benchmark-needle-native.c), and
-[engine comparison](../scripts/benchmark-search-engines.py).
+[application benchmark](../scripts/performance/benchmark-workspace-search.mjs),
+[native scan benchmark](../scripts/performance/benchmark-needle-native.c), and
+[engine comparison](../scripts/performance/benchmark-search-engines.py).
 
 Measured JSON files are kept locally in ignored build output:
 

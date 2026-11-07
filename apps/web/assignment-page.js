@@ -1,5 +1,5 @@
 import { escapeHtml as esc, renderMarkdown } from '../chrome/src/render.js';
-import { selectedAssignment, assignmentDate, assignmentAvailability, submissionBadgeMarkup } from './assignments.js';
+import { selectedAssignment, assignmentDate, assignmentAvailability, submissionBadgeMarkup } from './workspace/assignments.js';
 
 export function assignmentPageMarkup(state, { closed = new Set() } = {}) {
   const material = selectedAssignment(state);

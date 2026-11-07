@@ -14,19 +14,19 @@ import { degreeCatalogue, retrieveDegreeInformation, STUDY_PLAN_RETRIEVAL_INSTRU
 import { PROVIDERS, modelReasoning } from '../../packages/core/src/providers.js';
 import { STUDY_MODEL_MODES, normalizeStudyModelMode, routeStudyModel, studyRouteDescription } from '../../packages/core/src/study-model-routing.js';
 import { runCompletion } from '../chrome/src/provider-runtime.js';
-import { Canvas } from './canvas.js';
-import { MathWiki, mathWikiCourse, isMathWikiMaterial } from './math-wiki.js';
-import { beginPoll, observeCatalog, observePoll, pollDecision } from './content-polling.js';
-import { WorkspaceSearch } from './workspace-search.js';
-import { buildCourseContext, courseContextScope, courseContextSummary } from './course-context.js';
+import { Canvas } from './courses/canvas.js';
+import { MathWiki, mathWikiCourse, isMathWikiMaterial } from './courses/math-wiki.js';
+import { beginPoll, observeCatalog, observePoll, pollDecision } from './courses/content-polling.js';
+import { WorkspaceSearch } from './search/workspace-search.js';
+import { buildCourseContext, courseContextScope, courseContextSummary } from './courses/course-context.js';
 import { hash } from './store.js';
-import { needsTextIndexUpgrade, unreadablePageCount } from './document-formats.js';
+import { needsTextIndexUpgrade, unreadablePageCount } from './documents/document-formats.js';
 import {
   analyzeMaterial,
   materialAnalysisVersion,
   materialCategories,
   materialClassification,
-} from './material-analysis.js';
+} from './documents/material-analysis.js';
 export const hostedProviders = PROVIDERS.filter((p) =>
   ['openai', 'anthropic', 'openrouter', 'groq', 'together', 'mistral', 'cohere', 'ntnu'].includes(
     p.id

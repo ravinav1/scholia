@@ -50,7 +50,7 @@ check('Every emitted source operation has an explicit result', summary.rows.ever
 const replay = fs.readFileSync(path.join(output, 'sequential/replay-audit.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 check('Recovery replay used ten exact inputs without inference', replay.length === 10 && replay.every((entry, index) => entry.round === index + 1 && entry.identicalInput && entry.inference === false));
 const sourcePaths = ['scripts/benchmark-chat-live.mjs', 'scripts/benchmark-chat-native.swift', 'scripts/benchmark-chat-native.sh',
-  'scripts/codex-bridge.mjs', 'scripts/lib/codex-cli-arguments.mjs', 'scripts/lib/codex-usage.mjs',
+  'scripts/bridges/codex-bridge.mjs', 'scripts/bridges/lib/codex-cli-arguments.mjs', 'scripts/bridges/lib/codex-usage.mjs',
   ...['ProviderClient', 'PromptBuilder', 'AttachmentContextRetrieval', 'AttachmentCorpusTools', 'StudyContext', 'StudyReadingRetrieval', 'LocalFileTools', 'ReadOnlyToolBatch', 'CompletionUsage'].map(name => `apps/macos/Sources/ScholiaMac/${name}.swift`)];
 const audit = { auditedAt: new Date().toISOString(), passed: failures.length === 0, failures, checks, expectedCLI, actualCLI,
   nativeExecutableSHA256: hash(fs.readFileSync(path.join(output, 'chat-benchmark-native'))),

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
 import { once } from 'node:events';
-import { codexCompletionUsage, createCodexUsageReader, queryCodexRateLimits } from '../scripts/lib/codex-usage.mjs';
+import { codexCompletionUsage, createCodexUsageReader, queryCodexRateLimits } from '../scripts/bridges/lib/codex-usage.mjs';
 
 test('completed Codex token counts retain cached input without counting it twice', () => {
   assert.deepEqual(codexCompletionUsage({ input_tokens: 1000, cached_input_tokens: 800, output_tokens: 200 }), {
@@ -96,7 +96,7 @@ if (process.argv.includes('app-server')) {
 `, { mode: 0o700 });
   const reserve = net.createServer(); reserve.listen(0, '127.0.0.1'); await once(reserve, 'listening');
   const port = reserve.address().port; await new Promise((resolve) => reserve.close(resolve));
-  const bridge = spawn(process.execPath, ['scripts/codex-bridge.mjs', '--port', String(port), '--codex', fixture, '--token', 'test-token'],
+  const bridge = spawn(process.execPath, ['scripts/bridges/codex-bridge.mjs', '--port', String(port), '--codex', fixture, '--token', 'test-token'],
     { stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(async () => { if (bridge.exitCode == null) { bridge.kill(); await once(bridge, 'exit'); } });
   let stderr = ''; bridge.stderr.on('data', (chunk) => { stderr += chunk; });

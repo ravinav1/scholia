@@ -1,6 +1,6 @@
 import { buildCanvasCourseIndex, canvasCourseContext, canvasCourseFromUrl, canvasIndexKey, canvasNextPage, CANVAS_INDEX_MAX_AGE, MAX_COURSE_ITEMS } from './canvas-course.js';
 import { readCanvasIndex, saveCanvasIndex, deleteCanvasIndex } from './canvas-index-store.js';
-import { extractPdfContext } from './pdf-context.js';
+import { extractPdfContext } from './pdf/pdf-context.js';
 import { readChatFile, MAX_FILE_BYTES } from './file-input.js';
 import { extractOfficeText } from './office-text.js';
 import { canvasDocumentLinks } from '../../../packages/core/src/canvas-links.js';

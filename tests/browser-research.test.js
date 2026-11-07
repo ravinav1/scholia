@@ -4,7 +4,7 @@ import { DOMParser } from 'linkedom';
 import { researchUrl, researchLinksFromDocument, promptResearchLinks } from '../apps/chrome/src/research-links.js';
 import { crawlResearch, packResearchContext } from '../apps/chrome/src/research-crawl.js';
 import { createResearchAccess, fetchResearchPage } from '../apps/chrome/src/browser-research.js';
-import { normalizeChatRecord } from '../apps/chrome/src/chat-history.js';
+import { normalizeChatRecord } from '../apps/chrome/src/chat/chat-history.js';
 
 test('research retains meaningful queries, deduplicates tracking, and refuses actions and credentials', () => {
   assert.equal(researchUrl('/notes?chapter=2&utm_source=mail#heading', 'https://course.test/'), 'https://course.test/notes?chapter=2');

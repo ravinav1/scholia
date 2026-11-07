@@ -16,7 +16,7 @@ page. Node.js 24 or newer is required. See [search details](../../docs/SEARCH.md
 ## Install and update
 
 With Node.js 24 or newer and Apple's developer tools installed, double-click
-**[Update Scholia.command](../../Update%20Scholia.command)** in the repository
+**[Update Scholia.command](../../scripts/macos/Update%20Scholia.command)** in the repository
 folder. It installs dependencies, builds the app, installs it in
 `/Applications/Scholia.app`, and opens it. The same action handles the first
 installation and later updates.
@@ -387,7 +387,7 @@ npm run smoke:macos:course-ui
 npm run smoke:macos:workspace -- --data-only
 npm run smoke:macos:workspace -- --learning-only
 npm run smoke:macos:workspace -- --assignments-preview --assignment-page-smoke
-zsh scripts/smoke-macos-panels.sh
+zsh scripts/smoke/macos/run.sh panels
 ```
 
 Smoke scripts accept `SDKROOT`. They link actual application code against

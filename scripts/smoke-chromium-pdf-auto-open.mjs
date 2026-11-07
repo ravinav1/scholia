@@ -4,7 +4,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { onePagePdf } from '../tests/helpers/pdf.js';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 const pdf = onePagePdf('PDF navigation still works.');
 const requests = [];

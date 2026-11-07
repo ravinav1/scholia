@@ -1,5 +1,5 @@
 import * as pdfjs from 'pdfjs-dist/build/pdf.mjs';
-import { textContentToString } from '../chrome/src/pdf-context.js';
+import { textContentToString } from '../chrome/src/pdf/pdf-context.js';
 
 // The web workspace has its own same-origin PDF worker; extension OCR is not available here.
 export async function extractChatPDF(file, { signal, maxCharacters }) {

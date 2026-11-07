@@ -488,7 +488,7 @@ still use the existing shared exam-plan storage and provider workflow.
 Verification uses synthetic records only:
 
 ```sh
-node --test tests/studentweb-results.test.js tests/studentweb-sign-in.test.js tests/studentweb-extraction.test.js
+node --test tests/studentweb-results.test.js tests/studentweb-sign-in.test.js tests/core/studentweb-extraction.test.js
 npm run smoke:chromium:studentweb-results
 npm run smoke:macos:studentweb-results
 ```
@@ -563,7 +563,7 @@ Add programmes, default admission years and their verified nominal duration to
 ```sh
 npm run import:study-plans
 npm run build:web
-node --test tests/study-plans.test.js tests/study-plan-retrieval.test.js tests/hosted-exam-recommendations.test.js
+node --test tests/study-plans.test.js tests/study-plan-retrieval.test.js tests/server/hosted-exam-recommendations.test.js
 ```
 
 The importer discovers actual admission cohorts from NTNU's read-only year list
@@ -835,7 +835,7 @@ npm run smoke:macos:workspace -- --data-only
 npm run smoke:macos:workspace -- --learning-only
 npm run smoke:macos:workspace -- --assignments-preview --assignment-page-smoke
 npm run build:web
-node scripts/smoke-hosted-web.mjs
+node scripts/smoke/browser/smoke-hosted-web.mjs
 ```
 
 Native smoke checks use temporary libraries and deterministic Canvas/provider

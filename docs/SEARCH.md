@@ -232,7 +232,7 @@ npm run benchmark:search
 SEARCH_BENCH_FILES=1200 SEARCH_BENCH_ROUNDS=31 \
   SEARCH_BENCH_OUTPUT=/tmp/needle-benchmark.json npm run benchmark:search
 
-node --test tests/workspace-search.test.js tests/hosted-server.test.js
+node --test tests/server/workspace-search.test.js tests/server/hosted-server.test.js
 npm run smoke:macos:search
 npm run smoke:chromium:search
 npm run test:search:native       # ASan + UBSan, 60,000 matcher comparisons
@@ -243,8 +243,8 @@ mkdir -p dist/verification
 SEARCH_BENCH_CORPUS=dist/verification/needle-corpus.json npm run benchmark:search
 uv venv --python 3.11 dist/needle-bench-venv
 uv pip install --python dist/needle-bench-venv/bin/python \
-  -r scripts/search-benchmark-requirements.txt
-dist/needle-bench-venv/bin/python scripts/benchmark-search-engines.py \
+  -r scripts/performance/search-benchmark-requirements.txt
+dist/needle-bench-venv/bin/python scripts/performance/benchmark-search-engines.py \
   --corpus dist/verification/needle-corpus.json \
   --output dist/verification/needle-engine-comparison.json
 ```

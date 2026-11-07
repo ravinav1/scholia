@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile, cp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 // Two pages exercise the History API crash regression through navigation and
 // reload, not just the initial MIME-handler load.

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createHostedServer } from '../apps/server/server.js';
-import { chromiumSession } from './lib/chromium.mjs';
+import { chromiumSession } from './smoke/browser/lib/chromium.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'scholia-course-chat-'));
 const reserve = createServer();

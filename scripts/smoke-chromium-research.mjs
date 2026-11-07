@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 const reads = [], completions = [], pending = new Set();
 let cancelledReads = 0;

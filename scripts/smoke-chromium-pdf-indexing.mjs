@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { onePagePdf } from '../tests/helpers/pdf.js';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 // Pages 2 and 4 have graphics without selectable text. OCR is deliberately
 // held below so reader functionality is verified before enrichment completes.

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chromiumSession } from './lib/chromium.mjs';
+import { chromiumSession } from './smoke/browser/lib/chromium.mjs';
 
 // Use the real extension storage, service worker and request builder with a local
 // provider. No credentials or external model calls are involved.

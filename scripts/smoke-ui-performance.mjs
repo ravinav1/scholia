@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHostedServer } from '../apps/server/server.js';
 import { onePagePdf } from '../tests/helpers/pdf.js';
-import { chromiumSession } from './lib/chromium.mjs';
+import { chromiumSession } from './smoke/browser/lib/chromium.mjs';
 
 const meta = JSON.parse(await readFile('dist/web-meta.json', 'utf8'));
 const eager = new Set();

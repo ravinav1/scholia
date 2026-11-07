@@ -32,4 +32,3 @@ export function canvasDocumentLinks(doc, origin, courseID, sourceURL) {
   }
   return [...links.values()];
 }
-

@@ -209,7 +209,7 @@ separate collapsed disclosure. Neither runtime loads remote executable code.
 
 `npm run check` runs JavaScript tests, source validation, and Swift syntax checks.
 Hosted tests exercise two-account ownership, credentials, CSRF, independent
-navigation, and revision conflicts. `scripts/smoke-hosted-web.mjs` exercises the
+navigation, and revision conflicts. `scripts/smoke/browser/smoke-hosted-web.mjs` exercises the
 real service in Chromium.
 
 Native smoke runners link application code against isolated temporary libraries

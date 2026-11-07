@@ -74,7 +74,9 @@ function bridgeInstructions(provider, endpoint) {
   let startUrl = `${bridge.startScheme}://start`;
   if (bridge.startPortParameter) startUrl += `?${bridge.startPortParameter}=${port}`;
   const command = `${bridge.command} --port ${port}`;
-  const installCommand = bridge.installCommand ? `${bridge.installCommand} --port ${port}` : '';
+  const installCommand = bridge.installCommand
+    ? `${bridge.installCommand}${bridge.installCommand.startsWith('npm run ') ? ' --' : ''} --port ${port}`
+    : '';
   return { startUrl, command, installCommand, port };
 }
 

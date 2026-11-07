@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { build } from 'esbuild';
-import { chromiumSession, sleep } from './lib/chromium.mjs';
+import { chromiumSession, sleep } from './smoke/browser/lib/chromium.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'scholia-pdf-memory-'));
 const count = 16;
@@ -28,7 +28,7 @@ pdf += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
 pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
 
 await build({
-  stdin: { contents: `import { StudyPDFReader } from './apps/web/pdf-reader.js';
+  stdin: { contents: `import { StudyPDFReader } from './apps/web/reader/pdf-reader.js';
     window.mountReader = (budget = true) => {
       window.reader?.destroy();
       window.reader = new StudyPDFReader({ host: document.querySelector('#host'), toolbar: document.querySelector('#toolbar'),

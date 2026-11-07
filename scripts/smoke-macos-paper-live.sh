@@ -38,7 +38,7 @@ if [[ -z "${PAPER_LIVE_ENDPOINT:-}" ]]; then
   paper_port="$(node --input-type=module -e 'import net from "node:net"; const server=net.createServer(); server.listen(0,"127.0.0.1",()=>{console.log(server.address().port);server.close();});')"
   export PAPER_LIVE_TOKEN="$(node --input-type=module -e 'import {randomBytes} from "node:crypto"; console.log(randomBytes(24).toString("hex"));')"
   export PAPER_LIVE_ENDPOINT="http://127.0.0.1:$paper_port/v1/chat/completions"
-  node "$script_dir/codex-bridge.mjs" --port "$paper_port" --timeout 180 --token "$PAPER_LIVE_TOKEN" >"$smoke_dir/bridge.log" 2>&1 &
+  node "$script_dir/bridges/codex-bridge.mjs" --port "$paper_port" --timeout 180 --token "$PAPER_LIVE_TOKEN" >"$smoke_dir/bridge.log" 2>&1 &
   bridge_pid=$!
   node --input-type=module -e '
     const url=new URL("/health",process.env.PAPER_LIVE_ENDPOINT);

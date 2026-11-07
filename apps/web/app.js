@@ -1,7 +1,7 @@
 import { documentDownloadFilename } from '../../packages/core/src/document-download.js';
 import { ENTIRE_PDF_QUESTION } from '../../packages/core/src/entire-pdf.js';
-import { studyModelPickerMarkup } from './model-picker.js';
-import { StudyDocumentEditor, canEditDocument } from './document-editor.js';
+import { studyModelPickerMarkup } from './chat/model-picker.js';
+import { StudyDocumentEditor, canEditDocument } from './reader/document-editor.js';
 import { escapeHtml as esc } from '../chrome/src/html-escape.js';
 import {
   courseLibraryMarkup,
@@ -9,15 +9,15 @@ import {
   courseDisplayName,
   courseLibraryRenderKey,
   catalogChangeSummary,
-} from './course-library.js';
+} from './workspace/course-library.js';
 import { installHostedAccount } from './hosted-account.js';
-import { installTutorResize } from './workspace-resize.js';
-import { materialGroupsMarkup, materialsViewMarkup, materialViewPicker } from './materials.js';
+import { installTutorResize } from './workspace/workspace-resize.js';
+import { materialGroupsMarkup, materialsViewMarkup, materialViewPicker } from './workspace/materials.js';
 import {
   assignmentsMarkup,
   selectedAssignment,
   assignmentAgendaMarkup,
-} from './assignments.js';
+} from './workspace/assignments.js';
 import {
   teachingModes,
   coursePrompts,
@@ -31,23 +31,23 @@ import {
   readerRenderKey,
   studyPollDelay,
   studyRenderKey,
-} from './study-session.js';
-import { StudyConversation } from './study-conversation.js';
+} from './workspace/study-session.js';
+import { StudyConversation } from './chat/study-conversation.js';
 import { mountFileComposer } from '../chrome/src/file-composer.js';
 import { readChatFile } from '../chrome/src/file-input.js';
 import { normalizeFileAttachments } from '../../packages/core/src/file-attachments.js';
 import '../chrome/file-attachments.css';
 import { courseLinkTarget, isHTMLDocument, safeDocumentURL, restoreCourseLinks, originalDocumentHTML } from '../../packages/core/src/course-documents.js';
-import { installWorkspaceSearch } from './workspace-search.js';
+import { installWorkspaceSearch } from './workspace/workspace-search.js';
 import { installWorkspaceMemory } from './workspace-memory.js';
 import { installWorkspaceShortcuts } from './workspace-shortcuts.js';
-import { installExamPlanner } from './exam-planner.js';
-import './style.css';
-import './dashboard.css';
-import './assignment-page.css';
-import './exam-planner.css';
-import './navigation.css';
-import './practice.css';
+import { installExamPlanner } from './exams/exam-planner.js';
+import './styles/style.css';
+import './styles/dashboard.css';
+import './styles/assignment-page.css';
+import './styles/exam-planner.css';
+import './styles/navigation.css';
+import './styles/practice.css';
 
 const $ = (selector) => document.querySelector(selector);
 const compactNavigation = window.matchMedia('(max-width: 850px)');
@@ -266,7 +266,7 @@ const practiceOptions = {
 };
 let practice;
 async function openPractice(screen) {
-  const { StudyPractice } = await import('./practice.js');
+  const { StudyPractice } = await import('./practice/practice.js');
   practice ||= new StudyPractice(practiceOptions);
   await practice.open(screen);
 }
@@ -985,7 +985,7 @@ async function renderReader() {
       pdfReader.setPage(state.page);
       return;
     }
-    const { StudyPDFReader } = await import('./pdf-reader.js');
+    const { StudyPDFReader } = await import('./reader/pdf-reader.js');
     if (generation !== readerGeneration) return;
     pdfReader = new StudyPDFReader({
       host: $('#reader-content'),
@@ -1058,7 +1058,7 @@ async function renderReader() {
     return;
   }
   if (item.kind === 'notebook') {
-    const { StudyNotebookReader } = await import('./notebook-reader.js');
+    const { StudyNotebookReader } = await import('./reader/notebook-reader.js');
     if (generation !== readerGeneration) return;
     notebookReader = new StudyNotebookReader({
       host: $('#reader-content'),

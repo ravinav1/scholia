@@ -1,4 +1,4 @@
-import { createHtmlElement } from './html-elements.js';
+import { createHtmlElement } from './ui-primitives.js';
 
 const MAX_IMAGE_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_IMAGE_EDGE = 1_800;

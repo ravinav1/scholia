@@ -1,7 +1,7 @@
 import { siteIsEnabled } from '../../../packages/core/src/providers.js';
 import { loadCanvasCourseIndex } from './canvas-index.js';
 import { canvasCourseFromUrl, isCanvasCoursePage } from './canvas-course.js';
-import { extractPdfContext } from './pdf-context.js';
+import { extractPdfContext } from './pdf/pdf-context.js';
 import { extractOfficeText } from './office-text.js';
 import { parseSiteHtml } from './site-context.js';
 import { researchUrl, researchLinksFromDocument } from './research-links.js';

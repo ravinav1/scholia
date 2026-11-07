@@ -4,8 +4,8 @@ import { copyCodeBlock } from './clipboard.js';
 import { getCanvasCourseContext } from './canvas-index.js';
 import { SETTINGS_KEY, providerById, providerSupportsFastMode } from '../../../packages/core/src/providers.js';
 import { packPageContext } from '../../../packages/core/src/context.js';
-import { CHAT_HISTORY_KEY, clearChats, deleteChat, listChats } from './chat-history.js';
-import { createUserTurn, requestConversation } from './chat-turn.js';
+import { CHAT_HISTORY_KEY, clearChats, deleteChat, listChats } from './chat/chat-history.js';
+import { createUserTurn, requestConversation } from './chat/chat-turn.js';
 import {
   CONTEXT_MODE_COMPACT,
   CONTEXT_MODE_FULL,
@@ -15,7 +15,7 @@ import {
 } from './context-mode.js';
 import { parseModelChoice, populateModelSelect } from './model-select.js';
 import { populateReasoningSelect } from './reasoning-select.js';
-import { extractPdfContext, fetchPdfBlob } from './pdf-context.js';
+import { extractPdfContext, fetchPdfBlob } from './pdf/pdf-context.js';
 import { renderMarkdown, renderReasoning, renderActivity, addActivity, bindActivityDisclosure } from './render.js';
 import { sendRuntimeMessage as sendPopupMessage } from './runtime-message.js';
 import { PANEL_NAVIGATION_KEY } from './tab-context.js';

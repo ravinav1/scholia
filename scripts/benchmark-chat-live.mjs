@@ -94,7 +94,7 @@ const reservation = http.createServer();
 const bridgePort = await listen(reservation); await new Promise(r => reservation.close(r));
 const token = randomBytes(24).toString('hex');
 const bridgeLog = fs.openSync(path.join(output, 'bridge.log'), resuming ? 'a' : 'w');
-const bridge = spawn(process.execPath, [path.join(root, 'scripts/codex-bridge.mjs'), '--port', String(bridgePort), '--timeout', '600', '--token', token, '--codex', wrapper, '--verbose'], { cwd: root, stdio: ['ignore', bridgeLog, bridgeLog] });
+const bridge = spawn(process.execPath, [path.join(root, 'scripts/bridges/codex-bridge.mjs'), '--port', String(bridgePort), '--timeout', '600', '--token', token, '--codex', wrapper, '--verbose'], { cwd: root, stdio: ['ignore', bridgeLog, bridgeLog] });
 const bridgeBase = `http://127.0.0.1:${bridgePort}`;
 let arm = null, count = 0, effort = 'max';
 const scopedInstruction = `\nBenchmark source boundary: All general file operations must stay inside ${fixture}. For a search, always set location to that absolute directory or a descendant. Treat that directory as the available source collection. Do not access the original source locations or other home folders. Saved attachment operations remain available. This restriction changes source locations only, not the user's question; answer the question normally.`;

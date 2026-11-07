@@ -16,7 +16,7 @@ version that Chromium displays directly, so rebuild before reloading the
 unpacked extension. Release builds can set an explicit version with
 `SCHOLIA_EXTENSION_VERSION=1.2.3 npm run build`.
 
-Run `node scripts/smoke-chromium-region.mjs` after building to verify direct
+Run `node scripts/smoke/browser/smoke-chromium-region.mjs` after building to verify direct
 page/PDF region selection, Retina cropping, and cancellation in Chromium.
 
 Every assistant response—inside the page popup, layered explanations, sidebar,
@@ -317,3 +317,67 @@ index partial; the context notice reports that limitation. Course API access and
 current account identity are verified before using cached content. Only ranked
 excerpts and source links are included in a model request; raw course downloads
 and signed download URLs are not stored in the index.
+
+## Local bridge setup
+
+To install a macOS URL handler for a local bridge:
+
+```sh
+npm run bridge:install:codex
+npm run bridge:install:claude
+npm run bridge:install:opencode
+```
+
+Each accepts `-- --port N` or `-- --uninstall`. Node.js and the chosen CLI must
+be installed. To start Codex or Claude directly, use `npm run bridge:codex` or
+`npm run bridge:claude`; opencode uses `opencode serve --port 4096`.
+Rerun the installer if the source folder or launcher paths change.
+
+Disable Scholia for a site from the popup or toolbar. Allowlist mode keeps it
+inactive except on the hostnames you choose.
+
+## Testing and release
+
+Browser verification uses Chromium. After building:
+
+```sh
+node scripts/smoke/browser/smoke-chromium-region.mjs
+node scripts/smoke/browser/smoke-chromium-history.mjs
+npm run smoke:chromium:recursion
+```
+
+For a Web Store package:
+
+```sh
+npm run check
+npm run package:chrome
+```
+
+Upload `dist/scholia-chrome-<version>.zip`. Packaging uses the version in
+`package.json`, checks manifest entries and bundled dependencies, rejects remote
+or dynamically evaluated code, and verifies that the manifest is at the ZIP
+root. Update `package.json`, the lockfile, and the source manifest together when
+bumping the release version.
+
+The listing's single purpose is to explain user-selected text, mathematics,
+images, regions, pages, and PDFs with the user's chosen provider. Suggested
+short description: “Select text, math, or a screen region and get a contextual
+AI explanation.”
+
+| Permission       | Use                                                                           |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `activeTab`      | User-requested page reading and region capture                                |
+| `offscreen`      | Bundled local OCR for scanned PDFs, including attachments on restricted pages |
+| `alarms`         | Optional scheduled ChatGPT memory refresh                                     |
+| `contextMenus`   | Explain and Capture commands                                                  |
+| `clipboardWrite` | Copy code buttons                                                             |
+| `scripting`      | Connect the ChatGPT context probe to an already-open tab                      |
+| `storage`        | Settings, credentials, access rules, and saved chats                          |
+| `sidePanel`      | Contextual chat beside the page                                               |
+| `<all_urls>`     | Selection controls, requested page/PDF/site context, and provider requests    |
+
+Before submitting, publish the [privacy policy](../../docs/PRIVACY.md), complete
+the store's privacy questionnaire to match extension behavior, provide toolbar
+and sidebar screenshots, and check the support URL. The extension has no
+analytics, advertising, or project-operated content backend. The separately
+hosted web app has a different data path, documented in the same policy.

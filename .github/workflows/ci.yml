@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --tag scholia:test .
+      - run: docker build --file apps/server/Dockerfile --tag scholia:test .
       - name: Check independent hosted service
         run: |
           docker run --detach --name scholia-test -p 127.0.0.1:3000:3000 --env SCHOLIA_ORIGIN=http://127.0.0.1:3000 scholia:test

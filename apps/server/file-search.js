@@ -1,4 +1,4 @@
-import { normalizeSearch, searchTerms } from './needle.js';
+import { normalizeSearch, searchTerms } from './search/needle.js';
 
 // Metadata only: finding a book must never wait for PDF extraction or a disk scan.
 // Cache normalized names, not results, so renamed/removed files appear immediately.
