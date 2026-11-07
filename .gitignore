@@ -18,3 +18,6 @@ apps/macos/.swiftpm/
 
 # Generated benchmark logs, screenshots, fixtures and live-model reports
 output/
+
+# Worktrees may share the dependency directory using a symlink.
+node_modules

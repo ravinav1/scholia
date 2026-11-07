@@ -1,0 +1,7 @@
+# Hosted implementation and measurements
+
+Baseline is commit 92a8e16. `node scripts/performance/benchmark-hosted-navigation.mjs results/performance/hosted-before.json` uses isolated SQLite data, 3 warmups and 30 samples at 6, 89 and 500 workspaces. Each workspace has 12 documents, 32 materials (8 assignments), 3 conversations of 40 messages, three years/two semesters and favorites; a selected thread has draft attachments. These service measurements deliberately exclude browser paint and real disk index extraction (index reads are counted through a deterministic fixture).
+
+Confirmed causes: every navigation serialized and rewrote the full account, dashboard state loaded the selected document plus an unrelated index when both assignment ID and sourceKey were absent, and classified/projected hidden reader materials and messages. At 89 workspaces baseline dashboard-return p50/p95 = 13.8/17.3 ms; at 500 = 146.6/164.0 ms. Every 33-sample return sequence did 33 library writes, 66 index requests and 33 material projections. Raw samples include CPU, memory and response bytes.
+
+Focused fixes: explicit session-only allowlist (unclassified new actions stay durable), absent-ID assignment guard, and dashboard projection avoids index loads, classification, material projection, conversation messages/source excerpts while retaining the destination, page, complete draft, image, files and owner. Behavioral work-count tests exercise this directly. Existing hosted document serving already uses file streams and bounded extraction workers.

@@ -36,6 +36,10 @@ const fail = (message, status = 400) => {
   throw Object.assign(new Error(message), { status });
 };
 const now = () => Date.now() / 1000;
+// New actions remain durable unless explicitly classified as session-only.
+const sessionOnlyActions = new Set(['library', 'assignments', 'libraryView', 'semester',
+  'course', 'askCourse', 'materials', 'thread', 'automaticContext', 'context', 'cancelEdit',
+  'clearError', 'stop', 'cancelSync', 'refreshAssignments']);
 const reasoningEffort = (provider, model, settings) => {
   const reasoning = modelReasoning(provider, model);
   if (!reasoning?.efforts.length) return null;
@@ -320,11 +324,14 @@ export class Workspaces {
     const course = this.course(account, nav),
       doc = course?.documents.find((d) => d.id === nav.selectedDocumentID),
       thread = this.thread(course, nav);
+    const showingLibrary = nav.showingCourseLibrary !== false;
     const contextScope = courseContextScope(thread, nav);
-    void this.analyzeStoredMaterials(account, course);
-    const index = doc ? await this.documents.index(account.id, doc).catch(() => null) : null;
-    const assignment = course?.canvasMaterials?.find((m) => m.id === nav.selectedAssignmentID),
-      instructions = course?.documents.find((d) => d.sourceKey === assignment?.id);
+    if (!showingLibrary) void this.analyzeStoredMaterials(account, course);
+    const index = !showingLibrary && doc ? await this.documents.index(account.id, doc).catch(() => null) : null;
+    const assignment = !showingLibrary && nav.selectedAssignmentID
+      ? course?.canvasMaterials?.find((m) => m.id === nav.selectedAssignmentID) : null,
+      instructions = assignment?.id
+        ? course?.documents.find((d) => d.sourceKey === assignment.id) : null;
     const assignmentText = instructions
       ? (await this.documents.index(account.id, instructions).catch(() => ({ pages: [] }))).pages
           .map((p) => p.text)
@@ -332,7 +339,7 @@ export class Workspaces {
       : '';
     if (assignment) await this.normalizeAssignmentIndexes(account, course, assignment, doc, index);
     const files = assignmentFileReferences(course, assignment);
-    const inventory = this.materialInventory(course),
+    const inventory = showingLibrary ? { groups: [], files: [] } : this.materialInventory(course),
       provider =
         hostedProviders.find((p) => p.id === account.settings.providerID) || hostedProviders[0];
     const semesters = new Map();
@@ -360,14 +367,14 @@ export class Workspaces {
           })),
         })),
       },
-      showingLibrary: nav.showingCourseLibrary !== false,
+      showingLibrary,
       assignmentRefreshBusy: !!account.assignmentRefresh,
       selectedSemesterID: nav.selectedSemesterID || 'all',
       semesters: [...semesters.values()].sort((a, b) => b.title.localeCompare(a.title)),
       materialGroups: inventory.groups,
       materialFiles: inventory.files,
-      messages: thread?.messages || [],
-      sources: thread?.sources || {},
+      messages: showingLibrary ? [] : thread?.messages || [],
+      sources: showingLibrary ? {} : thread?.sources || {},
       page,
       pageText: index?.pages[page - 1]?.text || '',
       draft: thread?.draft || '',
@@ -1709,7 +1716,7 @@ export class Workspaces {
         default:
           fail('This action is unavailable on the hosted service.');
       }
-      this.store.save(account);
+      if (!sessionOnlyActions.has(command.action)) this.store.save(account);
       this.store.navigate(session);
       return this.state(session);
     });
