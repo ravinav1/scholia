@@ -685,7 +685,7 @@ smoke: try {
     throw new Error(`ChatGPT memory DOM classification was not deterministic: ${JSON.stringify(memoryImportDOMState)}`);
   }
   await client.send('Page.navigate', { url: `http://127.0.0.1:${staticPort}/__scholia-quick-chat-shortcut-fixture.html` });
-  await waitFor(client, "document.readyState === 'complete' && document.querySelector('#scholia-extension-root')", 'Quick Chat shortcut fixture');
+  await waitFor(client, "document.readyState === 'complete' && chrome.runtime.onMessage.listeners.length", 'Quick Chat shortcut fixture');
   await client.send('Input.dispatchKeyEvent', {
     type: 'keyDown', key: 'k', code: 'KeyK', modifiers: 12,
     windowsVirtualKeyCode: 75, nativeVirtualKeyCode: 40
@@ -696,8 +696,8 @@ smoke: try {
   });
   await waitFor(client, "globalThis.__scholiaSidePanelRequest?.view === 'new'", 'Command-Shift-K Quick Chat handoff');
   await client.send('Page.navigate', { url: `http://127.0.0.1:${staticPort}/__scholia-canvas-course-fixture.html` });
-  await waitFor(client, `document.querySelector('#canvas-pdf-frame')?.contentWindow?.__scholiaShadow
-    && document.querySelector('#canvas-pdf-frame').contentWindow.__scholiaShadow.querySelector('[data-model] optgroup')`, 'Scholia inside Canvas PDF frame');
+  await waitFor(client, `document.querySelector('#canvas-pdf-frame')?.contentDocument?.querySelector('#canvas-pdf-text')
+    && document.querySelector('#canvas-pdf-frame').contentWindow.chrome?.runtime.onMessage.listeners.length`, 'selection bootstrap inside Canvas PDF frame');
   await evaluate(client, `(() => {
     const frame = document.querySelector('#canvas-pdf-frame');
     const frameWindow = frame.contentWindow;
@@ -716,7 +716,7 @@ smoke: try {
   await waitFor(client, `(() => {
     const frame = document.querySelector('#canvas-pdf-frame');
     const shadow = frame.contentWindow.__scholiaShadow;
-    return !shadow.querySelector('[data-pill]').hidden
+    return shadow && !shadow.querySelector('[data-pill]').hidden
       && frame.contentWindow.getSelection()?.toString() === 'source point'
       && !shadow.querySelector('.scholia-highlight--text');
   })()`, 'native-only text selection in Canvas PDF frame');
@@ -1400,14 +1400,14 @@ smoke: try {
   await waitFor(client, `document.querySelector('#pdf-chat').hidden
     && document.querySelector('#open-chat').getAttribute('aria-expanded') === 'false'
     && document.activeElement === document.querySelector('#open-chat')`, 'close in-viewer PDF chat overlay');
-  await waitFor(client, "globalThis.__scholiaShadow?.querySelector('[data-move-chat]')", 'PDF Quick Chat controls');
+  await waitFor(client, 'chrome.runtime.onMessage.listeners.length', 'PDF selection message routing');
   await evaluate(client, `(() => {
     globalThis.__scholiaCreatedTabUrl = '';
     for (const listener of chrome.runtime.onMessage.listeners) {
       listener({ type: 'SCHOLIA_EXPLAIN_TEXT', text: 'PDF-specific sidebar transfer' }, {}, () => {});
     }
   })()`);
-  await waitFor(client, `!globalThis.__scholiaShadow.querySelector('[data-backdrop]').hidden
+  await waitFor(client, `globalThis.__scholiaShadow && !globalThis.__scholiaShadow.querySelector('[data-backdrop]').hidden
     && !globalThis.__scholiaShadow.querySelector('[data-move-chat]').disabled`, 'PDF quick explanation ready to move');
   await evaluate(client, `(() => {
     const shadow = globalThis.__scholiaShadow;

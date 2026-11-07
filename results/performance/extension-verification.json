@@ -1,0 +1,31 @@
+{
+  "checks": [
+    {
+      "command": "node --test tests/chrome/*.test.js",
+      "status": "passed",
+      "tests": 241
+    },
+    {
+      "command": "npm run package:chrome",
+      "status": "passed",
+      "includes": "check:dist"
+    },
+    {
+      "command": "node scripts/performance/benchmark-extension.mjs --packaged",
+      "status": "passed",
+      "browser": "Chromium 153.0.7999.0",
+      "uncaughtExceptions": 0,
+      "checks": [
+        "restrictive page CSP",
+        "nested-frame first answer",
+        "background context avoids UI",
+        "blocked lazy import retries",
+        "concurrent retry mounts once"
+      ]
+    },
+    {
+      "command": "node scripts/smoke/browser/smoke-chromium-panel-recursion.mjs",
+      "status": "passed"
+    }
+  ]
+}

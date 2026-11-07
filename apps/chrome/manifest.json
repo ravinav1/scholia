@@ -89,6 +89,8 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "content-ui.js",
+        "content-context.js",
         "vendor/katex/katex.min.css",
         "vendor/katex/fonts/*",
         "vendor/pdfjs/pdf.min.mjs",

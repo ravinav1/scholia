@@ -51,6 +51,22 @@ await build({
 
 await build({
   ...shared,
+  entryPoints: [join(sourceRoot, 'content-context.js')],
+  outfile: join(outputRoot, 'content-context.js'),
+  format: 'esm'
+});
+
+await build({
+  ...shared,
+  entryPoints: [join(sourceRoot, 'content-ui.js')],
+  outfile: join(outputRoot, 'content-ui.js'),
+  format: 'esm',
+  loader: { '.css': 'text' },
+  plugins: [katexStringRenderer]
+});
+
+await build({
+  ...shared,
   entryPoints: [join(sourceRoot, 'chatgpt-probe.js')],
   outfile: join(outputRoot, 'chatgpt-probe.js'),
   format: 'iife'
