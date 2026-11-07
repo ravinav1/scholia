@@ -1,3 +1,4 @@
+import { LibraryPersistence } from './persistence.js';
 import { EventEmitter } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
@@ -51,6 +52,8 @@ export class AccountStore extends EventEmitter {
       CREATE INDEX IF NOT EXISTS sessions_user_expiry ON sessions(user_id, expires);
       CREATE TABLE IF NOT EXISTS credentials (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(user_id,name));
       CREATE TABLE IF NOT EXISTS learning (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, revision INTEGER NOT NULL, data TEXT NOT NULL);`);
+    try { this.libraryPersistence = new LibraryPersistence(this.db); }
+    catch (error) { this.db.close(); throw error; }
   }
   async createUser(email, password) {
     email = String(email).trim().toLowerCase();
@@ -108,15 +111,24 @@ export class AccountStore extends EventEmitter {
     return {
       id,
       email: row.email,
-      library: JSON.parse(row.library),
+      library: this.libraryPersistence.read(id) || JSON.parse(row.library),
       settings: JSON.parse(row.settings),
     };
   }
-  save(account) {
-    this.db
-      .prepare('UPDATE users SET library=?,settings=? WHERE id=?')
-      .run(JSON.stringify(account.library), JSON.stringify(account.settings), account.id);
-    this.emit('saved', account, ['catalog', 'dashboard', 'reader', 'conversation', 'activity', 'settings']);
+  save(account, scope) {
+    this.libraryPersistence.save(account, scope);
+    const surfaces = scope?.kind === 'draft' ? ['conversation']
+      : scope?.kind === 'thread' ? ['catalog','conversation','settings']
+      : scope?.kind === 'progress' ? ['catalog','dashboard','reader','conversation']
+      : scope?.kind === 'settings' ? ['settings','conversation']
+      : ['catalog','dashboard','reader','conversation','activity','settings'];
+    this.emit('saved', account, surfaces);
+  }
+  commitNavigation(account, scope, session, durable = true) {
+    this.libraryPersistence.transaction(() => {
+      if (durable) this.save(account, scope);
+      this.navigate(session);
+    });
   }
   learning(id, state, expectedRevision = 0) {
     if (state === undefined) {

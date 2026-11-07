@@ -108,3 +108,10 @@ test('revision validators avoid projection and encoding; navigation patches omit
  const restarted=JSON.parse((await f.workspaces.stateResponse(f.session,{protocol:true,known:{epoch:'old',revisions:initial.revisions}})).data);
  assert.ok(restarted.snapshot);
 });
+test('a cleared draft rejects an older queued owner and never reappears after reload',async t=>{
+ const f=await fixture(t), oldOwner=f.workspaces.owner(f.account,f.session.navigation);
+ const current=await f.workspaces.action(f.session,{action:'draft',text:'New draft',owner:oldOwner});
+ await f.workspaces.action(f.session,{action:'draft',text:'',clearImage:true,files:[],owner:current.draftOwner});
+ await assert.rejects(f.workspaces.action(f.session,{action:'draft',text:'Old queued draft',owner:oldOwner}),error=>error.status===409);
+ assert.equal(f.store.account(f.account.id).library.courses[0].threads[0].draft,'');
+});

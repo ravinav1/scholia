@@ -753,7 +753,7 @@ export class Workspaces extends EventEmitter {
     });
     return account.assignmentRefresh;
   }
-  job(account, label, work, streaming = false) {
+  job(account, label, work, streaming = false, persistenceScope) {
     this.assertAvailable(account);
     account[streaming ? 'streaming' : 'busy'] = true;
     account.status = label;
@@ -772,7 +772,8 @@ export class Workspaces extends EventEmitter {
         account.busy = false;
         account.streaming = false;
         account.controller = null;
-        this.store.save(account);
+        try { this.store.save(account, persistenceScope); }
+        catch (error) { account.error = `Could not save completed work: ${error.message}`; }
         account.job = null;
       });
     account.job = job;
@@ -1207,10 +1208,12 @@ export class Workspaces extends EventEmitter {
     if (command.page !== undefined && (!Number.isSafeInteger(command.page) || command.page < 1))
       fail('Choose a positive whole page number.');
     if (document.indexUnavailable) fail('This document is unavailable. Download it again.', 409);
+    const storageIdentity = JSON.stringify([document.storageID, document.fileName, document.contentHash, document.pageCount]);
     if (this.documents.available && !await this.documents.available(account.id, document))
       fail('The document file is unavailable. Download it again.', 404);
     // A background replacement/deletion may finish while file availability is checked.
-    if (!account.library.courses.includes(course) || !course.documents.includes(document))
+    if (!account.library.courses.includes(course) || !course.documents.includes(document) ||
+      storageIdentity !== JSON.stringify([document.storageID, document.fileName, document.contentHash, document.pageCount]))
       fail('The document changed while opening it. Try again.', 409);
     if (!current()) fail('This navigation was superseded.', 409);
     const page = Math.max(1, Math.min(command.page ?? document.lastPage ?? 1, document.pageCount || 1));
@@ -1705,6 +1708,7 @@ export class Workspaces extends EventEmitter {
               if (reply.activity.at(-1)?.title === title && reply.activity.at(-1)?.detail === detail) return;
               reply.activity.push({ id: randomUUID(), timestamp: now(), title: String(title).slice(0, 180), ...(detail ? { detail: String(detail).slice(0, 2000) } : {}) });
               if (reply.activity.length > 80) reply.activity.shift();
+              this.invalidate(account, ['conversation']);
             };
             activity('Finding relevant course sources…');
             thread.messages.push(reply);
@@ -1839,7 +1843,8 @@ export class Workspaces extends EventEmitter {
                   reply.isStreaming = false;
                 }
               },
-              true
+              true,
+              { kind: 'thread', courseID: course.id, threadID: thread.id }
             );
           }
           break;
@@ -1850,8 +1855,20 @@ export class Workspaces extends EventEmitter {
         default:
           fail('This action is unavailable on the hosted service.');
       }
-      if (!sessionOnlyActions.has(command.action)) this.store.save(account);
-      this.store.navigate(session);
+      {
+        const selected = this.course(account, nav);
+        const scope = ['page','openReading','document','resume','source'].includes(command.action)
+          ? {kind:'progress',courseID:selected?.id,documentID:nav.selectedDocumentID}
+          : ['draft','edit'].includes(command.action)
+            ? {kind:'draft',courseID:selected?.id,threadID:nav.selectedThreadID}
+            : ['send','newThread'].includes(command.action)
+              ? {kind:'thread',courseID:selected?.id,threadID:nav.selectedThreadID}
+              : ['model','reasoning','studyModelMode','language','credentials'].includes(command.action)
+                ? {kind:'settings'}
+                : command.action === 'favorite' ? {kind:'course',courseID:command.id} : undefined;
+        try { this.store.commitNavigation(account, scope, session, !sessionOnlyActions.has(command.action)); }
+        catch (error) { account.error = `Could not save this change: ${error.message}`; throw error; }
+      }
       this.invalidate(account, ['activity', 'conversation']);
       return project ? this.state(session) : null;
     });
