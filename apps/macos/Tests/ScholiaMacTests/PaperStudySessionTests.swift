@@ -751,8 +751,15 @@ final class PaperStudySessionTests: XCTestCase {
         let session = PaperStudySession(camera: PaperCamera(), now: { clock.date }, complete: { try await transport.call($0) })
         session.requestTimeout = 0.02
         settle(session, clock); session.captureNow()
+        XCTAssertTrue(session.requestInFlight)
         await yieldUntil { transport.requests.count == 1 }
-        try await Task.sleep(for: .milliseconds(60))
+        // A short wall-clock sleep does not guarantee that the timeout task has
+        // resumed on MainActor on a loaded runner. Wait for its state change,
+        // while keeping a bounded failure if the timeout never releases it.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while session.requestInFlight && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
         XCTAssertFalse(session.requestInFlight)
         XCTAssertTrue(session.isAnalysisPaused)
         XCTAssertTrue(session.error?.contains("too long") == true)
