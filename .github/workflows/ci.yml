@@ -48,10 +48,11 @@ jobs:
             dist/verification/
 
   native-release:
-    runs-on: macos-latest
+    # Match the Swift 6.4 compiler used for the measured release builds.
+    runs-on: xcode-27
     timeout-minutes: 55
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,6 +65,8 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+          xcrun swiftc --version | tee /tmp/scholia-ci-swift-version.txt
+          grep -q "Swift version 6.4" /tmp/scholia-ci-swift-version.txt
       - name: Compile native release
         timeout-minutes: 20
         run: zsh scripts/macos/ci-swift-check.sh build
