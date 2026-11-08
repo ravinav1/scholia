@@ -60,9 +60,9 @@ jobs:
       - name: Verify full Xcode toolchain
         run: xcodebuild -version
       - name: Compile native release
-        run: swift build --package-path apps/macos --configuration release
+        run: swift build --package-path apps/macos --configuration release --build-system native --jobs 4
       - name: Run native release XCTest
-        run: swift test --package-path apps/macos --configuration release
+        run: swift test --package-path apps/macos --configuration release --build-system native --jobs 4
       - name: Check native performance work counts and navigation
         run: |
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
