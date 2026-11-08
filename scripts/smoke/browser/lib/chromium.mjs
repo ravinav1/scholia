@@ -40,13 +40,22 @@ export async function chromiumSession({ extensionPath = '' } = {}) {
     socket?.close();
     processHandle.kill('SIGTERM');
     await new Promise((resolve) => {
-      if (processHandle.exitCode !== null) resolve();
+      if (processHandle.exitCode !== null || processHandle.signalCode !== null) resolve();
       else {
         processHandle.once('exit', resolve);
         setTimeout(resolve, 3000).unref();
       }
     });
-    await rm(profile, { recursive: true, force: true });
+    if (processHandle.exitCode === null && processHandle.signalCode === null) {
+      processHandle.kill('SIGKILL');
+      await new Promise(resolve => {
+        processHandle.once('exit', resolve);
+        setTimeout(resolve, 1000).unref();
+      });
+    }
+    // Chromium child processes can finish a final preferences write just after
+    // the browser process exits. Retry only bounded transient filesystem races.
+    await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   };
   try {
     let ready = false;
