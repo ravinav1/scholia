@@ -222,13 +222,15 @@ final class StudyWorkspaceModel: ObservableObject {
         cancelPracticePreparation()
         cancelPreloading()
         let course = library.courses.first { $0.id == target.course }
-        library.selectedCourseID = course?.id
-        library.showingCourseLibrary = target.library || course == nil
-        library.courseLibraryView = target.libraryView
-        library.selectedDocumentID = course?.documents.first { $0.id == target.document }?.id
-        library.selectedAssignmentID = course?.materials.first { $0.id == target.assignment }?.id
-        library.selectedAssignmentFileID = target.assignmentFile
-        library.selectedThreadID = course?.threads.first { $0.id == target.thread }?.id
+        var next = library
+        next.selectedCourseID = course?.id
+        next.showingCourseLibrary = target.library || course == nil
+        next.courseLibraryView = target.libraryView
+        next.selectedDocumentID = course?.documents.first { $0.id == target.document }?.id
+        next.selectedAssignmentID = course?.materials.first { $0.id == target.assignment }?.id
+        next.selectedAssignmentFileID = target.assignmentFile
+        next.selectedThreadID = course?.threads.first { $0.id == target.thread }?.id
+        library = next
         restoreThread()
         loadSelectedDocument()
         loadAssignmentText()
@@ -844,11 +846,15 @@ final class StudyWorkspaceModel: ObservableObject {
         if recordHistory { recordNavigation() }
         cancelPracticePreparation()
         saveBeforeNavigating()
-        library.selectedAssignmentID = nil
-        library.selectedCourseID = id
-        library.showingCourseLibrary = id == nil
-        library.selectedDocumentID = nil
-        library.selectedThreadID = course?.threads.last(where: { $0.documentID == nil && $0.assignmentID == nil })?.id
+        let target = library.courses.first(where: { $0.id == id })
+        var next = library
+        next.selectedAssignmentID = nil
+        next.selectedAssignmentFileID = nil
+        next.selectedCourseID = target?.id
+        next.showingCourseLibrary = target == nil
+        next.selectedDocumentID = nil
+        next.selectedThreadID = target?.threads.last(where: { $0.documentID == nil && $0.assignmentID == nil })?.id
+        library = next
         restoreThread()
         loadSelectedDocument()
         visitedCourse()
