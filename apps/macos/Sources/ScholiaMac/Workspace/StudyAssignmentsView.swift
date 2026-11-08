@@ -95,7 +95,7 @@ struct StudyAssignmentAgendaView: View, Equatable {
         self.initialFilter = initialFilter
         self.initialQuery = initialQuery
         _query = State(initialValue: initialQuery)
-        _agenda = StateObject(wrappedValue: StudyAssignmentAgendaState(workspace: workspace))
+        _agenda = StateObject(wrappedValue: workspace.assignmentAgendaState)
         _filter = State(initialValue: initialFilter)
     }
 
@@ -105,16 +105,12 @@ struct StudyAssignmentAgendaView: View, Equatable {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
-            let courses = agenda.input.courses.map(\.studyCourse)
-            let allGroups = StudyAssignmentGroup.make(
-                courses: courses, query: query, filter: filter, now: context.date)
+            let allGroups = agenda.groups(query: query, filter: filter, now: context.date)
             let count = allGroups.reduce(0) { $0 + $1.items.count }
             let page = min(pageIndex, max(0, (count - 1) / 100))
             let groups = dedicated ? StudyAssignmentGroup.slice(allGroups, offset: page * 100, limit: 100)
                 : StudyAssignmentGroup.preview(allGroups, limit: 12, now: context.date)
-            let assignments = StudyAssignment.list(courses: courses, includeCompleted: true)
-            let handedIn = assignments.filter { $0.details?.status == .submitted }.count
-            let graded = assignments.filter { $0.details?.status == .graded }.count
+            let (handedIn, graded) = agenda.submissionCounts
             let timeline = StudyAssignmentTimeline(groups: groups)
             let showTimeline = filter != .all && (filter == .due || !timeline.past.isEmpty || !timeline.upcoming.isEmpty)
             let sections: [StudyAssignmentTimeframe] = filter == .all

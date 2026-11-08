@@ -70,6 +70,34 @@ final class StudyAssignmentAgendaState: ObservableObject {
     private var sources: [Source]
     private var sourceError: String?
     private(set) var projectionBuildCount = 1
+    private struct GroupKey: Equatable {
+        var query: String
+        var filter: StudyAssignmentFilter
+        var minute: Int64
+    }
+    private var groupCache: [(GroupKey, [StudyAssignmentGroup])] = []
+    private var countCache: (Int, Int)?
+    private(set) var groupingBuildCount = 0
+
+    /// Keep the minute-granularity deadline projection across dashboard visits.
+    /// A small bounded cache lets the full list and preview share common filters.
+    func groups(query: String, filter: StudyAssignmentFilter, now: Date) -> [StudyAssignmentGroup] {
+        let key = GroupKey(query: query, filter: filter, minute: Int64(now.timeIntervalSince1970 / 60))
+        if let cached = groupCache.first(where: { $0.0 == key }) { return cached.1 }
+        let result = StudyAssignmentGroup.make(courses: input.courses.map(\.studyCourse), query: query, filter: filter, now: now)
+        groupingBuildCount += 1
+        groupCache.insert((key, result), at: 0)
+        if groupCache.count > 4 { groupCache.removeLast() }
+        return result
+    }
+    var submissionCounts: (Int, Int) {
+        if let countCache { return countCache }
+        let assignments = StudyAssignment.list(courses: input.courses.map(\.studyCourse), includeCompleted: true)
+        let counts = (assignments.filter { $0.details?.status == .submitted }.count,
+            assignments.filter { $0.details?.status == .graded }.count)
+        countCache = counts
+        return counts
+    }
 
     init(workspace: StudyWorkspaceModel) {
         input = StudyAssignmentAgendaInput(workspace.library)
@@ -85,7 +113,11 @@ final class StudyAssignmentAgendaState: ObservableObject {
             sourceError = library.canvasAssignmentsError
             projectionBuildCount += 1
             let next = StudyAssignmentAgendaInput(library)
-            if next != input { input = next }
+            if next != input {
+                groupCache.removeAll()
+                countCache = nil
+                input = next
+            }
         }
     }
 }

@@ -507,6 +507,12 @@ extension StudyWorkspaceSmoke {
         }
         let sheet = try await openQuick()
         try snapshot(sheet, at: output.appendingPathComponent("quick-jump.png"))
+        // Several edits in adjacent run-loop turns must leave selection attached
+        // to the latest results, including a temporary no-match result.
+        for query in ["T", "zz-no-match", second.code, first.code, ""] {
+            try await courseUIEditTextField("workspace-shortcuts-query", value: query, in: sheet)
+            await Task.yield()
+        }
         sheet.sendEvent(try key("\u{f701}", code: 125, in: sheet))
         sheet.sendEvent(try key("\u{f700}", code: 126, in: sheet))
         try await courseUIEditTextField("workspace-shortcuts-query", value: "no such workspace", in: sheet)
@@ -540,6 +546,8 @@ extension StudyWorkspaceSmoke {
         try courseUIRequire(window.attachedSheet == nil, "Opening a search result must dismiss library search")
         try courseUIRequire(workspace.document?.id.uuidString == expected.documentID,
             "Arrow keys and Enter must open the selected coursework search result")
+        try courseUIRequire(workspace.currentPage == max(1, expected.page),
+            "Opening the selected search hit must retain its page")
         // AppKit detaches a sheet before its closing animation and responder
         // handoff finish. Send the next shortcut after that handoff, as a real
         // key event would be routed, rather than directly to the parent early.

@@ -12,7 +12,7 @@ struct StudyCourseLibraryView: View, Equatable {
     init(workspace: StudyWorkspaceModel, createCourse: @escaping () -> Void) {
         self.workspace = workspace
         self.createCourse = createCourse
-        _dashboard = StateObject(wrappedValue: StudyDashboardState(workspace: workspace))
+        _dashboard = StateObject(wrappedValue: workspace.dashboardState)
     }
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.workspace === rhs.workspace }
 

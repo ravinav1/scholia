@@ -136,6 +136,8 @@ final class StudyWorkspaceModel: ObservableObject {
     // The sidebar and overview share the active catalog.
     let materialListCache = StudyMaterialListCache()
     let courseCatalog = StudyCourseCatalog()
+    lazy var dashboardState = StudyDashboardState(workspace: self)
+    lazy var assignmentAgendaState = StudyAssignmentAgendaState(workspace: self)
     let fileSearch = StudyWorkspaceSearch()
     let documentEditing: StudyEditingState
     private var canSave = true

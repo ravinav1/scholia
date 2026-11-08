@@ -42,6 +42,13 @@ private func check(_ value: Bool, _ message: String = "", line: UInt = #line) {
         model.library.courses.reverse()
         check(model.courses(matching: "updated").first?.id == course.id)
         let agenda = StudyAssignmentAgendaState(workspace: model)
+        let groupingTime = Date(timeIntervalSince1970: 1_800_000_000)
+        _ = agenda.groups(query: "", filter: .due, now: groupingTime)
+        let groupsBuilt = agenda.groupingBuildCount
+        _ = agenda.groups(query: "", filter: .due, now: groupingTime.addingTimeInterval(10))
+        check(agenda.groupingBuildCount == groupsBuilt, "Repeated dashboard visits within a minute reuse deadline groups")
+        _ = agenda.groups(query: "", filter: .due, now: groupingTime.addingTimeInterval(60))
+        check(agenda.groupingBuildCount == groupsBuilt + 1, "Deadline groups invalidate at the next minute")
         let agendaBuilds = agenda.projectionBuildCount
         model.library.courses[0].threads.append(StudyThread(mode: .explain))
         model.library.courses[0].threads[0].draft = "Streaming and draft changes"
