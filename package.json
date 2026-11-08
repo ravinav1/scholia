@@ -29,7 +29,7 @@
     "setup:macos-signing": "zsh scripts/macos/setup-macos-signing.sh",
     "install:macos": "zsh scripts/macos/install-macos-app.sh",
     "update:macos": "zsh scripts/macos/install-macos-app.sh --launch",
-    "run:macos": "swift run --configuration release --package-path apps/macos ScholiaMac",
+    "run:macos": "npm run build:native-resources && swift run --configuration release --package-path apps/macos ScholiaMac",
     "package:chrome": "node scripts/build/package-chrome.mjs",
     "check": "node scripts/checks/check-source.mjs && node scripts/check-macos-syntax.mjs && npm test",
     "check:dist": "node scripts/checks/check-chrome-dist.mjs",
@@ -63,7 +63,7 @@
     "smoke:macos:panels": "zsh scripts/smoke/macos/run.sh panels",
     "smoke:macos:canvas": "zsh scripts/smoke/macos/run.sh canvas-downloads",
     "build:native-resources": "node scripts/build/build-native-resources.mjs",
-    "run:macos:debug": "swift run --package-path apps/macos ScholiaMac"
+    "run:macos:debug": "npm run build:native-resources && swift run --package-path apps/macos ScholiaMac"
   },
   "dependencies": {
     "@huggingface/transformers": "4.3.1",
