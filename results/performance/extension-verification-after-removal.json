@@ -1,0 +1,85 @@
+{
+  "stage": "after-removal",
+  "recordedAt": "2026-11-08T00:08:34.329Z",
+  "package": {
+    "path": "dist/scholia-chrome-0.2.2.zip",
+    "bytes": 15025088,
+    "sha256": "aa19c3e5595bfe16b29771cb242408ec2da0c3704c73772657655a2867858fad"
+  },
+  "checks": [
+    {
+      "command": "node --test tests/chrome/*.test.js",
+      "status": "passed",
+      "tests": 239,
+      "failures": 0,
+      "skipped": 0,
+      "note": "Only the two removed website-launcher tests were deleted; Canvas link assertions are unchanged."
+    },
+    {
+      "command": "npm run package:chrome",
+      "status": "passed",
+      "includes": [
+        "production build",
+        "check:dist",
+        "archive root manifest validation"
+      ]
+    },
+    {
+      "command": "node scripts/performance/measure-extension-bundle.mjs --after-removal",
+      "status": "passed",
+      "initialBytes": 4108,
+      "initialGzipBytes": 1942,
+      "initialModules": 4
+    },
+    {
+      "command": "CHROMIUM_BIN=/Applications/Chromium.app/Contents/MacOS/Chromium node scripts/performance/benchmark-extension.mjs --packaged --after-removal",
+      "status": "passed",
+      "browser": "Chromium 153.0.7999.0",
+      "uncaughtExceptions": 0,
+      "checks": [
+        "restrictive page CSP",
+        "top-level and nested frames stay lazy",
+        "context extraction avoids rich UI",
+        "first answer uses persisted provider and captured selection",
+        "nested-frame provider transport",
+        "blocked lazy import reports retryable failure",
+        "concurrent retries mount exactly one interface",
+        "options provider controls initialize",
+        "popup provider controls initialize",
+        "popup chat and PDF launchers remain",
+        "removed website address and exam launchers absent"
+      ],
+      "report": "extension-runtime-after-removal.json"
+    },
+    {
+      "command": "CHROMIUM_BIN=/Applications/Chromium.app/Contents/MacOS/Chromium node scripts/smoke/browser/smoke-chromium-panel-recursion.mjs",
+      "status": "passed",
+      "checks": [
+        "Quick Chat shortcut",
+        "recursive explanations",
+        "contained model picker",
+        "Codex bridge recovery using fixture",
+        "direct in-reader PDF chat",
+        "simulated nested frame blocking in Chromium",
+        "PDF reload page restoration",
+        "PDF print/search/navigation",
+        "recursive chat handoff"
+      ]
+    },
+    {
+      "command": "rg scan of apps/chrome/src, apps/chrome/*.html, tests/chrome, extension build/package/dist scripts, dist/chrome/*.js and dist/chrome/*.html",
+      "status": "passed",
+      "matches": 0,
+      "patterns": [
+        "apps/(web|server)",
+        "exam-workspace",
+        "exam-planner",
+        "127.0.0.1:8792",
+        "localhost:8792",
+        "Scholia website",
+        "hosted workspace"
+      ],
+      "note": "Generic browser tab ranking is retained; no installed extension or user profile was modified."
+    }
+  ]
+}

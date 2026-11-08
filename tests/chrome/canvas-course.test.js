@@ -1,9 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { canvasCourseFromUrl, canvasIndexKey, canvasNextPage, buildCanvasCourseIndex, canvasCourseContext } from '../../apps/chrome/src/canvas-course.js';
-import { canvasContentLinks } from '../../apps/server/courses/canvas-content.js';
+import { canvasDocumentLinks } from '../../packages/core/src/canvas-links.js';
 import { DOMParser } from 'linkedom';
 import { researchLinksFromDocument } from '../../apps/chrome/src/research-links.js';
+
+const canvasContentLinks = (html, origin, courseID, sourceURL) => canvasDocumentLinks(
+  new DOMParser().parseFromString(`<html><body>${html || ''}</body></html>`, 'text/html'),
+  origin, courseID, sourceURL
+);
 
 const course = canvasCourseFromUrl('https://school.instructure.com/courses/42/pages/overview?secret=hidden');
 

@@ -8,7 +8,7 @@ import { resolve, join } from 'node:path';
 import { chromiumSession, sleep } from '../smoke/browser/lib/chromium.mjs';
 
 const baseline = process.argv.includes('--baseline');
-const stage = baseline ? 'before' : 'after';
+const stage = baseline ? 'before' : process.argv.includes('--after-removal') ? 'after-removal' : 'after';
 const sampleCount = Number(process.env.SCHOLIA_BENCHMARK_SAMPLES || 10);
 const requests = [];
 const server = createServer(async (request, response) => {
@@ -116,8 +116,25 @@ try {
       'concurrent retries mount exactly one interface');
     retryVerified = true;
   }
+  let independentProductVerified = false;
+  if (stage === 'after-removal') {
+    const extensionOrigin = worker.url.slice(0, worker.url.lastIndexOf('/'));
+    await send('Page.navigate', {url:extensionOrigin + '/options.html'});
+    await until('document.querySelector("#provider")?.options.length > 0');
+    assert.equal(await evaluate('!!document.querySelector("#exam-workspace-url, #open-exam-planner")'), false,
+      'settings have no removed web app address or launcher');
+    assert.equal(await evaluate('document.querySelector("#provider").value'), 'openai', 'provider settings remain functional');
+    await send('Page.navigate', {url:extensionOrigin + '/popup.html'});
+    await until('document.querySelector("#model-select")?.options.length > 0');
+    assert.equal(await evaluate('!!document.querySelector("#open-exam-planner")'), false,
+      'the popup does not launch the removed web workspace');
+    for (const control of ['#open-sidebar', '#open-pdf']) {
+      assert.ok(await evaluate(`!!document.querySelector(${JSON.stringify(control)})`), `${control} remains available`);
+    }
+    independentProductVerified = true;
+  }
   const graph = await readFile(`results/performance/extension-bundle-${stage}.json`, 'utf8').then(JSON.parse).catch(() => null);
-  const output = { stage, runtime: process.version, browser: (await send('Browser.getVersion')).product, platform: process.platform, build: packageDirectory ? 'Chrome Web Store zip extracted into isolated directory' : 'minified extension distribution', fixture: { topLevelFrames:1,nestedFrames:2,pageCSP:"script-src 'none'", localProvider:true }, procedure: { warmups:1,sampleCount,settleMs:150 }, samples, firstAnswerMs, retryVerified, providerRequests:requests.length, bundle:graph, errors:browser.errors };
+  const output = { stage, runtime: process.version, browser: (await send('Browser.getVersion')).product, platform: process.platform, build: packageDirectory ? 'Chrome Web Store zip extracted into isolated directory' : 'minified extension distribution', fixture: { topLevelFrames:1,nestedFrames:2,pageCSP:"script-src 'none'", localProvider:true }, procedure: { warmups:1,sampleCount,settleMs:150 }, samples, firstAnswerMs, retryVerified, independentProductVerified, providerRequests:requests.length, bundle:graph, errors:browser.errors };
   await mkdir('results/performance', { recursive: true });
   await writeFile(`results/performance/extension-runtime-${stage}.json`, JSON.stringify(output,null,2)+'\n');
   console.log(JSON.stringify({stage,sampleCount,firstAnswerMs,errors:browser.errors.length}));

@@ -19,14 +19,13 @@ import { extractPdfContext, fetchPdfBlob } from './pdf/pdf-context.js';
 import { renderMarkdown, renderReasoning, renderActivity, addActivity, bindActivityDisclosure } from './render.js';
 import { sendRuntimeMessage as sendPopupMessage } from './runtime-message.js';
 import { PANEL_NAVIGATION_KEY } from './tab-context.js';
-import { openExamPlanner } from './exam-planner-launch.js';
 
 const popupWindow = chrome.windows?.getCurrent ? chrome.windows.getCurrent().then((value) => value.id).catch(() => null) : Promise.resolve(null);
 const message = async (payload) => sendPopupMessage({ ...payload, windowId: await popupWindow });
 
 const elements = Object.fromEntries([
   'settings', 'site-dot', 'site-state', 'site', 'site-toggle', 'open-sidebar', 'new-chat',
-  'explain', 'capture', 'open-pdf', 'open-pdf-viewer', 'open-exam-planner', 'model-settings', 'model-select', 'fast-mode', 'fast-mode-state', 'model-hint', 'chat-count',
+  'explain', 'capture', 'open-pdf', 'open-pdf-viewer', 'model-settings', 'model-select', 'fast-mode', 'fast-mode-state', 'model-hint', 'chat-count',
   'clear-chats', 'chat-list', 'chat-empty', 'status', 'quick-context-state', 'quick-reset',
   'quick-files', 'quick-attach', 'quick-messages', 'quick-empty', 'quick-compact', 'quick-none', 'quick-form', 'quick-input', 'quick-send', 'reasoning-select'
 ].map((id) => [id, document.getElementById(id)]));
@@ -456,9 +455,6 @@ const quickFiles = mountFileComposer({
 });
 
 elements.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
-elements['open-exam-planner'].addEventListener('click', () => {
-  openExamPlanner().then(() => window.close()).catch((error) => showStatus(error.message, true));
-});
 elements['model-settings'].addEventListener('click', () => chrome.runtime.openOptionsPage());
 elements['quick-compact'].addEventListener('click', () => setQuickContextMode(
   quickContextMode === CONTEXT_MODE_COMPACT ? CONTEXT_MODE_FULL : CONTEXT_MODE_COMPACT
