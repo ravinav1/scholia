@@ -1,16 +1,15 @@
 # Study workspace
 
-The workspace keeps courses, documents, and tutor conversations together. It is
-available in the native Mac app, its optional local website, and the independent
-hosted web service. The local website shares the Mac's library; hosted accounts
-have their own private libraries.
+The native Mac workspace keeps courses, documents, and tutor conversations
+together in a local library. The Chrome extension has its own separate history;
+the two clients do not synchronize.
 
 ## Keyboard shortcuts
 
-| Action | Mac | Web on Windows / Linux |
-| --- | --- | --- |
-| Search coursework (file names and contents) | ⌘K | Ctrl+K |
-| Switch workspace and quick actions | ⌘⇧K | Ctrl+Shift+K |
+| Action                                      | Shortcut |
+| ------------------------------------------- | -------- |
+| Search coursework (file names and contents) | ⌘K       |
+| Switch workspace and quick actions          | ⌘⇧K      |
 
 Choose **Switch** or use the shortcut, then type a workspace name or course code.
 The picker searches every semester, even when the dashboard is filtered. Favorites
@@ -35,9 +34,8 @@ or start a new chat. Switching workspaces saves your existing chat draft.
    the teaching restrictions, while retaining course context. Source buttons beneath an
    answer return to the cited page or section.
 
-Open **Memory & files** in the web tutor, or the brain button in the native tutor,
-to save workspace notes and up to 24 reference files. They remain available in new
-conversations and after reopening Scholia. Each assignment has its own memory;
+Open the brain button in the tutor to save workspace notes and up to 24 reference
+files. They remain available in new conversations and after reopening Scholia. Each assignment has its own memory;
 assignment chats also inherit the parent workspace's memory. Notes from other
 assignments stay separate. Import a document into the workspace, then pin it here
 to include relevant text excerpts with future questions. Existing Guide me
@@ -48,8 +46,8 @@ or use the paperclip; the Mac app accepts Finder/Spotlight files and project
 folders. Simulink `.slx` packages and `.mdl` definitions expose static model
 structure, with missing dependencies and unreadable parts disclosed. Unknown
 formats stay attached with an explicit contents-unavailable status.
-**Document context** in the native reader (**Reading context** in the browser) names
-the open document, anchors the answer to the page you are reading, and searches the
+**Document context** names the open document, anchors the answer to the page
+you are reading, and searches the
 full indexed document for relevant evidence, including distant pages. Local questions
 stay compact; short follow-ups retain their topic, and overviews cover later chapters.
 **Whole document · all text** sends every page's extracted text when it fits and
@@ -86,8 +84,7 @@ preserving drafts. **Dashboard** returns to the workspace library.
 
 Drag the divider between the reader and tutor to give either more room. With a
 document open, the tutor can occupy almost the entire window; the native reader
-then shows an **Expand** control. The website also supports arrow keys on the
-focused divider and a double-click to restore the usual chat width.
+then shows an **Expand** control.
 On Mac, drag the right edge of the left course library to resize it. Its width
 is remembered when you reopen Scholia; the library toggle still hides and shows it.
 
@@ -103,8 +100,7 @@ missing text are identified in the context. Refresh Canvas for current details.
 
 The composer shows the selected reasoning mode beside the model when the model
 supports a choice. Select a level there to apply it to subsequent questions.
-This works in the Mac app, its local website, and hosted web accounts; unsupported
-models do not show a reasoning selector.
+Unsupported models do not show a reasoning selector.
 
 Choose **Auto study** in the composer to select a model for each question. For
 OpenAI and Codex, it prefers GPT-6 Luna with low reasoning for recall, explanations
@@ -186,8 +182,7 @@ An assignment's badge distinguishes **Handed in · awaiting grade**, **Graded**,
 **Not handed in**, **Excused**, and **Status not synced**. Missing submission data
 is not treated as proof that work is outstanding. While Scholia is open, assignment
 deadlines, status and posted grades refresh automatically about every two minutes, and are
-checked on return to the app when due. The local website also runs these checks
-when the native workspace window is closed. **Refresh status** on the Assignments
+checked on return to the app when due. **Refresh status** on the Assignments
 page checks immediately. These lightweight checks do not download
 course files. A failed check keeps the last successful status and retries later;
 **Refresh course catalog** in the Mac library's Canvas options still performs a full catalog refresh.
@@ -225,8 +220,7 @@ Clicking an assignment opens its instructions and the first explicitly linked
 Canvas PDF in Scholia's reader. **Included files** lists every linked file;
 choose one to read it while keeping the assignment open. This includes readable
 simulation inputs and data such as `in.nanowire` and `Ni.eam`, as well as PDFs.
-Collapse **Included files** to make more room for the reading. The website
-remembers that choice separately for each assignment.
+Collapse **Included files** to make more room for the reading.
 Assignments without a linked PDF show their instructions and included files.
 Saved instructions and downloaded files remain available locally in the Mac app.
 A failed download offers Retry without discarding saved material.
@@ -285,10 +279,7 @@ separate Canvas link opens the original assignment when you need to hand in work
 
 ## Exam planner and Studentweb
 
-Open **Exam dates** from the Mac app or website dashboard/navigation. In the
-extension, **Exam planner** opens your study website; configure its address in
-extension settings. For the local Mac website, first choose **Open in Browser**
-(Command-2). A hosted website uses its usual account sign-in.
+Open **Exam dates** from the Mac workspace dashboard or navigation.
 
 The schedule stays inside your workspace, with chronological date cards and
 side-by-side comparisons of overlapping exams. **Keep [course]** shows which
@@ -312,14 +303,11 @@ Choose **Review exams**, correct the fields and select the exams you intend to t
 A direct import replaces previous Studentweb entries in the preview, preserving
 manual entries, selections and flexible/fixed timing choices for identical exams. Dates absent from the opening
 page cannot survive from an earlier import. Choose **Save plan** to keep the refresh.
-The Mac-backed website can open this same importer; reload its saved plan after
-saving in the Mac app. Hosted websites retain the paste/file import workflow.
 
 Alternatively, copy the opening page's exam rows into **Paste details** / **Paste dates from
 Studentweb**, then preview and correct the course, exam component, date, and times.
-The website also accepts text, CSV/TSV and ICS calendar files. You can always add
-or edit an exam manually, including dates not yet announced. The editor defaults
-to chronological **Date order**; **By course** groups midterms and finals together.
+You can always add or edit an exam manually, including dates not yet announced.
+The editor defaults to chronological **Date order**; **By course** groups midterms and finals together.
 Select each exam you intend to take and choose
 **Save plan**. A selected date is a personal planning choice; Scholia never
 registers for or withdraws from an exam.
@@ -360,20 +348,20 @@ and withdrawal deadlines, result dates and unrelated page dates are excluded.
 Rows without an announced date remain incomplete; no date or duration is invented.
 Only course codes and exam date/time/type tokens
 cross into the planner; names, student/candidate numbers, grades and raw page
-content are excluded. The import does not send content to an AI provider or Scholia's
-hosted service. Closing the import window discards its temporary website data.
+content are excluded. The import does not send content to an AI provider.
+Closing the import window discards its temporary website data.
 Studentweb and the identity provider still process their normal sign-in data.
 Changes to Studentweb's markup can require falling back to paste import; the
 planner never guesses missing dates or submits registration forms.
 
-Paste/file imports are parsed on your device. Leave personal details out of the
+Pasted imports are parsed on your device. Leave personal details out of the
 pasted selection. Previewing does not save a plan; only
 reviewed scheduling fields are persisted, with no raw pasted page or calendar
-description. Repeat paste/file imports keep existing selections and skip identical
+description. Repeated pasted imports keep existing selections and skip identical
 dates; changed dates are new candidates to review. Direct imports preserve the
 number of source rows, even when several components have identical dates. Saving refuses to overwrite a
 plan that changed in another window; reload the saved plan before editing again.
-Local plans share the Mac library; hosted plans belong to the signed-in account.
+Plans are saved in the Mac library.
 
 The schedule's **Recommend exams** text box accepts your interests, background,
 goals, required courses and desired workload. On request, the configured model
@@ -437,7 +425,7 @@ your existing exam plan, favorites or courses.
 
 The saved record contains only `{courseCode, passed}` pairs in a separate,
 non-synchronizing macOS Keychain item per local library. It is excluded from
-`library.json`, the local web API, hosted Scholia, search indexes and exports.
+`library.json`, search indexes, and exports.
 Native **Get advice** is the explicit exception for provider input: it sends only
 the passed-course codes. Other provider requests do not read this record.
 Studentweb grades and personal details are reduced inside
@@ -502,7 +490,7 @@ year-list and study-plan JSON resources as NTNU's
 specialisation branch in those responses is imported. The **2023** snapshot has
 semesters 1–8 for both degrees; semesters 9–10 are explicitly missing. Publication
 coverage varies by cohort. Missing requirements are never filled from another cohort.
-In native or browser **Get advice**, the compact degree controls show an
+In **Get advice**, the compact degree controls show an
 **admission-year selector for each programme**. Both selected cohorts are available
 for a comparison; being available does not mean the student is enrolled in both.
 **Optional study focus** is collapsed by default and lets the student suggest a
@@ -551,19 +539,17 @@ model calls. Every follow-up plans its lookups again using the current cohorts a
 current passed courses. Shared/ancestor requirements remain included for a profile;
 unpublished semesters and unmatched codes remain explicitly identified.
 
-The browser loads only small public selector metadata. Course definitions stay on
-the local/hosted advice service until retrieved. Source links, cohort, fetch time
-and publication coverage accompany results. Public degree retrieval also supports
-hosted advice; private Studentweb pass statuses remain unavailable to the web API
-and hosted service.
+Source links, cohort, fetch time, and publication coverage accompany retrieved
+public degree records. Private Studentweb pass statuses are stored separately
+and are included only in native advice requests as described above.
 
 Add programmes, default admission years and their verified nominal duration to
 `packages/core/data/ntnu-study-plan-sources.json`, then refresh and rebuild:
 
 ```sh
 npm run import:study-plans
-npm run build:web
-node --test tests/study-plans.test.js tests/study-plan-retrieval.test.js tests/server/hosted-exam-recommendations.test.js
+npm run build:native-resources
+node --test tests/study-plans.test.js tests/study-plan-retrieval.test.js
 ```
 
 The importer discovers actual admission cohorts from NTNU's read-only year list
@@ -573,8 +559,8 @@ has been fetched and validated. It never calls NTNU's update or sign-in routes.
 
 ## Canvas and downloads
 
-On the Mac, **Sign in** and the local website's **Reconnect Canvas** first check
-the saved token or session without opening a window. Canvas opens in a native
+**Sign in** first checks the saved token or session without opening a window.
+Canvas opens in a native
 WebKit sheet only when the saved login has expired. Network failures keep the
 last successful assignment state and display a refresh error. Closing the
 sign-in sheet does not stop later status checks. Scholia uses that session
@@ -588,9 +574,8 @@ background Keychain save failure does not invalidate a working Canvas session.
 Canvas cookies. If a saved personal token has expired, Scholia also checks the
 saved browser session before opening sign-in. A verified browser session replaces
 that expired connection. You can also connect
-with a personal access token, stored in Keychain. Hosted web uses a personal
-Canvas token saved to your account; its operator chooses the allowed Canvas
-hosts. Expired credentials need to be renewed before new material can download.
+with a personal access token, stored in Keychain. Expired credentials need to
+be renewed before new material can download.
 
 Saved-session checks and cookie renewal run without Keychain prompts and off the
 main thread. If macOS requires permission to read a saved login, cached work stays
@@ -625,7 +610,7 @@ refresh icon on each course card performs the same update.
 
 **Settings → Courses → Automatically update course content** enables the same
 check-and-fetch operation every five minutes for current-semester courses,
-favorites, and the open course while the native or local browser workspace is
+favorites, and the open course while the native workspace is
 open. This global preference is saved across restarts and is also available in
 Canvas settings. It is off initially; turning it off stops an automatic update,
 and manual course updates remain available. Failed work stays available to retry.
@@ -755,7 +740,7 @@ The Mac can **Preload frequent courses** after three separate visits. Once the
 course is idle for three seconds, it fetches at most three eligible files,
 10 MB per file and 20 MB total. It pauses for active work, Low Power Mode, or
 thermal pressure. Disable the option in the workspace menu or use **Stop**
-during preloading. This setting is native; hosted web downloads when requested.
+during preloading.
 
 Material access is read-only. API pagination stays on the Canvas origin, and
 file redirects lose Canvas tokens and cookies before reaching storage hosts.
@@ -764,18 +749,12 @@ represented as tutor-readable text until content has been saved and indexed.
 
 ## Reading and editing
 
-The PDF readers provide selectable text, bookmarks, exact and semantic search,
+The PDF reader provides selectable text, bookmarks, exact and semantic search,
 page entry, continuous/single/spread layouts, zoom, figure capture, and printing.
-The web reader refines the visible portion of a PDF directly from its vector
-content at at least 2× density, subject to a bounded canvas budget. High zoom
-does not have to enlarge a low-resolution full-page bitmap. Refinement updates
-on scrolling, resizing, and display-density changes without replacing text
-selection or annotation layers. Scanned images retain their source detail.
 Native indexing uses on-device Vision OCR for images and every scanned or mixed
-PDF page, including old invisible text layers. Hosted indexing can use local Tesseract OCR;
-the Docker image includes it (see [Hosting](HOSTING.md)). OCR text
-also contributes to file classification. Processing is bounded, and the
-document notice reports incomplete coverage or unavailable OCR. Handwriting
+PDF page, including old invisible text layers. OCR text also contributes to
+file classification. Processing is bounded, and the document notice reports
+incomplete coverage or unavailable OCR. Handwriting
 and mathematical notation can be misread, so keep the original visible when
 checking an uncertain passage. File organization does not send files to an AI
 provider.
@@ -796,36 +775,21 @@ copy separately in the native library.
 Each tutor turn has a fresh, bounded source snapshot. It includes the current
 page or selection and relevant saved material from that workspace. Native
 context can include the whole document when it fits, otherwise page references
-and locally ranked excerpts. Hosted context is bounded separately. Inspect the
-source list to see what supported the answer. A model does not automatically
+and locally ranked excerpts. Inspect the source list to see what supported
+the answer. A model does not automatically
 see every image in a long document; explicit visual questions require a model
 that accepts images.
 
 ## Practice and storage
 
-The Mac and its local website include **Practice this** and **Review due**:
+The Mac app includes **Practice this** and **Review due**:
 source-linked questions, attempts, hints, feedback, revisions, and delayed
-review. See [Practice and review](PRACTICE.md). Hosted web offers conversational
-**Practice** tutoring; it does not include the native practice-session store or
-spaced review queue.
+review. See [Practice and review](PRACTICE.md).
 
 Native files, indexes, conversations, and reading positions are stored under
 `~/Library/Application Support/Scholia/Study`. Workspace removal removes its
 library entry while retaining imported files on disk for recovery. Native edit
-drafts and revisions are also local. Hosted data is stored on the service's
-persistent volume. See [Privacy](PRIVACY.md) for retention and operator access.
-
-## Open in Browser
-
-On the Mac, choose **Open in Browser** or press Command-2 to start the local
-website at `http://127.0.0.1:8792`. Keep Scholia running. Native and browser views
-share the current workspace, Canvas connection, provider configuration,
-conversations, and reading position. Canvas sign-in opens the Mac's sheet;
-provider setup stays in native Settings.
-
-For a website that stays available without the Mac, use the separate account
-service described in [Hosting](HOSTING.md). It has its own data and sessions;
-it does not expose or synchronize your Mac library.
+drafts and revisions are also local. See [Privacy](PRIVACY.md) for retention.
 
 ## Verification
 
@@ -834,8 +798,6 @@ npm run check
 npm run smoke:macos:workspace -- --data-only
 npm run smoke:macos:workspace -- --learning-only
 npm run smoke:macos:workspace -- --assignments-preview --assignment-page-smoke
-npm run build:web
-node scripts/smoke/browser/smoke-hosted-web.mjs
 ```
 
 Native smoke checks use temporary libraries and deterministic Canvas/provider
