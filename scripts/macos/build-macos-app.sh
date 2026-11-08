@@ -68,6 +68,11 @@ if [[ -f "$sdk_interface" ]]; then
 fi
 
 build_started=$SECONDS
+# SwiftPM's generated resource accessor searches the executable bundle root,
+# whereas signed macOS apps keep resources under Contents/Resources. Patch the
+# pinned dependency before an ordinary SwiftPM build, with exact source guards.
+swift package --disable-sandbox --package-path "$package_root" resolve
+node "$script_dir/patch-swiftmath-resources.mjs" "$package_root"
 swift build "${swift_arguments[@]}" &
 swift_build_pid=$!
 (

@@ -1,0 +1,171 @@
+{
+  "recordedAt": "2026-11-08T01:28:03.345Z",
+  "sourceBaseCommit": "1dec1af78569afcc180bc938f1d76c960ae9d690",
+  "measuredNativeAppSourceCommit": "c4492b5",
+  "patch": {
+    "dependency": "SwiftMath",
+    "version": "1.7.3",
+    "revision": "fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7",
+    "files": [
+      "MathRender/MTFont.swift",
+      "MathBundle/MathFont.swift"
+    ],
+    "lookupSites": 3,
+    "guards": [
+      "exact locked version/revision",
+      "exact original or patched source contents",
+      "validate all inputs before writes",
+      "repeat application changes zero files"
+    ],
+    "appSourceChanged": false
+  },
+  "build": {
+    "configuration": "release",
+    "buildSeconds": 93,
+    "signing": "ad hoc",
+    "appExecutableSHA256": "e93d7edc467e497c1dd763ea8c50bcca54c85360ce635045bf8addcaa9a78eac",
+    "compiler": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+    "sdk": "MacOSX26.5.sdk"
+  },
+  "negativeControl": {
+    "source": "unpatched production SwiftMath objects",
+    "sameProbe": true,
+    "packagedResources": true,
+    "strictSignaturePass": true,
+    "worktreeBuildBundleHidden": true,
+    "exitCode": 133,
+    "failure": "SwiftMath generated resource accessor could not load app-root or build-directory resource bundle",
+    "restoredBuildBundle": true
+  },
+  "standalone": {
+    "strictSignaturePass": true,
+    "rootResourceSymlink": false,
+    "resourceLocation": "Contents/Resources/SwiftMath_SwiftMath.bundle",
+    "worktreeBuildBundleHidden": true,
+    "fonts": [
+      {
+        "name": "latinmodern-math",
+        "glyphs": 4802
+      },
+      {
+        "name": "KpMath-Light",
+        "glyphs": 3447
+      },
+      {
+        "name": "KpMath-Sans",
+        "glyphs": 2789
+      },
+      {
+        "name": "xits-math",
+        "glyphs": 4493
+      },
+      {
+        "name": "texgyretermes-math",
+        "glyphs": 4246
+      },
+      {
+        "name": "Asana-Math",
+        "glyphs": 3447
+      },
+      {
+        "name": "Euler-Math",
+        "glyphs": 3443
+      },
+      {
+        "name": "FiraMath-Regular",
+        "glyphs": 2094
+      },
+      {
+        "name": "NotoSansMath-Regular",
+        "glyphs": 5130
+      },
+      {
+        "name": "LibertinusMath-Regular",
+        "glyphs": 4463
+      },
+      {
+        "name": "Garamond-Math",
+        "glyphs": 5243
+      },
+      {
+        "name": "LeteSansMath",
+        "glyphs": 4345
+      }
+    ],
+    "mathTablesLoaded": 12,
+    "rasterizedImages": 13,
+    "legacyRendererPass": true,
+    "exitCode": 0
+  },
+  "commandLineFallback": {
+    "separateProcess": true,
+    "bundleRestored": true,
+    "fonts": [
+      {
+        "name": "latinmodern-math",
+        "glyphs": 4802
+      },
+      {
+        "name": "KpMath-Light",
+        "glyphs": 3447
+      },
+      {
+        "name": "KpMath-Sans",
+        "glyphs": 2789
+      },
+      {
+        "name": "xits-math",
+        "glyphs": 4493
+      },
+      {
+        "name": "texgyretermes-math",
+        "glyphs": 4246
+      },
+      {
+        "name": "Asana-Math",
+        "glyphs": 3447
+      },
+      {
+        "name": "Euler-Math",
+        "glyphs": 3443
+      },
+      {
+        "name": "FiraMath-Regular",
+        "glyphs": 2094
+      },
+      {
+        "name": "NotoSansMath-Regular",
+        "glyphs": 5130
+      },
+      {
+        "name": "LibertinusMath-Regular",
+        "glyphs": 4463
+      },
+      {
+        "name": "Garamond-Math",
+        "glyphs": 5243
+      },
+      {
+        "name": "LeteSansMath",
+        "glyphs": 4345
+      }
+    ],
+    "mathTablesLoaded": 12,
+    "rasterizedImages": 13,
+    "legacyRendererPass": true,
+    "exitCode": 0
+  },
+  "packageStrictSignaturePass": true,
+  "isolation": {
+    "actualScholiaLaunched": false,
+    "installedAppModified": false,
+    "liveLibraryAccessed": false,
+    "NSApplicationCreated": false,
+    "originalCheckoutModified": false
+  },
+  "reproduction": [
+    "SCHOLIA_CODESIGN_IDENTITY=- SCHOLIA_AUTO_LOCAL_SIGNING=0 zsh scripts/macos/build-macos-app.sh release",
+    "node scripts/macos/test-swiftmath-resource-patch.mjs",
+    "zsh scripts/macos/check-swiftmath-package.sh"
+  ]
+}
