@@ -26,7 +26,7 @@ final class StudyChatContextTests: XCTestCase {
         XCTAssertTrue(request.systemPrompt.contains("simulation results"))
     }
 
-    func testBrowserAttachmentMetadataSurvivesRoundTripAndLimitsAreValidated() throws {
+    func testAttachmentTransferMetadataSurvivesRoundTripAndLimitsAreValidated() throws {
         let original = MessageAttachment(fileName: "plant.slx", mimeType: "application/zip", byteCount: 80,
             extractedText: "model source", readStatus: .partial, readDetail: "Dependency missing", isEnabled: false)
         let wire = try JSONDecoder().decode(StudyAttachmentTransfer.self, from: JSONEncoder().encode(StudyAttachmentTransfer(original)))
@@ -35,9 +35,25 @@ final class StudyChatContextTests: XCTestCase {
         XCTAssertEqual(restored.readStatus, .partial)
         XCTAssertEqual(restored.extractedText, "model source")
         XCTAssertFalse(restored.includedInContext)
-        var oversized = wire
-        oversized.text = String(repeating: "x", count: MessageAttachmentIngestion.maximumExtractedUTF16Units + 1)
-        XCTAssertThrowsError(try oversized.attachment())
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("scholia-transfer-limits-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try AttachmentTextCorpusStore.$directoryOverride.withValue(root) {
+            var abovePreview = wire
+            abovePreview.text = String(repeating: "x", count: MessageAttachmentIngestion.maximumExtractedUTF16Units + 1)
+            let indexed = try abovePreview.attachment()
+            XCTAssertEqual(indexed.extractedText.utf16.count, MessageAttachmentIngestion.maximumExtractedUTF16Units)
+            XCTAssertEqual(indexed.textCorpusUTF16Count, abovePreview.text.utf16.count)
+            XCTAssertEqual(try AttachmentTextCorpusStore.text(for: indexed), abovePreview.text,
+                "The preview limit does not discard the full extraction")
+
+            var atLimit = wire
+            atLimit.text = String(repeating: "x", count: AttachmentTextCorpusStore.maximumUTF16Units)
+            let accepted = try atLimit.attachment()
+            XCTAssertEqual(accepted.textCorpusUTF16Count, AttachmentTextCorpusStore.maximumUTF16Units)
+            XCTAssertEqual(try AttachmentTextCorpusStore.text(for: accepted).utf16.count, AttachmentTextCorpusStore.maximumUTF16Units)
+            atLimit.text.append("x")
+            XCTAssertThrowsError(try atLimit.attachment(), "The full-text resource limit is enforced above its inclusive boundary")
+        }
     }
 
     @MainActor
