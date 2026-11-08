@@ -2234,7 +2234,7 @@ private struct StudyTutorComposer: View {
                             ? "Ask a question about your attachments…" : workspace.mode == .chat
                             ? "Ask anything, or talk through an idea…" : workspace.isCourseConversation
                             ? "Ask about this course, its topics or deadlines…" : "Ask about what you're reading…",
-                    font: .systemFont(ofSize: 13), minHeight: compact ? 30 : 34, maxHeight: compact ? 120 : 180,
+                    font: .systemFont(ofSize: 13), minHeight: compact ? 32 : 34, maxHeight: compact ? 120 : 180,
                     isEnabled: workspace.course != nil,
                     onSubmit: { workspace.send(using: app) },
                     onPasteAttachment: { workspace.attachFromPasteboard() },

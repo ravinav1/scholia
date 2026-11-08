@@ -163,7 +163,8 @@ private final class MeasurementCanvasProtocol: URLProtocol, @unchecked Sendable 
             workspace.saveDraft()
             workspace.flush()
             let restored = try store.load()
-            precondition(restored.courses.count == count && stopCompleted && tokens > 0 && restarted)
+            let draftsRestored = restored.courses.flatMap(\.threads).contains { $0.draft.contains("fixture") }
+            precondition(restored.courses.count == count && stopCompleted && tokens > 0 && restarted && draftsRestored)
             let screenshot = output.deletingLastPathComponent().appendingPathComponent("native-workspace-\(count).png")
             if let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: bitmap)
@@ -179,7 +180,8 @@ private final class MeasurementCanvasProtocol: URLProtocol, @unchecked Sendable 
                 "samplesDuringStream": streamSamples, "samplesDuringImport": importSamples, "samplesDuringSync": syncSamples,
                 "samplesDuringAllThree": overlappingSamples, "cancellationCompleted": stopCompleted,
                 "canceledStreamWhileActive": canceledWhileActive, "providerRestartCompleted": restarted,
-                "restartLibraryVerified": true, "remainingImportedDocuments": restored.courses[0].documents.count - 20])
+                "restartLibraryVerified": true, "typedDraftsRestored": draftsRestored,
+                "remainingImportedDocuments": restored.courses[0].documents.count - 20])
             window.close()
             try JSONSerialization.data(withJSONObject: ["kind": "native-full-workspace", "configuration": "release",
                 "buildID": ProcessInfo.processInfo.environment["SCHOLIA_BUILD_ID"] ?? "unrecorded",

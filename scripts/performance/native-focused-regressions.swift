@@ -55,7 +55,11 @@ private func check(_ value: Bool, _ message: String = "", line: UInt = #line) {
         check(agenda.projectionBuildCount == agendaBuilds, "Chat changes cannot reconstruct assignments")
         print("PASS native metadata cache invalidation, fresh content and assignment work counts")
 
-        let second = try StudyDocumentImporter.read(data: Data("Second reading evidence".utf8), name: "second.txt", store: store)
+        var second = try StudyDocumentImporter.read(data: Data("Second reading evidence".utf8), name: "second.txt", store: store)
+        second.pageCount = 3
+        try store.write(document: second, index: StudyDocumentIndex(pages: [
+            StudyPage(number: 1, text: "Beginning"), StudyPage(number: 2, text: "Middle"),
+            StudyPage(number: 3, text: "Second reading evidence with unique pagetarget")]), data: Data("Second reading evidence".utf8))
         let third = try StudyDocumentImporter.read(data: Data("Third reading evidence".utf8), name: "third.txt", store: store)
         let otherCourse = StudyCourse(name: "Other owner", documents: [second, third])
         model.library.courses.append(otherCourse)
@@ -84,6 +88,11 @@ private func check(_ value: Bool, _ message: String = "", line: UInt = #line) {
         let conversation = model.thread?.id
         model.navigate(to: StudySource(documentID: third.id, title: third.title, page: 1))
         check(model.thread?.id == conversation && model.draft == "Keep this conversation when following a citation")
+        let search = try await model.fileSearch.search(courses: model.library.courses, store: store, query: "pagetarget", mode: "content")
+        let hit = search.results.first!
+        check(hit.documentID == second.id.uuidString && hit.page == 3)
+        check(model.openReading(UUID(uuidString: hit.documentID!)!, courseID: UUID(uuidString: hit.courseID)!, page: hit.page))
+        check(model.currentPage == 3, "A content-search hit opens its exact indexed page across workspaces")
         for _ in 0..<20 {
             model.openReading(doc.id, courseID: course.id)
             model.openReading(second.id, courseID: otherCourse.id)
@@ -96,7 +105,9 @@ private func check(_ value: Bool, _ message: String = "", line: UInt = #line) {
         let oi = model.library.courses.firstIndex(where: { $0.id == otherCourse.id })!
         model.library.courses[oi].documents[0] = replacement
         // Same document ID and nil/equal content hash still require a new load.
-        try store.write(document: replacement, index: StudyDocumentIndex(pages: [StudyPage(number: 1, text: "Replacement evidence")]), data: Data("Replacement evidence".utf8))
+        try store.write(document: replacement, index: StudyDocumentIndex(pages: [
+            StudyPage(number: 1, text: "Replacement beginning"), StudyPage(number: 2, text: "Replacement middle"),
+            StudyPage(number: 3, text: "Replacement evidence")]), data: Data("Replacement evidence".utf8))
         model.openReading(second.id, courseID: otherCourse.id)
         for _ in 0..<100 where model.documentIndex == nil { try await Task.sleep(for: .milliseconds(10)) }
         check(model.currentPageText.contains("Replacement evidence"))

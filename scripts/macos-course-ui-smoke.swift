@@ -399,9 +399,13 @@ extension StudyWorkspaceSmoke {
                     "Wide course content must expand beyond the old centered width cap")
             }
             let editor = try courseUIUnwrap(find(BoundedComposerTextView.self, in: try courseUIUnwrap(window.contentView)))
-            try courseUIRequire(editor.bounds.height >= 32 && editor.string == draft,
-                "\(name): composer must keep its text and useful editing height")
             try snapshot(window, at: output.appendingPathComponent("course-\(name).png"))
+            // NSTextView's document height follows the glyphs (one line can be
+            // shorter than the minimum composer); the scroll viewport is the
+            // actual editable surface that must retain its useful height.
+            let editingHeight = editor.enclosingScrollView?.contentView.bounds.height ?? editor.bounds.height
+            try courseUIRequire(editingHeight >= 32 && editor.string == draft,
+                "\(name): composer must keep its text and useful editing height (viewport \(editingHeight), document \(editor.bounds.height), draft equal \(editor.string == draft))")
         }
         workspace.mode = .chat
         workspace.saveDraft()
