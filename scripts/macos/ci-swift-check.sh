@@ -11,7 +11,7 @@ mkdir -p "$log_root"
 # Build testable optimized objects once; the next stage runs that exact suite.
 swift_arguments=("$mode" --package-path apps/macos --configuration release --build-system native --jobs 4)
 if [[ "$mode" == build ]]; then
-  swift_arguments+=(--build-tests)
+  swift_arguments+=(--build-tests -Xswiftc -enable-testing)
 else
   swift_arguments+=(--skip-build)
 fi
