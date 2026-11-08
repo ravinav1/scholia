@@ -105,6 +105,7 @@ final class StudyWorkspaceTests: XCTestCase {
         XCTAssertEqual(reopened.messages.count, 2)
     }
 
+    @MainActor
     func testDocumentFocusEligibilityIsPure() {
         XCTAssertTrue(StudyWorkspaceModel.canFocusDocument(hasDocument: true, showingLibrary: false, examPlannerPresented: false))
         XCTAssertFalse(StudyWorkspaceModel.canFocusDocument(hasDocument: false, showingLibrary: false, examPlannerPresented: false))
