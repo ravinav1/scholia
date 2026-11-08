@@ -8,7 +8,14 @@ project_root="${script_dir:h:h}"
 cd "$project_root"
 log_root="$project_root/results/performance/ci-native"
 mkdir -p "$log_root"
-swift "$mode" --package-path apps/macos --configuration release --build-system native --jobs 4 &
+# Build testable optimized objects once; the next stage runs that exact suite.
+swift_arguments=("$mode" --package-path apps/macos --configuration release --build-system native --jobs 4)
+if [[ "$mode" == build ]]; then
+  swift_arguments+=(--build-tests)
+else
+  swift_arguments+=(--skip-build)
+fi
+swift "${swift_arguments[@]}" &
 build_pid=$!
 (
   for iteration in {1..18}; do

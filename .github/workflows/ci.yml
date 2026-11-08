@@ -67,7 +67,7 @@ jobs:
           swift --version
           xcrun swiftc --version | tee /tmp/scholia-ci-swift-version.txt
           grep -q "Swift version 6.4" /tmp/scholia-ci-swift-version.txt
-      - name: Compile native release
+      - name: Compile native release and tests
         timeout-minutes: 20
         run: zsh scripts/macos/ci-swift-check.sh build
       - name: Run native release XCTest
