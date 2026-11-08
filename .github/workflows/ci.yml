@@ -47,6 +47,27 @@ jobs:
             results/performance/extension-*.json
             dist/verification/
 
+  vision-diagnostics:
+    # Probe framework availability independently of application/test compilation.
+    # This diagnostic never skips or changes the native OCR regression gate.
+    runs-on: xcode-27
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record direct Vision capabilities
+        run: |
+          mkdir -p results/performance/ci-native
+          xcrun swiftc -O scripts/performance/diagnose-vision.swift -o /tmp/scholia-vision-probe
+          /tmp/scholia-vision-probe results/performance/ci-native/vision-capabilities.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vision-capabilities
+          path: results/performance/ci-native/vision-capabilities.json
+          if-no-files-found: warn
+
   native-release:
     # Match the Swift 6.4 compiler used for the measured release builds.
     runs-on: xcode-27
@@ -80,7 +101,9 @@ jobs:
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-review-regressions.swift
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-persistence-regressions.swift
-          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-attachment-regressions.swift
+      - name: Verify native attachment limits and scanned PDF OCR
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        run: zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-attachment-regressions.swift
       - name: Package the native app without installing
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         env:
