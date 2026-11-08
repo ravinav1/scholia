@@ -1,0 +1,48 @@
+{
+  "status": "blocked",
+  "kind": "native-visible-production-quick-jump",
+  "recordedAt": "2026-11-08T01:59:42Z",
+  "applicationSourceCommit": "c4492b5",
+  "configuration": "release",
+  "compiler": "Apple Swift 6.4.2",
+  "sdk": "macOS 26.5",
+  "os": "macOS 27.2 (26B123)",
+  "hardware": "Apple M2 Max, 12 cores, 32 GB",
+  "applicationSourceChanged": false,
+  "releaseBuild": {
+    "status": "passed",
+    "seconds": 105.26,
+    "testVisibilityEnabled": true
+  },
+  "harnessCompilation": "passed",
+  "harnessLaunch": "passed",
+  "requestedWorkspaces": [89, 500],
+  "requestedWarmupsPerFixture": 3,
+  "requestedSamplesPerFixture": 30,
+  "requestedQueryEditsPerSample": 5,
+  "completedWarmups": 0,
+  "completedSamples": 0,
+  "results": [],
+  "barrier": {
+    "phase": "initial visible key workspace readiness, before Quick Jump measurements",
+    "reason": "Desktop is locked; the benchmark application cannot become active and its workspace cannot become key.",
+    "appKitWindowVisible": true,
+    "appKitOcclusionState": 8192,
+    "applicationActive": false,
+    "windowKey": false,
+    "activationPolicy": "regular",
+    "screenLockEvidence": "Read-only ioreg check: CGSSessionScreenIsLocked = Yes",
+    "focusAssertionPreserved": true,
+    "unlockAttempted": false,
+    "unfocusedTimingsSubstituted": false
+  },
+  "priorBehaviorVerification": {
+    "status": "passed while desktop was available",
+    "source": "scripts/macos-course-ui-smoke.swift checkQuickSwitcherUI",
+    "coverage": ["rapid query changes", "temporary no-match result", "arrow keys", "Enter and Escape", "correct workspace selection", "draft preservation"],
+    "isLatencyMeasurement": false
+  },
+  "baselineLatencySeriesAvailable": false,
+  "reproduction": "SCHOLIA_BUILD_ID=c4492b5 zsh scripts/macos/run-release-check.sh scripts/performance/benchmark-native-quick-jump.swift results/performance/native-quick-jump-after.json",
+  "reproductionRequirement": "An unlocked visible desktop, no concurrent local builds or benchmarks. A completed run replaces this blocked report with raw samples."
+}
