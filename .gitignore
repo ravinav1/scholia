@@ -10,11 +10,9 @@ scripts/**/.opencode-env
 apps/macos/.build/
 apps/macos/.swiftpm/
 
-# Private hosted service storage
-.data/
+# Local development secrets
 .env
 .env.*
-!apps/server/.env.example
 
 # Generated benchmark logs, screenshots, fixtures and live-model reports
 output/

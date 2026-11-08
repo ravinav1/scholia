@@ -140,23 +140,7 @@ struct PerformanceAudit {
             do { _ = try await client.download(URL(string: "https://canvas.example.test/unavailable")!) } catch {
                 emit("native.sync.503", ["requests": AuditProtocol.state.requests, "error": error.localizedDescription])
             }
-            if CommandLine.arguments.contains("--browser") {
-                let webStore = StudyLibraryStore(root: root.appendingPathComponent("web"))
-                try webStore.save(library(89))
-                let webModel = StudyWorkspaceModel(store: webStore)
-                let server = StudyWebServer(app: AppModel.shared, workspace: webModel, assets: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/web"))
-                server.start(port: 0)
-                for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-                guard let address = server.address else { throw StudyError.message(webModel.error ?? "Server did not start") }
-                defer { server.stop() }
-                let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["node", "scripts/performance/audit-performance-browser.mjs", address.absoluteString]
-                let status: Int32 = try await withCheckedThrowingContinuation { continuation in
-                    process.terminationHandler = { process in continuation.resume(returning: process.terminationStatus) }
-                    do { try process.run() } catch { continuation.resume(throwing: error) }
-                }
-                if status != 0 { throw StudyError.message("Browser audit failed: \(status)") }
-            }
+
         } catch { emit("audit.error", ["error": String(describing: error)]); exit(1) }
     }
 }

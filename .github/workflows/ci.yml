@@ -24,7 +24,7 @@ jobs:
       - name: Install Chromium for packaged extension verification
         run: |
           npx playwright install --with-deps chromium
-          browser=$(find "$HOME/.cache/ms-playwright" -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' | head -n 1)
+          browser=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")
           test -n "$browser"
           echo "CHROMIUM_BIN=$browser" >> "$GITHUB_ENV"
       - name: Verify packaged extension in actual Chromium
@@ -53,3 +53,7 @@ jobs:
         run: swift build --package-path apps/macos --configuration release
       - name: Run native release XCTest
         run: swift test --package-path apps/macos --configuration release
+      - name: Check native performance work counts and navigation
+        run: |
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-review-regressions.swift
