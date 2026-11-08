@@ -52,11 +52,14 @@ try {
   const origin = worker.url.slice(0, worker.url.lastIndexOf('/'));
   const session = (await send('Target.attachToTarget', { targetId: worker.targetId, flatten: true })).sessionId;
   await send('Runtime.enable', {}, session);
+  // Target discovery can precede extension bindings in a newly started worker.
+  // Wait in that worker's execution context before seeding its isolated storage.
+  await until('typeof chrome !== "undefined" && typeof chrome.storage?.local?.set === "function"', { sessionId: session });
   const workerEval = (source) => evaluate(source, session);
   const seed = async () => {
     await send('Page.navigate', { url: 'about:blank' });
     await workerEval(`chrome.storage.local.set({'scholia.settings.v1': ${JSON.stringify({
-      provider: 'codex', models: { codex: 'gpt-5.5' }, endpoints: { codex: endpoint },
+      provider: 'codex', models: { codex: 'gpt-5.5' }, endpoints: { codex: endpoint, opencode: endpoint },
       reasoningEfforts: { codex: 'high' },
       // An older live cache can narrow the built-in model's supported efforts.
       discoveredModels: { codex: [{ id: model, reasoning: { efforts: ['low', 'high'], default: 'low' } }] },
