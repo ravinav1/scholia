@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 
 // Private inherited pipes, not an HTTP listener. EOF stops the worker when the
 // Mac app exits, including a force quit during an update.
-const worker = new Worker(new URL('../apps/server/semantic-search-worker.js', import.meta.url));
+const worker = new Worker(new URL('../packages/search/semantic-search-worker.js', import.meta.url));
 const pending = new Map();
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });

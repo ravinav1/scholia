@@ -3,7 +3,6 @@
 import { performance } from 'node:perf_hooks';
 import { buildCanvasCourseIndex } from '../../apps/chrome/src/canvas-course.js';
 import { saveChat, listChats, pruneChatHistory } from '../../apps/chrome/src/chat/chat-history.js';
-import { courseLibraryRenderKey, courseLibraryMarkup } from '../../apps/web/workspace/course-library.js';
 import { renderMarkdown } from '../../apps/chrome/src/render.js';
 import { buildPdfSemanticIndex, findPdfMatches, findPdfSemanticMatches } from '../../apps/chrome/src/pdf/pdf-search.js';
 import { packPageContext } from '../../packages/core/src/context.js';
@@ -72,12 +71,5 @@ for (const count of [250, 1000]) {
   measure(`pdf.${count}pages.exactSearch`, () => findPdfMatches(pages, 'Eigenvectors preserve'), 10);
   measure(`pdf.${count}pages.semanticSearch`, () => findPdfSemanticMatches(pages, 'How do eigenvalues explain a linear map?', index), 10);
   measure(`pdf.${count}pages.contextPacking`, () => packPageContext(pages.join('\n\n'), { question: 'How do eigenvectors preserve directions?', maxChars: 6000 }), 5);
-}
-for (const count of [6, 89, 300]) {
-  const courses = Array.from({ length: count }, (_, i) => ({ id: `c${i}`, name: `Course ${i}`, code: `TEST${i}`, term: '2026 HØST', favorite: i < 4, documents: [], threads: [], canvasID: i + 1, canvasOrigin: course.origin, canvasMaterials: Array.from({ length: 32 }, (_, j) => ({ id: `pages:${j}`, kind: 'pages', remoteID: String(j), title: `Reading ${j}`, sourceURL: `${course.url}/pages/${j}`, version: 'v1' })), catalogUpdatedAt: 800000000 }));
-  const state = { library: { courses, courseLibraryView: 'all' }, selectedSemesterID: 'all', semesters: [{ id: '2026-autumn', title: 'Autumn 2026', courseIDs: courses.map((c) => c.id) }], showingLibrary: true, messages: [], sources: {}, models: [], warnings: [], mode: 'Explain' };
-  record(`web.${count}courses.payload`, { bytes: Buffer.byteLength(JSON.stringify(state)) });
-  measure(`web.${count}courses.renderKey`, () => courseLibraryRenderKey(state));
-  measure(`web.${count}courses.markup`, () => courseLibraryMarkup(state));
 }
 console.log(JSON.stringify({ environment: { node: process.version, platform: process.platform, arch: process.arch }, results }, null, 2));

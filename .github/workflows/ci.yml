@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  javascript-and-extension:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,19 +19,37 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm run build:web
+      - run: npm run build:native-resources
       - run: npm run package:chrome
+      - name: Install Chromium for packaged extension verification
+        run: |
+          npx playwright install --with-deps chromium
+          browser=$(find "$HOME/.cache/ms-playwright" -path '*/chrome-linux/chrome' -o -path '*/chrome-linux64/chrome' | head -n 1)
+          test -n "$browser"
+          echo "CHROMIUM_BIN=$browser" >> "$GITHUB_ENV"
+      - name: Verify packaged extension in actual Chromium
+        run: node scripts/performance/benchmark-extension.mjs --packaged
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-verification
+          path: |
+            results/performance/extension-*.json
+            dist/verification/
 
-  hosted-container:
-    runs-on: ubuntu-latest
+  native-release:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --file apps/server/Dockerfile --tag scholia:test .
-      - name: Check independent hosted service
-        run: |
-          docker run --detach --name scholia-test -p 127.0.0.1:3000:3000 --env SCHOLIA_ORIGIN=http://127.0.0.1:3000 scholia:test
-          curl --fail --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:3000/healthz
-          docker exec scholia-test node --input-type=module -e "const { DOMMatrix } = await import('@napi-rs/canvas'); new DOMMatrix(); console.log('PDF worker dependencies available');"
-      - name: Show service output
-        if: always()
-        run: docker logs scholia-test || true
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build:native-resources
+      - name: Verify full Xcode toolchain
+        run: xcodebuild -version
+      - name: Compile native release
+        run: swift build --package-path apps/macos --configuration release
+      - name: Run native release XCTest
+        run: swift test --package-path apps/macos --configuration release

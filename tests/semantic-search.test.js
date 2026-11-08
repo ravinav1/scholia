@@ -4,8 +4,8 @@ import { mkdtemp, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { SemanticIndex } from '../apps/server/semantic-index.js';
-import { LocalSemanticEmbedder } from '../apps/server/semantic-embedding.js';
+import { SemanticIndex } from '../packages/search/semantic-index.js';
+import { LocalSemanticEmbedder } from '../packages/search/semantic-embedding.js';
 import { Worker } from 'node:worker_threads';
 import { once } from 'node:events';
 
@@ -30,7 +30,7 @@ class FixtureEmbedding {
 }
 
 test('semantic idle retirement is negotiated with the owner and a new request revives the deadline', async t => {
-  const worker = new Worker(new URL('../apps/server/semantic-search-worker.js', import.meta.url), {
+  const worker = new Worker(new URL('../packages/search/semantic-search-worker.js', import.meta.url), {
     workerData: { idleTimeoutMs: 30 },
   });
   t.after(() => worker.terminate());
