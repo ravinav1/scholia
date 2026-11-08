@@ -37,7 +37,7 @@ final class PaperStudySessionTests: XCTestCase {
     func settle(_ session: PaperStudySession, _ clock: Clock, value: UInt8 = 220) {
         for _ in 0..<5 { session.observe(frame(clock, value: value)); clock.advance() }
     }
-    func yieldUntil(_ condition: () -> Bool) async {
+    func yieldUntil(_ condition: @escaping @MainActor () -> Bool) async {
         for _ in 0..<1000 { if condition() { return }; await Task.yield() }
         XCTFail("Timed out waiting for an async state transition")
     }
