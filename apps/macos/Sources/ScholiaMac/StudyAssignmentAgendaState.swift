@@ -52,11 +52,38 @@ struct StudyAssignmentAgendaInput: Equatable, Sendable {
 final class StudyAssignmentAgendaState: ObservableObject {
     @Published private(set) var input: StudyAssignmentAgendaInput
     private var observation: AnyCancellable?
+    private struct Source: Equatable {
+        var metadata: StudyCourseCatalog.Input
+        var canvasID: Int?
+        var materials: [CanvasMaterialReference]?
+        var hidden: [String]?
+        var progress: [String: StudyAssignmentProgress]?
+        var indexed: Bool
+        var warnings: [String]?
+        init(_ course: StudyCourse) {
+            metadata = StudyCourseCatalog.Input(course); canvasID = course.canvasID
+            materials = course.canvasMaterials; hidden = course.hiddenAssignmentIDs
+            progress = course.assignmentProgress; indexed = course.catalogUpdatedAt != nil
+            warnings = course.catalogWarnings
+        }
+    }
+    private var sources: [Source]
+    private var sourceError: String?
+    private(set) var projectionBuildCount = 1
 
     init(workspace: StudyWorkspaceModel) {
         input = StudyAssignmentAgendaInput(workspace.library)
+        sources = workspace.library.courses.map(Source.init)
+        sourceError = workspace.library.canvasAssignmentsError
         observation = workspace.$library.dropFirst().sink { [weak self] library in
             guard let self else { return }
+            // Shared Array storage makes the unchanged-material comparison cheap.
+            // Do not re-filter every course's files on each streamed token.
+            let nextSources = library.courses.map(Source.init)
+            guard nextSources != sources || sourceError != library.canvasAssignmentsError else { return }
+            sources = nextSources
+            sourceError = library.canvasAssignmentsError
+            projectionBuildCount += 1
             let next = StudyAssignmentAgendaInput(library)
             if next != input { input = next }
         }

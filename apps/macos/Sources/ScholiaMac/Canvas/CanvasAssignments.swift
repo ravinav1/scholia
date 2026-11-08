@@ -288,6 +288,38 @@ struct StudyAssignmentGroup: Identifiable {
     let timeframe: StudyAssignmentTimeframe
     let items: [StudyAssignment]
     var id: String { "\(timeframe.rawValue):\(semester.id)" }
+    static func slice(_ groups: [Self], offset: Int, limit: Int) -> [Self] {
+        var remaining = max(0, limit), skipped = max(0, offset)
+        return groups.compactMap { group in
+            let start = min(skipped, group.items.count)
+            skipped -= start
+            let end = min(group.items.count, start + remaining)
+            guard end > start else { return nil }
+            remaining -= end - start
+            return Self(semester: group.semester, timeframe: group.timeframe, items: Array(group.items[start..<end]))
+        }
+    }
+    static func preview(_ groups: [Self], limit: Int, now: Date) -> [Self] {
+        guard limit > 0 else { return [] }
+        // Keep only a small nearest-deadline set, preserving each section's
+        // original ordering. Accurate totals always come from the full groups.
+        var closest: [(id: String, distance: Double)] = []
+        for group in groups {
+            for item in group.items {
+                let distance = abs((item.dueDate ?? .distantFuture).timeIntervalSince(now))
+                let position = closest.firstIndex { distance < $0.distance || (distance == $0.distance && item.id < $0.id) } ?? closest.endIndex
+                if position < limit {
+                    closest.insert((item.id, distance), at: position)
+                    if closest.count > limit { closest.removeLast() }
+                }
+            }
+        }
+        let ids = Set(closest.map(\.id))
+        return groups.compactMap { group in
+            let items = group.items.filter { ids.contains($0.id) }
+            return items.isEmpty ? nil : Self(semester: group.semester, timeframe: group.timeframe, items: items)
+        }
+    }
     private struct Key: Hashable {
         var semester: StudySemester
         var timeframe: StudyAssignmentTimeframe

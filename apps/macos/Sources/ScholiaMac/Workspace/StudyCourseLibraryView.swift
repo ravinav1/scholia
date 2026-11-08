@@ -1,26 +1,34 @@
 import SwiftUI
 
-struct StudyCourseLibraryView: View {
-    @ObservedObject var workspace: StudyWorkspaceModel
+struct StudyCourseLibraryView: View, Equatable {
+    let workspace: StudyWorkspaceModel
+    @StateObject private var dashboard: StudyDashboardState
     var createCourse: () -> Void
     @State private var query = ""
     @State private var resultsPresented = false
     @State private var hidePassed = false
     @Environment(\.colorScheme) private var scheme
 
+    init(workspace: StudyWorkspaceModel, createCourse: @escaping () -> Void) {
+        self.workspace = workspace
+        self.createCourse = createCourse
+        _dashboard = StateObject(wrappedValue: StudyDashboardState(workspace: workspace))
+    }
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.workspace === rhs.workspace }
+
     private var courses: [StudyCourse] {
         let selectedSemester = workspace.selectedSemesterID
         let courseIDs = Set(workspace.semesterGroups.first { $0.id == selectedSemester }?.courseIDs ?? [])
         let favoritesOnly = workspace.courseLibraryView == .favorites
-        return workspace.sortedCourses.filter {
+        return workspace.courses(matching: query).filter {
             (!favoritesOnly || $0.isFavorite)
                 && (!hidePassed || workspace.coursePassed($0.displayCode) != true)
                 && (selectedSemester == "all" || courseIDs.contains($0.id))
-                && (query.isEmpty
-                    || ($0.name + " " + $0.code + " " + ($0.term ?? "")).localizedCaseInsensitiveContains(query))
+
         }
     }
     var body: some View {
+        let _ = dashboard.revision
         let displayedCourses = courses
         let pendingFiles = displayedCourses.reduce(0) { $0 + ($1.canvasFileSync?.pendingFileIDs.count ?? 0) }
         GeometryReader { geometry in
@@ -75,7 +83,8 @@ struct StudyCourseLibraryView: View {
 
     private func workspacePanel(_ displayedCourses: [StudyCourse]) -> some View {
         let semesters = workspace.semesterGroups
-        let readings = workspace.recentReadings
+        let readings = query.isEmpty && workspace.courseLibraryView != .favorites
+            ? StudyRecentReading.inCourses(workspace.library.courses, limit: 2) : []
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 9) {
                 Text("Workspaces").font(.system(size: 21, design: .serif))

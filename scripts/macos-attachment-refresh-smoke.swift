@@ -43,8 +43,8 @@ struct AttachmentRefreshSmoke {
         precondition(updated.readingDetailsText.contains(updated.id.uuidString))
         precondition(updated.readStatusLabel == "All text indexed")
 
-        let wire = StudyWebAttachment(updated)
-        let decoded = try JSONDecoder().decode(StudyWebAttachment.self, from: JSONEncoder().encode(wire))
+        let wire = StudyAttachmentTransfer(updated)
+        let decoded = try JSONDecoder().decode(StudyAttachmentTransfer.self, from: JSONEncoder().encode(wire))
         let transported = try decoded.attachment(existing: updated)
         precondition(transported == updated)
         var oldBrowser = decoded

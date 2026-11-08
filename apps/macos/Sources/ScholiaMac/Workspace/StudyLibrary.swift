@@ -62,18 +62,25 @@ struct StudyRecentReading: Identifiable {
     var id: UUID { document.id }
 
     static func inCourses(_ courses: [StudyCourse], limit: Int = 3) -> [Self] {
-        courses.flatMap { course in
-            course.documents.filter { $0.lastOpenedAt != nil }.map {
-                Self(
-                    courseID: course.id, courseName: course.code.isEmpty ? course.displayName : course.code,
-                    document: $0)
+        guard limit > 0 else { return [] }
+        var recent: [Self] = []
+        for course in courses {
+            for document in course.documents where document.lastOpenedAt != nil {
+                let candidate = Self(courseID: course.id,
+                    courseName: course.code.isEmpty ? course.displayName : course.code, document: document)
+                let position = recent.firstIndex {
+                    if document.lastOpenedAt != $0.document.lastOpenedAt {
+                        return document.lastOpenedAt! > $0.document.lastOpenedAt!
+                    }
+                    return document.id.uuidString < $0.id.uuidString
+                } ?? recent.endIndex
+                if position < limit {
+                    recent.insert(candidate, at: position)
+                    if recent.count > limit { recent.removeLast() }
+                }
             }
-        }.sorted {
-            if $0.document.lastOpenedAt != $1.document.lastOpenedAt {
-                return $0.document.lastOpenedAt! > $1.document.lastOpenedAt!
-            }
-            return $0.id.uuidString < $1.id.uuidString
-        }.prefix(max(0, limit)).map { $0 }
+        }
+        return recent
     }
 }
 

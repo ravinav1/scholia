@@ -29,7 +29,7 @@ final class StudyChatContextTests: XCTestCase {
     func testBrowserAttachmentMetadataSurvivesRoundTripAndLimitsAreValidated() throws {
         let original = MessageAttachment(fileName: "plant.slx", mimeType: "application/zip", byteCount: 80,
             extractedText: "model source", readStatus: .partial, readDetail: "Dependency missing", isEnabled: false)
-        let wire = try JSONDecoder().decode(StudyWebAttachment.self, from: JSONEncoder().encode(StudyWebAttachment(original)))
+        let wire = try JSONDecoder().decode(StudyAttachmentTransfer.self, from: JSONEncoder().encode(StudyAttachmentTransfer(original)))
         let restored = try wire.attachment()
         XCTAssertEqual(restored.id, original.id)
         XCTAssertEqual(restored.readStatus, .partial)

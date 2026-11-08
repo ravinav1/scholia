@@ -55,10 +55,6 @@ struct MenuContent: View {
                     shortcut: "⌘1", action: model.openStudyWorkspace
                 )
                 MenuActionButton(
-                    title: "Open in Browser", icon: "globe",
-                    shortcut: "⌘2", action: model.openStudyWebsite
-                )
-                MenuActionButton(
                     title: "Study on Paper", icon: "camera.viewfinder",
                     shortcut: "⌘3", action: { PaperStudyWindowController.shared.show(app: model) }
                 )

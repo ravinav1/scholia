@@ -25,51 +25,29 @@ extension StudyWorkspaceSmoke {
         let workspace = StudyWorkspaceModel(store: store, canvasClientFactory: { _, _, _ in client })
         CanvasReconnectProtocol.state.set("submitted")
 
-        // No StudyWindowController or StudyWorkspaceView is created. Polling the
-        // real native HTTP server must update the user's status on its own.
-        let server = StudyWebServer(app: AppModel.shared, workspace: workspace, assets: URL(fileURLWithPath: "dist/web"))
-        server.start(port: 0)
-        defer { server.stop() }
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        let address = server.address!
-        let (htmlData, _) = try await URLSession.shared.data(from: address)
-        let html = String(decoding: htmlData, as: UTF8.self)
-        let token = html.components(separatedBy: "name=\"scholia-token\" content=\"")[1].components(separatedBy: "\"")[0]
-        func request(_ action: String? = nil) async throws -> [String: Any] {
-            var request = URLRequest(url: address.appendingPathComponent(action == nil ? "api/state" : "api/action"))
-            request.setValue(token, forHTTPHeaderField: "X-Scholia-Token")
-            if let action {
-                request.httpMethod = "POST"
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: ["action": action])
-            }
-            let (data, response) = try await URLSession.shared.data(for: request)
-            precondition((response as? HTTPURLResponse)?.statusCode == 200)
-            return try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        }
         func status(_ index: Int = 0) -> CanvasSubmissionStatus? {
             workspace.library.courses[index].materials.first?.assignment?.status
         }
-        _ = try await request()
+        await workspace.refreshCanvasAssignmentsIfNeeded()
         for _ in 0..<200 where status() != .submitted { try await Task.sleep(for: .milliseconds(10)) }
-        precondition(status() == .submitted, "Browser-only polling must repair the stale TTK4100 Øving 2 status")
+        precondition(status() == .submitted, "Native foreground refresh must repair the stale TTK4100 Øving 2 status")
         precondition(status(1) == .notSubmitted, "A different account's courses must not be overwritten")
         precondition(!workspace.canvasPresented && !workspace.canvasSigningIn)
         precondition(StudyAssignmentGroup.make(courses: [workspace.library.courses[0]], filter: .due).isEmpty)
         precondition(StudyAssignmentGroup.make(courses: [workspace.library.courses[0]], filter: .all).first?.timeframe == .handedIn)
         precondition(StudyMaterialOrganizer.groups(for: workspace.library.courses[0]).flatMap(\.items).first?.submissionStatus == .submitted)
         let windows = NSApplication.shared.windows.filter(\.isVisible).count
-        _ = try await request("signIn")
+        await workspace.beginCanvasSignIn()
         precondition(!workspace.canvasPresented && !workspace.canvasSigningIn)
         precondition(NSApplication.shared.windows.filter(\.isVisible).count == windows, "Saved sign-in must not open a window")
         for _ in 0..<200 where workspace.assignmentRefreshBusy { try await Task.sleep(for: .milliseconds(10)) }
         let count = CanvasReconnectProtocol.state.count
-        _ = try await request()
+        await workspace.refreshCanvasAssignmentsIfNeeded()
         try await Task.sleep(for: .milliseconds(50))
-        precondition(CanvasReconnectProtocol.state.count == count, "Repeated polling must be throttled")
+        precondition(CanvasReconnectProtocol.state.count == count, "Repeated refresh must be throttled")
 
         CanvasReconnectProtocol.state.set("graded")
-        _ = try await request("refreshAssignments")
+        await workspace.refreshCanvasAssignmentsIfNeeded(force: true)
         for _ in 0..<200 where status() != .graded { try await Task.sleep(for: .milliseconds(10)) }
         precondition(status() == .graded, "Refresh status must bypass the throttle and update unchanged assignment versions")
         precondition(workspace.library.courses[0].materials[0].assignment?.gradeLabel == "1 / 1")
@@ -190,7 +168,7 @@ extension StudyWorkspaceSmoke {
         precondition(SecKeychainGetUserInteractionAllowed(&allowedAfter) == errSecSuccess)
         precondition(absent.isEmpty && allowedBefore.boolValue == allowedAfter.boolValue,
             "Silent Keychain reads must restore the interaction policy")
-        print("PASS: browser-only TTK4100 submission refresh, silent saved login, account isolation, unchanged versions, manual refresh, offline/expired sessions, Keychain password/cancellation retries and assignments navigation")
+        print("PASS: native TTK4100 submission refresh, silent saved login, account isolation, unchanged versions, manual refresh, offline/expired sessions, Keychain password/cancellation retries and assignments navigation")
     }
 }
 

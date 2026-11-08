@@ -125,68 +125,125 @@ final class StudyEditingState: ObservableObject {
     @Published var drafts: [UUID: StudyEditDraft] = [:]
     @Published private(set) var busy = false
     @Published var error: String?
+    @Published private(set) var documentErrors: [UUID: String] = [:]
+    private var saveErrors: [UUID: String] = [:]
+    private var persistenceErrors: [UUID: String] = [:]
     private let store: StudyLibraryStore
+    private let writer: StudyEditDraftWriter
     private var persistTask: Task<Void, Never>?
-    init(store: StudyLibraryStore) { self.store = store }
-    private func file(_ id: UUID) -> URL { store.root.appendingPathComponent("Editing/\(id).json") }
+    private var dirty = Set<UUID>()
+    private var tickets: [UUID: UUID] = [:]
+    private var writeTickets: [UUID: UUID] = [:]
+    private var busyDocuments = Set<UUID>()
+    init(store: StudyLibraryStore) {
+        self.store = store
+        writer = StudyEditDraftWriter(root: store.root)
+    }
+    func isBusy(_ id: UUID) -> Bool { busyDocuments.contains(id) }
+    private func setBusy(_ id: UUID, _ value: Bool) {
+        if value { busyDocuments.insert(id) } else { busyDocuments.remove(id) }
+        busy = !busyDocuments.isEmpty
+    }
     func begin(_ document: StudyDocument) {
-        guard !busy, drafts[document.id] == nil else { return }
-        busy = true
-        error = nil
+        guard !isBusy(document.id), drafts[document.id] == nil else { return }
+        let ticket = UUID()
+        tickets[document.id] = ticket
+        setBusy(document.id, true)
+        saveErrors[document.id] = nil
+        documentErrors[document.id] = persistenceErrors[document.id]
+        error = documentErrors.values.sorted().first
         Task {
-            defer { busy = false }
+            defer { if tickets[document.id] == ticket { setBusy(document.id, false) } }
             do {
-                if let data = try? Data(contentsOf: file(document.id)),
-                    let restored = try? JSONDecoder().decode(StudyEditDraft.self, from: data),
-                    restored.documentID == document.id, restored.cells.map(\.id) == Array(restored.cells.indices)
-                {
-                    drafts[document.id] = restored
-                } else {
-                    let store = store
-                    drafts[document.id] = try await Task.detached {
-                        try StudyDocumentEditing.read(document, store: store)
-                    }.value
-                }
-            } catch { self.error = error.localizedDescription }
+                let recovered = try await writer.recover(document, store: store)
+                guard tickets[document.id] == ticket else { return }
+                drafts[document.id] = recovered
+            } catch {
+                guard tickets[document.id] == ticket else { return }
+                saveErrors[document.id] = error.localizedDescription
+                documentErrors[document.id] = error.localizedDescription
+                self.error = error.localizedDescription
+            }
         }
     }
     func setSource(_ text: String, documentID: UUID, cell: Int? = nil) {
+        guard drafts[documentID] != nil else { return }
         if let cell {
             guard drafts[documentID]?.cells.indices.contains(cell) == true else { return }
             drafts[documentID]?.cells[cell].source = text
-        } else {
-            drafts[documentID]?.source = text
-        }
+        } else { drafts[documentID]?.source = text }
+        dirty.insert(documentID)
         persistTask?.cancel()
         persistTask = Task {
             try? await Task.sleep(for: .milliseconds(600))
             if !Task.isCancelled { flush() }
         }
     }
+    private func completion(_ id: UUID, _ message: String?) {
+        persistenceErrors[id] = message.map { "Could not preserve the edit draft: \($0)" }
+        documentErrors[id] = saveErrors[id] ?? persistenceErrors[id]
+        error = documentErrors.values.sorted().first
+    }
+    /// Navigation enqueues work; only termination waits for the durability barrier.
     func flush() {
         persistTask?.cancel()
-        do {
-            try FileManager.default.createDirectory(
-                at: store.root.appendingPathComponent("Editing"), withIntermediateDirectories: true)
-            for (id, draft) in drafts { try JSONEncoder().encode(draft).write(to: file(id), options: .atomic) }
-        } catch { self.error = "Could not preserve the edit draft: \(error.localizedDescription)" }
+        persistTask = nil
+        for id in dirty {
+            if let draft = drafts[id] {
+                let ticket = UUID()
+                writeTickets[id] = ticket
+                writer.save(draft) { [weak self] id, message in
+                    Task { @MainActor in
+                        guard let self, self.writeTickets[id] == ticket else { return }
+                        self.completion(id, message)
+                    }
+                }
+            }
+        }
+        dirty.removeAll()
+        writer.retry()
+    }
+    func flushAndWait() {
+        flush()
+        do { try writer.flush() }
+        catch { self.error = "Could not preserve edit drafts: \(error.localizedDescription)" }
     }
     func cancel(_ id: UUID) {
+        tickets[id] = nil
+        setBusy(id, false)
         drafts.removeValue(forKey: id)
-        try? FileManager.default.removeItem(at: file(id))
-        error = nil
+        dirty.remove(id)
+        let ticket = UUID()
+        writeTickets[id] = ticket
+        writer.remove(id) { [weak self] id, message in
+            Task { @MainActor in
+                guard let self, self.writeTickets[id] == ticket else { return }
+                self.completion(id, message)
+            }
+        }
+        documentErrors[id] = nil
+        saveErrors[id] = nil
+        error = documentErrors.values.sorted().first
     }
     func save(_ id: UUID, workspace: StudyWorkspaceModel) {
-        guard let draft = drafts[id], !busy else { return }
-        busy = true
-        error = nil
+        guard let draft = drafts[id], !isBusy(id) else { return }
+        let ticket = UUID()
+        tickets[id] = ticket
+        setBusy(id, true)
+        saveErrors[id] = nil
+        documentErrors[id] = persistenceErrors[id]
+        error = documentErrors.values.sorted().first
         Task {
-            defer { busy = false }
+            defer { if tickets[id] == ticket { setBusy(id, false) } }
             do {
                 try await workspace.saveDocumentEdits(draft)
-                cancel(id)
+                if tickets[id] == ticket { cancel(id) }
             } catch {
+                guard tickets[id] == ticket else { return }
+                saveErrors[id] = error.localizedDescription
+                documentErrors[id] = error.localizedDescription
                 self.error = error.localizedDescription
+                dirty.insert(id)
                 flush()
             }
         }
@@ -253,7 +310,7 @@ struct StudyDocumentEditorView: View {
                                     text: Binding(
                                         get: { editing.drafts[document.id]?.cells[cell.id].source ?? "" },
                                         set: { editing.setSource($0, documentID: document.id, cell: cell.id) }),
-                                    label: "Edit cell \(cell.id + 1)", enabled: !editing.busy
+                                    label: "Edit cell \(cell.id + 1)", enabled: !editing.isBusy(document.id)
                                 )
                                 .frame(
                                     height: min(
@@ -270,7 +327,7 @@ struct StudyDocumentEditorView: View {
                     text: Binding(
                         get: { editing.drafts[document.id]?.source ?? "" },
                         set: { editing.setSource($0, documentID: document.id) }), label: "Edit \(document.title)",
-                    enabled: !editing.busy
+                    enabled: !editing.isBusy(document.id)
                 ).padding(16)
             }
         }

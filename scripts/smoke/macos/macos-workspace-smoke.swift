@@ -495,19 +495,6 @@ struct StudyWorkspaceSmoke {
         precondition(workspace.messages.count == 6 && workspace.selectedText.isEmpty)
         workspace.flush()
         precondition(StudyWorkspaceModel(store: store).messages.first?.content.contains("> eigenvectors") == true)
-        let server = StudyWebServer(app: AppModel.shared, workspace: workspace, assets: URL(fileURLWithPath: "dist/web")) {
-            workspace.submit(configuration: configuration, complete: completion)
-        }
-        server.start(port: 0)
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        let address = try unwrap(server.address)
-        let browser = Process(); browser.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        browser.arguments = ["node", "scripts/smoke/browser/smoke-pdf-selection.mjs", address.absoluteString, output.path]
-        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
-            browser.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-            do { try browser.run() } catch { continuation.resume(throwing: error) }
-        }
-        precondition(status == 0)
         print("PASS: native selection response popup, streaming tokens, light/dark rendering, error popup without stale answers, explicit Open in chat focus, preserved drafts and saved document context during background sync")
     }
 
@@ -1195,30 +1182,6 @@ struct StudyWorkspaceSmoke {
         precondition(NSApp.activationPolicy() == .regular && quick.window?.title == "Scholia Quick Chat")
         quick.hide()
         precondition(NSApp.activationPolicy() == .regular, "Scholia should keep one Dock identity after Quick Chat closes")
-        // Exercise the actual loopback server and browser against this isolated native library.
-        let server = StudyWebServer(app: AppModel.shared, workspace: workspace, assets: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/web"), practiceProvider: (practiceConfiguration, practiceCompletion)) {
-            let config = ProviderConfiguration(provider: ProviderCatalog.provider(id: "openai"), model: "gpt-4.1", endpoint: "http://127.0.0.1:1", apiKey: "fixture", language: .english, fastClaudeMode: false)
-            workspace.submit(configuration: config) { messages, _, onToken in
-                precondition(messages.last?.content.contains("Explain this diagram") == true)
-                let prepared = try PromptBuilder.prepare(messages: messages, capture: nil, languagePreference: .english)
-                precondition(prepared.messages.last?.content.contains("Current page: 2 of 3") == true)
-                precondition(messages.last?.imageData != nil, "Web figure must reach the same native vision pipeline")
-                onToken("An eigenvector ")
-                try await Task.sleep(for: .milliseconds(300))
-                return CompletionResult(text: "An **eigenvector** stays on the same line when transformed. The diagram shows a preserved direction. [p. 2]", providerID: "fixture", providerName: "Fixture", model: "fixture")
-            }
-        }
-        server.start(port: 0)
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        let address = try unwrap(server.address)
-        let browser = Process(); browser.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        browser.arguments = ["node", "scripts/smoke/browser/smoke-study-web.mjs", address.absoluteString, output.path]
-        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
-            browser.terminationHandler = { process in continuation.resume(returning: process.terminationStatus) }
-            do { try browser.run() } catch { continuation.resume(throwing: error) }
-        }
-        server.stop()
-        precondition(status == 0, "Chromium website smoke failed")
         workspace.selectCourse(algebra.id)
     }
 

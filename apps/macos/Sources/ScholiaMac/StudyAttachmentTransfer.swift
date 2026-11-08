@@ -1,8 +1,8 @@
 import Foundation
 
-/// Full extractions are stored locally; browser state carries a preview plus an
+/// Full extractions are stored locally; transfer state carries a preview plus an
 /// opaque reference which is accepted only for this draft's existing attachment.
-struct StudyWebAttachment: Codable, Sendable {
+struct StudyAttachmentTransfer: Codable, Sendable {
     var id: String?
     var name: String
     var mimeType: String
@@ -51,8 +51,8 @@ struct StudyWebAttachment: Codable, Sendable {
                existing.textCorpusID != textCorpusID || existing.textCorpusUTF16Count != textCorpusUTF16Count {
                 throw StudyError.message("This full-text reference does not match the saved attachment. Reopen the conversation.")
             }
-            // Browser state is a preview, never replacement evidence. Even an
-            // older browser which drops corpus metadata can only toggle inclusion.
+            // Transfer state is a preview, never replacement evidence. Even an
+            // older client which drops corpus metadata can only toggle inclusion.
             var saved = existing
             saved.isEnabled = enabled
             return saved

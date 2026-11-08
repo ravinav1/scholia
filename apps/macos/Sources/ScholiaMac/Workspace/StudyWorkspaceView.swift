@@ -154,7 +154,7 @@ struct StudyWorkspaceView: View {
                 } else if workspace.isShowingAssignments {
                     StudyAssignmentsPageView(workspace: workspace)
                 } else if workspace.isShowingLibrary {
-                    StudyCourseLibraryView(workspace: workspace, createCourse: showCreateCourse)
+                    StudyCourseLibraryView(workspace: workspace, createCourse: showCreateCourse).equatable()
                 } else {
                     StudyWorkspaceSplitView(
                         reader: StudyReaderPane(
@@ -448,8 +448,6 @@ struct StudyWorkspaceView: View {
                 Button { keyboardShortcutsSheet = true } label: { Image(systemName: "keyboard") }
                     .scholiaButtonStyle(.plain).help("Keyboard shortcuts").accessibilityLabel("Keyboard shortcuts")
                     .accessibilityIdentifier("workspace-keyboard-shortcuts")
-                Button(action: app.openStudyWebsite) { Image(systemName: "globe") }.scholiaButtonStyle(.plain).help(
-                    "Open this workspace in your browser")
                 Button(action: app.showQuickAsk) { Image(systemName: "sparkles") }.scholiaButtonStyle(.plain).help(
                     "Open Quick Chat")
             }.font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 19).padding(.bottom, 18)

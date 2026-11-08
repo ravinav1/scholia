@@ -798,7 +798,7 @@ extension StudyWorkspaceSmoke {
         if let index = course.canvasMaterials?.firstIndex(where: { $0.remoteID == "1" }) {
             course.canvasMaterials?[index].assignment?.dueAt = ISO8601DateFormatter().string(from: Date().addingTimeInterval(7 * 86400))
         }
-        // Save descriptions so Read assignment exercises native/web navigation offline.
+        // Save descriptions so Read assignment exercises native navigation offline.
         for material in catalog.items {
             var document = try StudyDocumentImporter.read(
                 data: Data(
@@ -844,23 +844,10 @@ extension StudyWorkspaceSmoke {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         try await Task.sleep(for: .milliseconds(500))
         try snapshot(controller.window, at: output.appendingPathComponent("workspace-dashboard-assignments.png"))
-        let server = StudyWebServer(
-            app: AppModel.shared, workspace: workspace, assets: URL(fileURLWithPath: "dist/web"))
-        server.start(port: 0)
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        print("ASSIGNMENTS_PREVIEW \(server.address!.absoluteString)")
-        fflush(stdout)
         if CommandLine.arguments.contains("--assignment-page-smoke") {
-            let browser = Process()
-            browser.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            browser.arguments = [
-                "node", "scripts/smoke/browser/smoke-assignment-page.mjs", server.address!.absoluteString, output.path,
-            ]
-            let result: Int32 = await withCheckedContinuation { continuation in
-                browser.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-                do { try browser.run() } catch { continuation.resume(returning: -1) }
-            }
-            precondition(result == 0, "Chromium assignment page smoke failed")
+            let reading = course.materials.first { $0.remoteID == "3" && $0.kind == .assignments }!
+            workspace.openAssignment(reading, courseID: course.id)
+            for _ in 0..<200 where workspace.assignmentPreparing { try await Task.sleep(for: .milliseconds(20)) }
             func splitView(in view: NSView) -> NSSplitView? {
                 if let split = view as? NSSplitView, split.isVertical, split.arrangedSubviews.count == 2 {
                     return split
@@ -931,11 +918,9 @@ extension StudyWorkspaceSmoke {
             workspace.showAssignments()
             try await Task.sleep(for: .milliseconds(300))
             try snapshot(controller.window, at: output.appendingPathComponent("assignments-overview-native.png"))
-            server.stop()
             return
         }
         while !Task.isCancelled { try await Task.sleep(for: .seconds(1)) }
-        server.stop()
     }
 }
 
