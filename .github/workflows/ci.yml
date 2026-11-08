@@ -63,6 +63,7 @@ jobs:
         run: |
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-review-regressions.swift
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-persistence-regressions.swift
       - name: Package the native app without installing
         env:
           SCHOLIA_CODESIGN_IDENTITY: '-'

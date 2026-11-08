@@ -1,0 +1,16 @@
+{
+  "hardwareModel": "Mac14,6",
+  "cpu": "Apple M2 Max",
+  "logicalCPUs": 12,
+  "memoryBytes": 34359738368,
+  "macOS": "27.2",
+  "osBuild": "26B123",
+  "node": "v26.4.0",
+  "npm": "11.17.0",
+  "swift": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+  "chromium": "Chromium 153.0.7999.0",
+  "nativeConfiguration": "release",
+  "localNativeSDK": "MacOSX26.5.sdk (Command Line Tools SwiftUI macro workaround)",
+  "dataPolicy": "Synthetic fixtures in temporary directories; no live library or installed browser profile",
+  "timingPolicy": "Raw samples; report p50/p95 and actual counts. Work-count assertions, not absolute time thresholds, in CI."
+}

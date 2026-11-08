@@ -39,11 +39,28 @@ under `packages/search`; it makes no provider request.
 helpers and copies public study-plan data into `dist/native-resources`. The Mac
 build packages these files under `Contents/Resources/NativeResources`.
 
-Library snapshots are written through a serial utility queue that coalesces
-pending saves; lifecycle boundaries flush the latest state. Back/Forward records
-reading destinations and saves drafts before navigation. An AppKit split view
-lets the tutor occupy almost the full document window without replacing the
-reader or reloading the PDF.
+A serial utility writer coalesces library snapshots, compares them with the
+last committed values, and writes only changed SQLite rows. Navigation metadata,
+course metadata, materials, documents, thread metadata, and messages have separate
+rows and explicit ordering. Each save is one transaction; revision conflicts
+reject stale writers. A one-time migration preserves the legacy JSON byte-for-byte,
+and an explicit export reconstructs JSON for rollback. See
+[native storage](performance/NATIVE_STORAGE.md) for the schema, failure handling,
+metrics and recovery commands. Lifecycle boundaries flush committed state.
+
+Document editing uses a separate ordered utility writer for recovery files.
+Pending saves coalesce per document; removal tombstones follow in-flight saves,
+and recovery results must still belong to the active editing session. Errors
+remain per-document and retryable. Atomic reading navigation preserves the
+outgoing conversation draft, validates ownership, records one history entry and
+publishes one coherent destination. Load tickets and document revisions reject
+obsolete asynchronous results. Back/Forward uses the same ownership rules.
+
+Dashboard and assignment display observers exclude conversation bodies and
+streaming progress. Workspace ordering caches searchable metadata while resolving
+contents from the current library. Bounded assignment previews link to complete
+filtered pages. An AppKit split view lets the tutor occupy almost the full document
+window without replacing the reader or reloading the PDF.
 
 Saved capture conversations use a separate coalescing utility writer, with
 clears ordered behind outstanding writes and a durability barrier at app exit.
