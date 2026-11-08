@@ -44,7 +44,7 @@ final class OpenCodeModelCatalogTests: XCTestCase {
     }
 
     func testOlderConfigProvidersShapeIsAccepted() throws {
-        let data = Data(#"""{"providers":[{"id":"future","name":"Future","models":[{"id":"anything-new","name":"Anything New"}]}]}"""#.utf8)
+        let data = Data(#"{"providers":[{"id":"future","name":"Future","models":[{"id":"anything-new","name":"Anything New"}]}]}"#.utf8)
         XCTAssertEqual(try OpenCodeModelCatalog.models(from: data), [
             ModelDefinition(id: "future/anything-new", label: "Anything New · Future")
         ])
