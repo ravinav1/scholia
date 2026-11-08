@@ -8,13 +8,15 @@ The previous `StudyLibraryStore.save` encoded and atomically replaced all of `li
 
 The release baseline in `results/performance/native-storage-before.json` changed one reading-position field per save. Five samples were collected per fixture:
 
-| Fixture | JSON bytes per save | Median save time |
-|---|---:|---:|
-| 6 courses, 120 documents, 420 materials, 200 messages | 536,941 | 3.99 ms |
-| 89 courses, 1,780 documents, 6,230 materials, 200 messages, 20 MB image | 28,283,067 | 93.42 ms |
-| 500 courses, 10,000 documents, 35,000 materials, 200 messages | 6,991,795 | 130.73 ms |
+| Fixture | Former JSON bytes per save | Former median | Targeted median |
+|---|---:|---:|---:|
+| 6 courses, 120 documents, 420 materials, 200 messages | 536,941 | 3.99 ms | 0.207 ms |
+| 89 courses, 1,780 documents, 6,230 materials, 200 messages, 20 MB image | 28,283,067 | 93.42 ms | 0.450 ms |
+| 500 courses, 10,000 documents, 35,000 materials, 200 messages | 6,991,795 | 130.73 ms | 1.375 ms |
 
 These are storage-call measurements on isolated synthetic data, including encoding and writing. They are not UI frame latency or device-independent guarantees. `benchmark-native-storage.swift --legacy` reproduces the former JSON algorithm with the same fixture shape. The targeted-store measurements use the same script without `--legacy`.
+
+The final release measurements are in `results/performance/native-storage-after.json`. All 15 reading-position samples encoded one document payload of 181–182 bytes and updated one payload row plus the transaction revision. A separate sequential legacy reproduction (`native-storage-legacy-reproduced.json`) measured medians of 3.292, 94.918, and 127.967 ms on the same three fixture shapes. The storage runs did not overlap the native UI measurements.
 
 ## Persistence contract
 
@@ -42,7 +44,7 @@ Migration reads the full legacy file once. Startup still reconstructs the comple
 
 ## Verification and portable export
 
-Build the release app, then run the standalone checks against its actual objects:
+Use `run-release-check.sh` without `--skip-build` once to build testable release objects. Subsequent checks can reuse those actual app objects:
 
 ```sh
 zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-persistence-regressions.swift
@@ -51,6 +53,8 @@ zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/benchmar
 ```
 
 The regression checks use copied synthetic version-1 JSON, immutable backup checks, repeated and interrupted migration, actual child-process termination before commit, rollback and retry, restart, conflicts, export, root isolation, schema rejection, child ordering/deletion, and per-row encoding/write counts. They never open the installed app's library.
+
+On 2026-11-08, both `native-persistence-regressions.swift` and the independent `native-review-regressions.swift` passed against release app objects containing storage commit `c4492b5`. This includes simultaneous first-launch migration, `_exit` before migration and WAL transaction commits, active-database export symlinks, and distinct Unicode identifiers containing embedded NUL bytes. The complete storage PASS record is `results/performance/native-storage-verification.json`. Full Xcode XCTest is tracked separately by CI; these are standalone checks of the compiled release implementation.
 
 Export a selected library root explicitly with the same standalone helper:
 
