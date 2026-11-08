@@ -28,6 +28,10 @@ jobs:
           test -n "$browser"
           echo "CHROMIUM_BIN=$browser" >> "$GITHUB_ENV"
       - name: Verify packaged extension in actual Chromium
+        env:
+          # Ubuntu runner AppArmor restricts unprivileged browser namespaces.
+          # These fixtures run in a disposable CI VM and isolated browser profile.
+          SCHOLIA_CHROMIUM_NO_SANDBOX: '1'
         run: |
           node scripts/performance/benchmark-extension.mjs --packaged --after-removal
           node scripts/smoke/browser/smoke-codex-model-selection.mjs
@@ -59,3 +63,10 @@ jobs:
         run: |
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-review-regressions.swift
+      - name: Package the native app without installing
+        env:
+          SCHOLIA_CODESIGN_IDENTITY: '-'
+          SCHOLIA_AUTO_LOCAL_SIGNING: '0'
+        run: |
+          npm run build:macos
+          node scripts/checks/check-native-package.mjs

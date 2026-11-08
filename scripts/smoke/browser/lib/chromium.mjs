@@ -24,13 +24,17 @@ export async function chromiumSession({ extensionPath = '' } = {}) {
       '--no-first-run',
       '--disable-default-apps',
       '--disable-gpu',
+      ...(process.env.SCHOLIA_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
       ...(extensionPath ? [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] : []),
       'about:blank',
     ],
-    { stdio: 'ignore' }
+    { stdio: ['ignore', 'ignore', 'pipe'] }
   );
+  let launchError = '';
+  processHandle.stderr.on('data', chunk => { launchError = (launchError + chunk).slice(-8000); });
+  processHandle.on('error', error => { launchError = error.message; });
   let socket;
   const close = async () => {
     socket?.close();
@@ -55,7 +59,7 @@ export async function chromiumSession({ extensionPath = '' } = {}) {
       } catch {}
       await sleep(100);
     }
-    if (!ready) throw new Error('Chromium did not start.');
+    if (!ready) throw new Error(`Chromium did not start: ${launchError || 'no launch diagnostics'}`);
     const target = await (
       await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })
     ).json();

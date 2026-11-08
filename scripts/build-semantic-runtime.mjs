@@ -9,10 +9,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const destination = resolve(process.argv[2]);
 const copied = new Set();
 await mkdir(join(destination, 'scripts'), { recursive: true });
-await mkdir(join(destination, 'apps', 'server'), { recursive: true });
+await mkdir(join(destination, 'packages', 'search'), { recursive: true });
 await writeFile(join(destination, 'package.json'), '{"type":"module","private":true}\n');
 for (const name of ['semantic-embedding.js', 'semantic-index.js', 'semantic-search-worker.js'])
-  await cp(join(root, 'apps', 'server', name), join(destination, 'apps', 'server', name));
+  await cp(join(root, 'packages', 'search', name), join(destination, 'packages', 'search', name));
 await cp(join(root, 'scripts', 'semantic-search-bridge.mjs'), join(destination, 'scripts', 'semantic-search-bridge.mjs'));
 
 async function packageDirectory(name, from) {
