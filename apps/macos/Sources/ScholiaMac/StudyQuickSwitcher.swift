@@ -35,12 +35,8 @@ struct StudyQuickSwitcher: View {
             terms.allSatisfy { entry.title.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil } ? 0 : 1
         }
         let activeCourse = workspace.isShowingLibrary ? nil : workspace.course
-        let courses = workspace.library.courses.sorted {
-            let a = $0.id == activeCourse?.id, b = $1.id == activeCourse?.id
-            if a != b { return !a }
-            if $0.isFavorite != $1.isFavorite { return $0.isFavorite }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }.map { course in
+        let ordered = workspace.sortedCourses
+        let courses = (ordered.filter { $0.id != activeCourse?.id } + ordered.filter { $0.id == activeCourse?.id }).map { course in
             StudyQuickEntry(action: .course(course.id), title: course.displayName,
                 detail: [course.code, course.term ?? "", course.id == activeCourse?.id ? "Current workspace" : "Open workspace"]
                     .filter { !$0.isEmpty }.joined(separator: " · "),

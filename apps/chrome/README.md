@@ -2,6 +2,11 @@
 
 The Chrome app is built from `apps/chrome` plus `packages/core`.
 
+The extension runs independently of the native macOS app. It has its own PDF
+reader, conversations, browser context, provider settings and local storage.
+Exam planning remains a native-app capability; no Scholia website or loopback
+workspace is required or launched by the extension.
+
 ```sh
 npm install
 npm run build

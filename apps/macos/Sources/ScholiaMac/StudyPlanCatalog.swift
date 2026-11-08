@@ -96,16 +96,16 @@ struct StudyPlanIndex: Sendable {
     """
 
     // Decode and index once. Packaged apps use the same public JSON distributed
-    // with the web assets; command-line builds resolve the repository copy.
+    // with the native resources; command-line builds resolve the repository copy.
     static let bundled: Result<StudyPlanIndex, Error> = Result {
-        let resource = Bundle.main.resourceURL?.appendingPathComponent("StudyWeb/ntnu-study-plans.json")
+        let resource = Bundle.main.resourceURL?.appendingPathComponent("NativeResources/ntnu-study-plans.json")
         if let resource, FileManager.default.fileExists(atPath: resource.path) {
             return try StudyPlanIndex(data: Data(contentsOf: resource))
         }
         if Bundle.main.bundleURL.pathExtension != "app" {
             var root = URL(fileURLWithPath: #filePath)
             for _ in 0..<5 { root.deleteLastPathComponent() }
-            return try StudyPlanIndex(data: Data(contentsOf: root.appendingPathComponent("packages/core/data/ntnu-study-plans.json")))
+            return try StudyPlanIndex(data: Data(contentsOf: root.appendingPathComponent("dist/native-resources/ntnu-study-plans.json")))
         }
         throw StudyError.message("The public degree-plan catalog is missing. Rebuild or update Scholia before requesting degree advice.")
     }

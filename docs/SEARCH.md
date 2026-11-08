@@ -1,12 +1,11 @@
 # Workspace search
 
-Open **Search files** or press **⌘K** on Mac / **Ctrl+K** in the browser.
+Open **Search files** or press **⌘K** in the Mac workspace.
 Search defaults to **File names** across **All workspaces**. It matches file titles,
 names, course codes and course names directly from the catalog, without waiting
 for text indexing. Switch to names and contents or contents only to look inside
 documents, or restrict the search to the current workspace. Selecting a content result opens its
-page, notebook cell, or document section. The Mac app, its loopback website,
-and hosted accounts support the same search contract.
+page, notebook cell, or document section.
 
 Choose **Semantic · by meaning** to describe an idea in your own words, including
 English or Norwegian questions. This optional mode ranks related files and opens
@@ -43,8 +42,7 @@ context selection, and it does not provide semantic question answering.
 
 Semantic search uses the quantized
 [multilingual E5 small model](https://huggingface.co/Xenova/multilingual-e5-small)
-on the same machine that owns the library: the Mac for native/loopback search,
-or the server for hosted accounts. No document text is sent to an AI provider.
+locally on your Mac. No document text is sent to an AI provider.
 The first use downloads pinned model assets; the weights are about 113 MiB.
 They are verified by SHA-256, cached under `~/.cache/scholia/models`, and reused
 offline. Set `SCHOLIA_MODEL_CACHE` to place this shared model cache elsewhere.
@@ -55,12 +53,12 @@ start OCR. Their metadata remains searchable by meaning.
 The index is `semantic-v1.sqlite` beside the existing literal cache. Its layout
 separates ownership from reusable inference work:
 
-| Table | Stores |
-| --- | --- |
-| `files` | Workspace ownership, document metadata, source revision, preparation status |
-| `chunks` | File, page/cell/section, chunk ordinal, vector ID |
-| `vectors` | Unique text hash, chunk text, normalized 384-dimensional float vector |
-| `meta` | Pinned model/chunking version and committed index generation |
+| Table     | Stores                                                                      |
+| --------- | --------------------------------------------------------------------------- |
+| `files`   | Workspace ownership, document metadata, source revision, preparation status |
+| `chunks`  | File, page/cell/section, chunk ordinal, vector ID                           |
+| `vectors` | Unique text hash, chunk text, normalized 384-dimensional float vector       |
+| `meta`    | Pinned model/chunking version and committed index generation                |
 
 Pages are split into 192-token passages with 32-token overlap, preserving source
 locations. Identical passages share one embedding across files. A rename, edit,
@@ -83,24 +81,21 @@ guarantee relevance or an exhaustive match count.
 One lazy worker and warm CPU model handle semantic requests independently of
 literal search. Background inference uses four passages per batch and two CPU
 threads; queries run before the next batch. Up to 64 query vectors are reused
-while polling and revisiting searches. The worker keeps one account's database
-open at a time, with separate files and query caches per account, and exits
+while polling and revisiting searches. The worker keeps one library database
+open at a time, with separate files and query caches per library, and exits
 after five minutes without requests once preparation is complete. The Mac talks
-to this worker over private pipes and requires Node.js 24 or newer. The bundled
-runtime includes the CPU dependencies; model weights are cached separately.
+to this `packages/search` worker over private pipes and requires Node.js 24 or
+newer. The bundled runtime includes the CPU dependencies; model weights are cached separately.
 
-The API adds `mode=semantic` to `GET /api/search`, retaining the same account and
-workspace checks. Queries are at most 512 characters. A `semantic` progress
-object accompanies results; `total` is the displayed related-file count, not an
-exhaustive count of matches. Both interfaces refresh partial results every 700 ms
-and discard replies for superseded queries.
+Queries are at most 512 characters. Results report preparation progress and a
+displayed related-file count, not an exhaustive count of matches. The search
+view refreshes partial results every 700 ms and discards superseded replies.
 
 Reproduce relevance, persistence, interrupted preparation, scope isolation and
-the real-model browser/native checks:
+the real-model native checks:
 
 ```sh
 SCHOLIA_TEST_EMBEDDINGS=1 node --test tests/semantic-search.test.js
-SCHOLIA_TEST_EMBEDDINGS=1 npm run smoke:chromium:search
 npm run smoke:macos:search -- --semantic
 SEMANTIC_BENCH_OUTPUT=dist/verification/semantic-benchmark.json npm run benchmark:search:semantic
 # Optional: vary the synthetic library and number of timed queries.
@@ -112,18 +107,16 @@ in 14.2 seconds after loading cached model assets in 1.2 seconds. Warm-model
 searches with uncached query embeddings measured 7.3 ms median / 8.6 ms p95;
 reused queries measured 3.6 / 7.6 ms, and workspace queries 1.9 / 2.0 ms.
 SQLite used 4.1 MiB and the graph 1.6 MiB. Peak process RSS was 775 MiB, including
-model loading and indexing. These are service timings, excluding worker IPC,
-HTTP, input debounce and rendering. The corpus is synthetic with short pages;
-this is not a full-library latency promise or a provider comparison.
+model loading and indexing. These historical worker timings exclude IPC, input
+debounce, and rendering. The corpus is synthetic with short pages; this is not a
+full-library latency promise or a provider comparison.
 
 ## How the retrieval path works
 
 File names mode uses cached normalized metadata, invalidated by renames and
-removals. It never reads document contents or creates a text index. On a local
-catalog of 89 workspaces and 6,099 deduplicated files/materials, the hosted service's
-filename lookup for the example above measured 34 ms cold and 5.6 ms warm median
-(31 queries). The native debug build measured 395 ms cold and 89 ms warm median
-on that catalog. These are search-service timings; the UI also debounces typing for 35 ms.
+removals. It never reads document contents or creates a text index. The search
+input debounces typing for 35 ms. Current application measurements and limits
+are tracked in the [performance review](performance/IMPLEMENTATION.md).
 
 For text searches, Needle combines name records, page evidence, workspace ownership, and adaptive
 fragment selection. Its indexing primitives are established SQLite features;
@@ -146,13 +139,8 @@ this is a Scholia-specific composition, not a claim to have invented trigrams.
    source, plus coverage and timing information. `candidateUpperBound` reports
    an upper bound on candidate passages, not CPU work or disk reads.
 
-The hosted engine uses up to two lazy workers off the HTTP thread, with a
-16-request queue limit and separate index files per account. Each account is
-pinned to one worker so its writes stay ordered. A worker retains one hot
-account's connection, evicts it when switching accounts, and closes it after
-two idle minutes. The Mac implementation owns its connection on a Swift actor
-off the UI actor. Authentication, CSRF, and workspace ownership checks apply
-to `GET /api/search?q=…&courseID=…&mode=all|files|content`.
+The native implementation owns its SQLite connection on a Swift actor off the
+UI actor. Workspace scoping is applied before results are returned.
 
 The first text search prepares text in its scope. Subsequent text searches compare file
 metadata, index paths, and modification stamps, update only changed files, and
@@ -160,10 +148,9 @@ remove records no longer in the library. Scoped searches prepare only that
 workspace. Updates are committed in batches of at most 64 files; an interrupted
 batch rolls back. Edits, downloads,
 renames, and OCR sidecars become visible on the next search; a query already in
-flight uses its captured library snapshot. Browser request generations prevent
-old query results from replacing newer ones. Disconnects cancel queued work
-and cooperatively interrupt active refreshes between files/pages. Native tasks
-also check cancellation during indexing. Both search inputs debounce for 35 ms.
+flight uses its captured library snapshot. Request generations prevent old
+query results from replacing newer ones, and native tasks check cancellation
+during indexing.
 
 ## Apple Silicon and memory use
 
@@ -185,27 +172,14 @@ libc; Intel builds use libc. This is a CPU implementation with no GPU setup or
 new runtime dependency. The SIMD filtering technique is established; its
 integration with the adaptive literal planner is specific to this search path.
 
-The hosted Node path uses built-in substring search over a lazily materialized
-text snapshot for broad queries. Estimated retained text is capped at 64 MiB
-per worker, reduced according to available process memory. The estimate charges
-twice the UTF-8 byte length plus per-row overhead; it is not a bound on total
-process RSS. Only one snapshot is retained per worker, and larger scopes fall
-back to a SQLite scan. Native search uses the NEON SQLite predicate instead of
-retaining a second text snapshot. Changes invalidate snapshots and absent-gram
-caches before the next query.
+Native search uses the NEON SQLite predicate without retaining a second full
+text snapshot. Scheduling stays with macOS rather than binding work to
+particular performance or efficiency cores.
 
-The worker cap limits competing memory scans and leaves CPU capacity for the
-app and document extraction. Scheduling stays with macOS rather than binding
-work to particular performance or efficiency cores. More threads are not
-automatically faster: the included engine benchmark measures two- and
-four-thread Tantivy builds separately.
-
-The index is a disposable cache named `needle-v1.sqlite`: beside `library.json`
-on Mac, or under `files/<account>/<account>/` in hosted storage. It contains
-searchable document text, has owner-only file permissions, and stays in the
-same storage environment as the library. Removing this cache while Scholia is
-stopped causes the next search to rebuild it. Keep it in mind when provisioning
-hosted disk space: it is additional to original-file quotas.
+The index is a disposable cache named `needle-v1.sqlite` beside `library.sqlite`
+on your Mac. It contains searchable document text and has owner-only file
+permissions. Removing it while Scholia is stopped causes the next search to
+rebuild it; original documents are unaffected.
 
 ## What is provable
 
@@ -227,50 +201,18 @@ texts; actual speed is an empirical result.
 ## Reproduce the measurements
 
 ```sh
-npm run benchmark:search
-# Optional: change corpus size/repetitions or save the JSON report.
-SEARCH_BENCH_FILES=1200 SEARCH_BENCH_ROUNDS=31 \
-  SEARCH_BENCH_OUTPUT=/tmp/needle-benchmark.json npm run benchmark:search
-
-node --test tests/server/workspace-search.test.js tests/server/hosted-server.test.js
 npm run smoke:macos:search
-npm run smoke:chromium:search
-npm run test:search:native       # ASan + UBSan, 60,000 matcher comparisons
-npm run benchmark:search:native  # SQLite instr / NEON / libc scan kernels
-
-# Optional, isolated SQLite / Tantivy prototype comparison.
-mkdir -p dist/verification
-SEARCH_BENCH_CORPUS=dist/verification/needle-corpus.json npm run benchmark:search
-uv venv --python 3.11 dist/needle-bench-venv
-uv pip install --python dist/needle-bench-venv/bin/python \
-  -r scripts/performance/search-benchmark-requirements.txt
-dist/needle-bench-venv/bin/python scripts/performance/benchmark-search-engines.py \
-  --corpus dist/verification/needle-corpus.json \
-  --output dist/verification/needle-engine-comparison.json
+npm run test:search:native        # ASan + UBSan, 60,000 matcher comparisons
+npm run benchmark:search         # SQLite instr / NEON / libc scan kernels
+npm run benchmark:search:native  # Alias for the same native benchmark
 ```
 
-The benchmark creates a deterministic temporary corpus and removes it afterward.
-It compares the index with an independent, already-normalized in-memory substring
-scan, the same SQLite query forced to scan, and ripgrep where literal queries
-are directly comparable. Every timed run checks result identities, page numbers,
-and counts against the oracle; ripgrep checks file identities. Timings report
-medians and p95 for engine and service calls. Warm service calls include worker
-messaging, modification checks, and result construction with a reused SQLite
-connection, but exclude HTTP, the UI's 35 ms input debounce, and rendering.
-First-query cache fills, fresh-worker startup, and edit visibility are reported
-separately. Disk size is measured after checkpointing the WAL. Ripgrep timings
-include process startup; its output contains file names rather than page evidence.
+The native benchmark compiles the application's C verifier with optimization,
+checks it against an independent matcher, then compares forced SQLite and raw
+buffer scans. It uses a deterministic synthetic corpus with 9,600 pages and
+31 rounds. These kernel timings exclude document indexing, input debounce,
+source loading, and rendering; they are not end-to-end application latency.
 
-The engine comparison uses independent Python processes, the same normalized
-corpus, rare-fragment selection, and exact final verification. It checks file
-identities, first pages, passage counts, Unicode, and replacement visibility.
-It records build time/CPU, index size, process peak RSS, warm p50/p95, and
-process-cold startup with a warm filesystem cache. Tantivy's Python API uses
-constant-score TopDocs and stored-document decoding; this does not measure an
-optimized Rust collector. Neither engine can use token relevance as a substitute
-for the literal query contract. The app does not depend on Python or Tantivy.
-
-See [the measured literal-search example](SEARCH_BENCHMARK.md) for results including indexing
-time, disk usage, and cases where scans win. Those comparisons do not pit
-literal matching against embeddings, RAG pipelines or turbopuffer, and make
-no general speed or relevance claim against them.
+See [the dated search measurements](SEARCH_BENCHMARK.md) for native scan results
+and an archived SQLite/Tantivy prototype comparison. The current
+[performance review](performance/IMPLEMENTATION.md) tracks broader app work.

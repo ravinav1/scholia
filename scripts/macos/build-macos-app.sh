@@ -5,7 +5,7 @@ unsetopt bgnice
 script_dir="${0:A:h}"
 project_root="${script_dir:h:h}"
 package_root="$project_root/apps/macos"
-configuration="${1:-debug}"
+configuration="${1:-release}"
 if [[ "$configuration" != debug && "$configuration" != release ]]; then
   print -u2 "Usage: $0 [debug|release]"
   exit 2
@@ -41,8 +41,7 @@ mkdir -p "$module_cache"
 export CLANG_MODULE_CACHE_PATH="$module_cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$module_cache"
 swift_arguments=(--disable-sandbox --package-path "$package_root" --configuration "$configuration" --build-system native --disable-index-store --product ScholiaMac)
-# Local updates reuse per-file compilation. Explicit release builds keep Swift's
-# full optimization for distribution, which takes considerably longer to rebuild.
+# Ordinary builds are optimized. Debug remains explicit for development.
 if [[ "$configuration" == debug ]]; then
   printf 'Building incrementally for local use (changed Swift files only after the first build).\n'
 else
@@ -69,6 +68,11 @@ if [[ -f "$sdk_interface" ]]; then
 fi
 
 build_started=$SECONDS
+# SwiftPM's generated resource accessor searches the executable bundle root,
+# whereas signed macOS apps keep resources under Contents/Resources. Patch the
+# pinned dependency before an ordinary SwiftPM build, with exact source guards.
+swift package --disable-sandbox --package-path "$package_root" resolve
+node "$script_dir/patch-swiftmath-resources.mjs" "$package_root"
 swift build "${swift_arguments[@]}" &
 swift_build_pid=$!
 (
@@ -124,8 +128,8 @@ for dependency in swift-cmark SwiftMath; do
     cp "$dependency_root/COPYING" "$contents/Resources/ThirdPartyLicenses/$dependency.txt"
   fi
 done
-node "$project_root/scripts/build/build-study-web.mjs"
-cp -R "$project_root/dist/web" "$contents/Resources/StudyWeb"
+node "$project_root/scripts/build/build-native-resources.mjs"
+cp -R "${project_root}/dist/native-resources" "$contents/Resources/NativeResources"
 mkdir -p "$contents/Resources/Bridge/lib"
 cp "$project_root/scripts/bridges/codex-bridge.mjs" "$contents/Resources/Bridge/codex-bridge.mjs"
 cp "$project_root/scripts/bridges/claude-code-bridge.mjs" "$contents/Resources/Bridge/claude-code-bridge.mjs"

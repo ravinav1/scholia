@@ -1,0 +1,33 @@
+{
+  "run": "https://github.com/ravinav1/scholia/actions/runs/42436694011",
+  "codeCommit": "432f948bdbbc662caca7192a5d6e74fc695b23b6",
+  "configuration": "release, full Xcode 27.2, Swift 6.4.2",
+  "releaseCompilation": "passed",
+  "xctest": {
+    "status": "failed",
+    "testCases": 300,
+    "skippedCases": 1,
+    "failedCases": 6,
+    "failedAssertions": 7,
+    "durationSeconds": 4.888,
+    "skippedTest": "ProjectAttachmentTests.testUserProvidedSimulinkModelWhenExplicitlyConfigured"
+  },
+  "failedCases": [
+    "-[ScholiaMacTests.AttachmentSafetyTests testOversizedOrInvalidAttachmentsStopTheRequest]",
+    "-[ScholiaMacTests.AttachmentSafetyTests testScannedPDFUsesOCR]",
+    "-[ScholiaMacTests.OpenCodeModelCatalogTests testOlderConfigProvidersShapeIsAccepted]",
+    "-[ScholiaMacTests.PaperStudySessionTests testTimeoutReleasesPendingStateAndLateResponseIsIgnored]",
+    "-[ScholiaMacTests.StudyChatContextTests testBrowserAttachmentMetadataSurvivesRoundTripAndLimitsAreValidated]",
+    "-[ScholiaMacTests.TutoringPolicyTests testRevealRequiresAttemptInThisSessionAndRecapCannotBypassIt]"
+  ],
+  "assertionDiagnostics": [
+    "/Users/runner/work/scholia/scholia/apps/macos/Tests/ScholiaMacTests/AttachmentSafetyTests.swift:149: error: -[ScholiaMacTests.AttachmentSafetyTests testOversizedOrInvalidAttachmentsStopTheRequest] : XCTAssertThrowsError failed: did not throw an error",
+    "/Users/runner/work/scholia/scholia/apps/macos/Tests/ScholiaMacTests/AttachmentSafetyTests.swift:220: error: -[ScholiaMacTests.AttachmentSafetyTests testScannedPDFUsesOCR] : XCTAssertTrue failed",
+    "/Users/runner/work/scholia/scholia/apps/macos/Tests/ScholiaMacTests/OpenCodeModelCatalogTests.swift:48: error: -[ScholiaMacTests.OpenCodeModelCatalogTests testOlderConfigProvidersShapeIsAccepted] : XCTAssertEqual failed: threw error \"Error Domain=NSCocoaErrorDomain Code=3840 \"JSON text did not start with array or object and option to allow fragments not set. around line 1, column 0.\" UserInfo={NSDebugDescription=JSON text did not start with array or object and option to allow fragments not set. around line 1, column 0., NSJSONSerializationErrorIndex=0}\"",
+    "/Users/runner/work/scholia/scholia/apps/macos/Tests/ScholiaMacTests/PaperStudySessionTests.swift:756: error: -[ScholiaMacTests.PaperStudySessionTests testTimeoutReleasesPendingStateAndLateResponseIsIgnored] : XCTAssertFalse failed",
+    "/Users/runner/work/scholia/scholia/apps/macos/Tests/ScholiaMacTests/PaperStudySessionTests.swift:758: error: -[ScholiaMacTests.PaperStudySessionTests testTimeoutReleasesPendingStateAndLateResponseIsIgnored] : XCTAssertTrue failed",
+    "/Users/runner/work/scholia/scholia/apps/macos/Tests/ScholiaMacTests/StudyChatContextTests.swift:40: error: -[ScholiaMacTests.StudyChatContextTests testBrowserAttachmentMetadataSurvivesRoundTripAndLimitsAreValidated] : XCTAssertThrowsError failed: did not throw an error",
+    "/Users/runner/work/scholia/scholia/apps/macos/Sources/ScholiaMac/Learning/StudyLearning.swift:200: error: -[ScholiaMacTests.TutoringPolicyTests testRevealRequiresAttemptInThisSessionAndRecapCannotBypassIt] : failed: caught error: \"invalid(\"This question is not due or today\\'s workload limit has been reached. You can change the limit or return later.\")\""
+  ],
+  "note": "Initial full XCTest execution. Corrections and final run outcome are recorded separately in delivery-verification.json; this historical result is not overwritten."
+}

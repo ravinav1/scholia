@@ -1,0 +1,15 @@
+{
+  "node": "v26.4.0",
+  "initialBytes": 4108,
+  "initialGzipBytes": 1942,
+  "initialModuleCount": 4,
+  "deferredBytes": 1638841,
+  "deferredGzipBytes": 489893,
+  "contextOnlyBytes": 42385,
+  "inputs": [
+    "apps/chrome/src/ui-primitives.js",
+    "apps/chrome/src/runtime-message.js",
+    "apps/chrome/src/content-bootstrap.js",
+    "apps/chrome/src/content.js"
+  ]
+}

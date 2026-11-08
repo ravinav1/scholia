@@ -1,0 +1,33 @@
+{
+  "kind": "standalone-release-attachment-regressions",
+  "recordedDate": "2026-11-08",
+  "command": "zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-attachment-regressions.swift",
+  "exitCode": 0,
+  "productionSourceChanges": false,
+  "dataScope": "Synthetic in-memory files and a temporary TaskLocal attachment corpus; no application window or live library/corpus used",
+  "requestLimit": {
+    "allowedCharacters": 1000000,
+    "exactBoundaryAccepted": true,
+    "oneCharacterAboveRejected": true,
+    "oversizedInlinePreviewRejected": true,
+    "priorFailureCause": "The old fixture supplied five 200000-character files, exactly the inclusive conversation limit, while expecting rejection. The limit already had this value at baseline 92a8e16."
+  },
+  "transferLimit": {
+    "previewCharacters": 200000,
+    "fullCorpusCharacters": 50000000,
+    "abovePreviewPreservesCompleteCorpus": true,
+    "exactFullBoundaryAcceptedAndReadBack": true,
+    "oneCharacterAboveRejected": true,
+    "priorFailureCause": "The old fixture treated the preview cap as the transfer cap. Transfer already accepted and indexed full extracted text up to the corpus limit at baseline 92a8e16."
+  },
+  "scannedPDF": {
+    "raster": "1600x600 CoreGraphics bitmap with CoreText Helvetica 48-point black text on white",
+    "embeddedTextLayer": false,
+    "productionPageOCRPassed": true,
+    "fullAttachmentIngestionPassed": true,
+    "attachmentStatus": "complete",
+    "assertedPhrase": "all the evidence",
+    "additionalLocalDiagnostic": "The original NSImage.lockFocus fixture and the fixed-pixel CoreText fixture both passed production page/full-attachment OCR. Direct Vision default and CPU-only modes also passed locally.",
+    "interpretation": "No production OCR defect was reproduced. XCTest now avoids display-dependent lockFocus raster setup and directly exercises production Vision OCR so any remaining runner error is exposed, while retaining the phrase assertion and adding a complete-status assertion. Remote XCTest must validate the runner separately."
+  }
+}

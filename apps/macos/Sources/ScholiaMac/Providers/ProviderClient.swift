@@ -516,11 +516,12 @@ struct ProviderClient: Sendable {
                 "messages": openAIMessages(prepared),
                 "temperature": 0.25
             ]
-            if provider.id == "openai" && configuration.model.hasPrefix("gpt-6-") {
+            if provider.id == "openai", let model = provider.model(named: configuration.model),
+               !model.reasoningEfforts.isEmpty {
                 body.removeValue(forKey: "temperature")
-                let model = provider.model(named: configuration.model)
-                let requested = configuration.reasoningEffort ?? "medium"
-                body["reasoning_effort"] = model?.reasoningEfforts.contains(requested) == true ? requested : "medium"
+                let fallback = model.defaultReasoningEffort ?? model.reasoningEfforts[0]
+                let requested = configuration.reasoningEffort ?? fallback
+                body["reasoning_effort"] = model.reasoningEfforts.contains(requested) ? requested : fallback
             }
             if ["claudecode", "codex"].contains(provider.id),
                let effort = configuration.reasoningEffort,

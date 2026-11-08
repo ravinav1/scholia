@@ -96,6 +96,8 @@ final class StudyWorkspaceModel: ObservableObject {
     }
     private var draftSaveTask: Task<Void, Never>?
     @Published var practicePresented = false
+    var assignmentViewQuery = ""
+    var assignmentViewFilter: StudyAssignmentFilter = .all
     @Published var examPlannerPresented = false {
         didSet { if examPlannerPresented { exitDocumentFocusIfIneligible() } }
     }
@@ -131,8 +133,11 @@ final class StudyWorkspaceModel: ObservableObject {
     private var assignmentPreparationID: UUID?
 
     let store: StudyLibraryStore
-    // The sidebar, overview and local web server share the active catalog.
+    // The sidebar and overview share the active catalog.
     let materialListCache = StudyMaterialListCache()
+    let courseCatalog = StudyCourseCatalog()
+    lazy var dashboardState = StudyDashboardState(workspace: self)
+    lazy var assignmentAgendaState = StudyAssignmentAgendaState(workspace: self)
     let fileSearch = StudyWorkspaceSearch()
     let documentEditing: StudyEditingState
     private var canSave = true
@@ -183,6 +188,7 @@ final class StudyWorkspaceModel: ObservableObject {
     private var preloadTask: Task<Void, Never>?
     private var preloadTicket: UUID?
     private var restoringNavigation = false
+    private var readingNavigationID = UUID()
     var canGoBack: Bool { !backRoutes.isEmpty }
     var canGoForward: Bool { !forwardRoutes.isEmpty }
     private var navigation: StudyNavigation {
@@ -218,13 +224,15 @@ final class StudyWorkspaceModel: ObservableObject {
         cancelPracticePreparation()
         cancelPreloading()
         let course = library.courses.first { $0.id == target.course }
-        library.selectedCourseID = course?.id
-        library.showingCourseLibrary = target.library || course == nil
-        library.courseLibraryView = target.libraryView
-        library.selectedDocumentID = course?.documents.first { $0.id == target.document }?.id
-        library.selectedAssignmentID = course?.materials.first { $0.id == target.assignment }?.id
-        library.selectedAssignmentFileID = target.assignmentFile
-        library.selectedThreadID = course?.threads.first { $0.id == target.thread }?.id
+        var next = library
+        next.selectedCourseID = course?.id
+        next.showingCourseLibrary = target.library || course == nil
+        next.courseLibraryView = target.libraryView
+        next.selectedDocumentID = course?.documents.first { $0.id == target.document }?.id
+        next.selectedAssignmentID = course?.materials.first { $0.id == target.assignment }?.id
+        next.selectedAssignmentFileID = target.assignmentFile
+        next.selectedThreadID = course?.threads.first { $0.id == target.thread }?.id
+        library = next
         restoreThread()
         loadSelectedDocument()
         loadAssignmentText()
@@ -233,6 +241,7 @@ final class StudyWorkspaceModel: ObservableObject {
         save()
     }
     private func saveBeforeNavigating() {
+        readingNavigationID = UUID()
         examPlannerPresented = false
         saveDraft()
         saveTask?.cancel()
@@ -384,19 +393,16 @@ final class StudyWorkspaceModel: ObservableObject {
         library.selectedSemesterID = id
         save()
     }
-    var sortedCourses: [StudyCourse] {
-        library.courses.sorted {
-            if $0.isFavorite != $1.isFavorite { return $0.isFavorite }
-            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
+    var sortedCourses: [StudyCourse] { courses(matching: "") }
+    func courses(matching query: String) -> [StudyCourse] {
+        courseCatalog.indices(in: library.courses, query: query).map { library.courses[$0] }
     }
     var recentReadings: [StudyRecentReading] { StudyRecentReading.inCourses(library.courses) }
-    func resumeReading(_ documentID: UUID) {
+    @discardableResult
+    func resumeReading(_ documentID: UUID, page: Int? = nil) -> Bool {
         guard let target = library.courses.first(where: { $0.documents.contains(where: { $0.id == documentID }) })
-        else { return }
-        recordNavigation()
-        if course?.id != target.id { selectCourse(target.id, recordHistory: false) }
-        selectDocument(documentID, recordHistory: false)
+        else { return false }
+        return openReading(documentID, courseID: target.id, page: page)
     }
     func prepareStudyPrompt(_ teachingMode: StudyTeachingMode) {
         if teachingMode == .practice {
@@ -417,7 +423,7 @@ final class StudyWorkspaceModel: ObservableObject {
     }
     func sidebarCourses(matching query: String) -> [StudyCourse] {
         if !query.isEmpty {
-            return sortedCourses.filter { ($0.name + " " + $0.code).localizedCaseInsensitiveContains(query) }
+            return courses(matching: query)
         }
         var visible = Array(sortedCourses.prefix(7))
         if let course, !visible.contains(where: { $0.id == course.id }) { visible.append(course) }
@@ -434,6 +440,11 @@ final class StudyWorkspaceModel: ObservableObject {
         library.selectedAssignmentID = nil
         exitDocumentFocusIfIneligible()
         save()
+    }
+    func showAssignments(query: String, filter: StudyAssignmentFilter) {
+        assignmentViewQuery = query
+        assignmentViewFilter = filter
+        showAssignments()
     }
     func showAssignments() {
         cancelAssignmentPreparation()
@@ -806,7 +817,7 @@ final class StudyWorkspaceModel: ObservableObject {
     func flush() {
         saveDraft()
         saveTask?.cancel()
-        documentEditing.flush()
+        documentEditing.flushAndWait()
         guard canSave else { return }
         do { try libraryWriter.flush(library) } catch {
             self.error = "Could not save your workspace: \(error.localizedDescription)"
@@ -837,11 +848,15 @@ final class StudyWorkspaceModel: ObservableObject {
         if recordHistory { recordNavigation() }
         cancelPracticePreparation()
         saveBeforeNavigating()
-        library.selectedAssignmentID = nil
-        library.selectedCourseID = id
-        library.showingCourseLibrary = id == nil
-        library.selectedDocumentID = nil
-        library.selectedThreadID = course?.threads.last(where: { $0.documentID == nil && $0.assignmentID == nil })?.id
+        let target = library.courses.first(where: { $0.id == id })
+        var next = library
+        next.selectedAssignmentID = nil
+        next.selectedAssignmentFileID = nil
+        next.selectedCourseID = target?.id
+        next.showingCourseLibrary = target == nil
+        next.selectedDocumentID = nil
+        next.selectedThreadID = target?.threads.last(where: { $0.documentID == nil && $0.assignmentID == nil })?.id
+        library = next
         restoreThread()
         loadSelectedDocument()
         visitedCourse()
@@ -851,18 +866,41 @@ final class StudyWorkspaceModel: ObservableObject {
     func selectDocument(
         _ id: UUID, assignmentID: String? = nil, recordHistory: Bool = true, preservingConversation: Bool = false
     ) {
+        guard let courseID = course?.id else { return }
+        openReading(id, courseID: courseID, assignmentID: assignmentID,
+            assignmentFileID: assignmentID == library.selectedAssignmentID ? library.selectedAssignmentFileID : nil,
+            recordHistory: recordHistory, preservingConversation: preservingConversation)
+    }
+    /// One main-actor transition: resolve against the current library before
+    /// saving the old draft, then publish ownership and reader context together.
+    @discardableResult
+    func openReading(_ id: UUID, courseID: UUID, page: Int? = nil, assignmentID: String? = nil,
+        assignmentFileID: String? = nil, recordHistory: Bool = true, preservingConversation: Bool = false) -> Bool {
+        guard let target = library.courses.first(where: { $0.id == courseID }),
+              let reading = target.documents.first(where: { $0.id == id }),
+              assignmentID == nil || target.materials.contains(where: { $0.id == assignmentID }) else { return false }
+        let previousCourseID = library.selectedCourseID
+        let previousThreadID = library.selectedThreadID
         if assignmentID != library.selectedAssignmentID { cancelAssignmentPreparation() }
         if recordHistory { recordNavigation() }
         cancelPracticePreparation()
         saveBeforeNavigating()
-        library.selectedAssignmentID = assignmentID
-        library.showingCourseLibrary = false
-        library.selectedDocumentID = id
-        if !preservingConversation {
-            library.selectedThreadID = course?.threads.last(where: { $0.documentID == id && $0.assignmentID == assignmentID && $0.isSelectionScratch != true })?.id
-        }
+        var next = library
+        next.selectedCourseID = courseID
+        next.selectedAssignmentID = assignmentID
+        next.selectedAssignmentFileID = assignmentFileID
+        next.showingCourseLibrary = false
+        next.selectedDocumentID = id
+        next.selectedThreadID = preservingConversation && previousCourseID == courseID
+            ? previousThreadID
+            : next.courses.first(where: { $0.id == courseID })?.threads.last(where: {
+                $0.documentID == id && $0.assignmentID == assignmentID && $0.isSelectionScratch != true
+            })?.id
+        library = next
         restoreThread()
         loadSelectedDocument()
+        setPage(page ?? reading.lastPage)
+        if previousCourseID != courseID { visitedCourse() }
         exitDocumentFocusIfIneligible()
         save()
         if let document, document.needsCanvasHTMLUpgrade, !canvasBusy,
@@ -870,13 +908,18 @@ final class StudyWorkspaceModel: ObservableObject {
             canvasHTMLUpgradeAttempts.insert(document.id).inserted {
             openCanvasMaterial(ref, courseID: course.id)
         }
+        return true
     }
     func removeDocument(_ id: UUID) {
         guard !isStreaming, !isImporting, !canvasBusy, let ci = courseIndex() else { return }
-        library.courses[ci].documents.removeAll { $0.id == id }
-        if library.selectedDocumentID == id {
-            library.selectedDocumentID = nil
-            library.selectedThreadID = nil
+        documentEditing.cancel(id)
+        let selected = library.selectedDocumentID == id
+        var next = library
+        next.courses[ci].documents.removeAll { $0.id == id }
+        if selected { next.selectedDocumentID = nil; next.selectedThreadID = nil }
+        library = next
+        if selected {
+            readingNavigationID = UUID()
             restoreThread()
             loadSelectedDocument()
             exitDocumentFocusIfIneligible()
@@ -944,6 +987,7 @@ final class StudyWorkspaceModel: ObservableObject {
         guard let document else { return }
         let nextPage = min(max(1, page), max(1, document.pageCount))
         guard nextPage != currentPage else { return }
+        readingNavigationID = UUID()
         cancelPracticePreparation()
         currentPage = nextPage
         selectedText = ""
@@ -954,21 +998,18 @@ final class StudyWorkspaceModel: ObservableObject {
         scheduleSave()
     }
     func navigate(to source: StudySource) {
-        guard course?.documents.contains(where: { $0.id == source.documentID }) == true else { return }
-        recordNavigation()
+        guard let course, course.documents.contains(where: { $0.id == source.documentID }) else { return }
         // Keep the conversation and assignment context when following an included-file citation.
-        let target = course?.documents.first { $0.id == source.documentID }
+        let target = course.documents.first { $0.id == source.documentID }
         let linkedKeys = Set(assignmentReadableFiles.map(\.id))
+        var targetAssignment: String?
+        var targetFile: String?
         if let key = target?.sourceKey, key == assignment?.id || linkedKeys.contains(key) {
-            library.selectedAssignmentFileID = linkedKeys.contains(key) ? key : nil
-        } else {
-            cancelAssignmentPreparation()
-            library.selectedAssignmentID = nil
-            library.selectedAssignmentFileID = nil
+            targetAssignment = assignment?.id
+            targetFile = linkedKeys.contains(key) ? key : nil
         }
-        library.selectedDocumentID = source.documentID
-        loadSelectedDocument()
-        setPage(source.page)
+        openReading(source.documentID, courseID: course.id, page: source.page,
+            assignmentID: targetAssignment, assignmentFileID: targetFile, preservingConversation: true)
     }
     private func loadSelectedDocument() {
         cancelPracticePreparation()
@@ -1000,8 +1041,8 @@ final class StudyWorkspaceModel: ObservableObject {
             }
             let job = Task.detached(priority: .userInitiated) { Result { try store.index(for: document) } }
             let result = await withTaskCancellationHandler(operation: { await job.value }, onCancel: { job.cancel() })
-            guard let self, !Task.isCancelled, self.document?.id == document.id,
-                  self.document?.contentHash == document.contentHash else { return }
+            guard let self, !Task.isCancelled, self.indexLoadID == loadID,
+                  self.document.map(DocumentContentIdentity.init) == identity else { return }
             let cached: StudyDocumentIndex
             switch result {
             case .success(let index):
@@ -1042,8 +1083,8 @@ final class StudyWorkspaceModel: ObservableObject {
                 }
             }
             let upgraded = await withTaskCancellationHandler(operation: { await upgrade.value }, onCancel: { upgrade.cancel() })
-            guard !Task.isCancelled, self.document?.id == document.id,
-                  self.document?.contentHash == document.contentHash else { return }
+            guard !Task.isCancelled, self.indexLoadID == loadID,
+                  self.document.map(DocumentContentIdentity.init) == identity else { return }
             self.documentOCRProgress = nil
             if case .success(let (index, analysis)) = upgraded {
                 self.documentIndex = index
@@ -1101,29 +1142,7 @@ final class StudyWorkspaceModel: ObservableObject {
         }
     }
     func cancelImport() { importTask?.cancel() }
-    func importBrowserDocument(data: Data, name: String) {
-        guard let courseID = course?.id, !isImporting, canSave else { return }
-        isImporting = true
-        error = nil
-        activity = "Reading \(name)…"
-        let store = store
-        importTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                isImporting = false
-                activity = nil
-            }
-            do {
-                let job = Task.detached { try StudyDocumentImporter.read(data: data, name: name, store: store) }
-                let document = try await withTaskCancellationHandler(
-                    operation: { try await job.value }, onCancel: { job.cancel() })
-                guard let ci = library.courses.firstIndex(where: { $0.id == courseID }) else { return }
-                library.courses[ci].documents.append(document)
-                if library.selectedCourseID == courseID { selectDocument(document.id) }
-                save()
-            } catch is CancellationError {} catch { self.error = error.localizedDescription }
-        }
-    }
+
     func saveDocumentEdits(_ draft: StudyEditDraft) async throws {
         guard canSave, !isImporting, !canvasBusy, !isStreaming else {
             throw StudyError.message(
@@ -2272,8 +2291,8 @@ final class StudyWorkspaceModel: ObservableObject {
         } catch { canvasConnectionStatus = error.localizedDescription }
     }
 
-    @Published private var canvasNeedsSignIn = false
-    @Published private var canvasNeedsKeychainAccess = false
+    @Published private(set) var canvasNeedsSignIn = false
+    @Published private(set) var canvasNeedsKeychainAccess = false
 
     var canvasNeedsAuthentication: Bool { canvasNeedsSignIn || canvasNeedsKeychainAccess }
     var canvasReconnectTitle: String { canvasNeedsKeychainAccess ? "Allow Keychain access" : "Sign in again" }
@@ -2514,8 +2533,7 @@ final class StudyWorkspaceModel: ObservableObject {
             reference.version.isEmpty || document.sourceVersion == reference.version,
             FileManager.default.fileExists(atPath: store.file(for: document).path)
         {
-            if self.course?.id != courseID { selectCourse(courseID) }
-            selectDocument(document.id)
+            openReading(document.id, courseID: courseID)
             return
         }
         guard !canvasBusy, canSave else { return }
@@ -2524,8 +2542,7 @@ final class StudyWorkspaceModel: ObservableObject {
         canvasActivityCourseID = courseID
         canvasStatus = "Downloading \(reference.title)…"
         error = nil
-        let openingDocumentID = library.selectedDocumentID
-        let openingAssignmentID = library.selectedAssignmentID
+        let openingNavigationID = readingNavigationID
         canvasTask = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -2538,10 +2555,8 @@ final class StudyWorkspaceModel: ObservableObject {
             do {
                 let client = try await connectedClient(for: course)
                 let document = try await fetchMaterial(reference, courseID: courseID, client: client)
-                if self.course?.id == courseID, !isShowingLibrary,
-                    library.selectedDocumentID == openingDocumentID, library.selectedAssignmentID == openingAssignmentID
-                {
-                    selectDocument(document.id)
+                if readingNavigationID == openingNavigationID {
+                    openReading(document.id, courseID: courseID)
                 }
                 canvasStatus = "\(document.title) is saved for offline reading and tutor context."
             } catch is CancellationError { canvasStatus = "Download stopped. Your library is saved." } catch {

@@ -1,0 +1,97 @@
+{
+  "buildID" : "c4492b5",
+  "bytes" : "Encoded JSON payload bytes, not filesystem or SQLite WAL\/page bytes",
+  "configuration" : "release",
+  "kind" : "native-targeted-storage",
+  "recordedAt" : "2026-11-08T00:34:38Z",
+  "results" : [
+    {
+      "courses" : 6,
+      "documents" : 120,
+      "encodedPayloadBytesPerSample" : [
+        181,
+        181,
+        181,
+        181,
+        181
+      ],
+      "imageBytes" : 0,
+      "materials" : 420,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        0.330625,
+        0.21845899999999999,
+        0.207458,
+        0.19037499999999999,
+        0.182417
+      ],
+      "writtenPayloadRowsPerSample" : [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "courses" : 89,
+      "documents" : 1780,
+      "encodedPayloadBytesPerSample" : [
+        182,
+        182,
+        182,
+        182,
+        182
+      ],
+      "imageBytes" : 20000000,
+      "materials" : 6230,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        2.0079579999999999,
+        0.324625,
+        0.330708,
+        0.45483400000000002,
+        0.45045800000000003
+      ],
+      "writtenPayloadRowsPerSample" : [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "courses" : 500,
+      "documents" : 10000,
+      "encodedPayloadBytesPerSample" : [
+        182,
+        182,
+        182,
+        182,
+        182
+      ],
+      "imageBytes" : 0,
+      "materials" : 35000,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        2.377291,
+        1.4181250000000001,
+        1.3753340000000001,
+        1.2978749999999999,
+        1.223584
+      ],
+      "writtenPayloadRowsPerSample" : [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "rows" : "Changed payload rows; excludes the separate transaction revision update"
+}

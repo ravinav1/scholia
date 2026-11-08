@@ -278,8 +278,7 @@ struct StudyPracticeView: View {
                 Spacer()
                 Button("Explain in tutor") {
                     guard run(command("source")) else { return }
-                    workspace.resumeReading(q.source.documentID)
-                    workspace.setPage(q.source.page)
+                    guard workspace.resumeReading(q.source.documentID, page: q.source.page) else { return }
                     workspace.newThread()
                     workspace.mode = .explain
                     workspace.draft =
@@ -307,8 +306,7 @@ struct StudyPracticeView: View {
             Text(q.validation).font(.caption2).foregroundStyle(.secondary)
             Button("Go to source page") {
                 if session?.finished != true, !run(command("source")) { return }
-                workspace.resumeReading(q.source.documentID)
-                workspace.setPage(q.source.page)
+                guard workspace.resumeReading(q.source.documentID, page: q.source.page) else { return }
                 workspace.practicePresented = false
             }
             if session?.openBook == false && session?.finished == false && session?.revealed == false {

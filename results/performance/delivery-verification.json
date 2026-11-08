@@ -1,0 +1,201 @@
+{
+  "recordedAt": "2026-11-08",
+  "baseline": "92a8e1689b20d30ba6c95cba9b332bece17c12ca",
+  "applicationSourceCommit": "c4492b5",
+  "ciCodeCommit": "07033465c1b1e3ca580679431333da31cd8362e1",
+  "draftPR": "https://github.com/ravinav1/scholia/pull/6",
+  "scope": [
+    "macOS native app",
+    "Chrome extension"
+  ],
+  "local": {
+    "sourceChecks": {
+      "status": "passed",
+      "javascriptFiles": 234,
+      "jsonFiles": 29,
+      "swiftFilesParsed": 169
+    },
+    "javascriptTests": {
+      "status": "passed",
+      "total": 442,
+      "passed": 440,
+      "failed": 0,
+      "skipped": 2,
+      "skipReasons": [
+        "optional live embedding model",
+        "optional Terminal-window updater"
+      ]
+    },
+    "nativeRelease": {
+      "status": "passed",
+      "evidence": "native-verification.json"
+    },
+    "nativeInteractions": {
+      "status": "passed",
+      "evidence": [
+        "native-verification.json",
+        "native-workspace-after.json",
+        "native-storage-verification.json"
+      ]
+    },
+    "nativeXCTest": {
+      "status": "unrun",
+      "reason": "Local Command Line Tools lack XCTest; full Xcode absent"
+    },
+    "extensionChromium": {
+      "status": "passed",
+      "evidence": [
+        "extension-verification-after-removal.json",
+        "codex-model-selection-verification.json"
+      ]
+    },
+    "deliveredExtensionModelSelection": {
+      "browser": "Chrome/153.0.7999.0",
+      "packaged": true,
+      "surfaces": [
+        "popup",
+        "panel",
+        "options"
+      ],
+      "model": "gpt-6.1-sol",
+      "reasoningEffort": "xhigh",
+      "catalogRequests": 4,
+      "cachedOpensVerified": true,
+      "offlineRetentionVerified": true,
+      "fixtureCompletions": 1,
+      "paidInference": false,
+      "exceptions": 0
+    },
+    "extractedNativeArchive": {
+      "status": "passed",
+      "strictDeepSignature": true,
+      "isolatedSemanticDependencyClosure": true,
+      "canceledWorkerStartup": true,
+      "executableSHA256": "e93d7edc467e497c1dd763ea8c50bcca54c85360ce635045bf8addcaa9a78eac"
+    },
+    "standaloneNativeFonts": {
+      "status": "passed",
+      "evidence": "native-font-package.json"
+    },
+    "independentReview": {
+      "status": "no new blockers",
+      "codeCommit": "305a084",
+      "testsRerun": false
+    },
+    "patchApplyCheck": {
+      "status": "passed",
+      "baseline": "92a8e1689b20d30ba6c95cba9b332bece17c12ca",
+      "method": "git apply --index in an isolated baseline worktree; resulting tree compared to delivery commit",
+      "exactCommitAndTree": "Recorded in the delivered delivery-manifest.json"
+    },
+    "quickJumpLatency": {
+      "status": "unrun",
+      "reason": "desktop locked; key-window focus assertion preserved before any warmup",
+      "harnessCompilation": "passed",
+      "harnessLaunch": "passed",
+      "priorKeyboardBehavior": "passed",
+      "evidence": "native-quick-jump-after.json"
+    },
+    "attachmentsAndOCR": {
+      "status": "passed",
+      "evidence": "native-attachment-verification.json",
+      "productionChanges": false
+    }
+  },
+  "ci": {
+    "url": "https://github.com/ravinav1/scholia/actions/runs/42437617202",
+    "javascriptAndPackagedChromium": "passed",
+    "nativeReleaseXCTest": "failed: one scanned-PDF OCR case",
+    "previousRun": {
+      "url": "https://github.com/ravinav1/scholia/actions/runs/42435124350",
+      "nativeReleaseCompilation": "passed",
+      "nativeReleaseCompileSeconds": 317.89,
+      "xctestCompilation": "failed: existing focus test needed MainActor",
+      "correctionCommit": "fe5dc561d262ba38b07c7f13fa24721d9b429960",
+      "assertionsPreserved": 4
+    },
+    "correctedIntermediateFailures": [
+      {
+        "run": 42435957665,
+        "reason": "release build-tests stage required explicit enable-testing",
+        "fix": "19ffb6f"
+      },
+      {
+        "run": 42436352111,
+        "reason": "existing async test helper needed an escaping actor-bound predicate",
+        "fix": "432f948",
+        "assertionsChanged": false
+      }
+    ],
+    "initialCompleteExecution": "native-xctest-initial.json",
+    "fixtureCorrectionCommits": [
+      "3c6f539",
+      "726328a",
+      "3d93994"
+    ],
+    "nativeCaseCounts": {
+      "total": 300,
+      "skipped": 1,
+      "failedCases": 1,
+      "failedAssertions": 1,
+      "passedCases": 298
+    },
+    "passedNativeChecks": [
+      "release compilation",
+      "focused navigation/cache/draft work counts",
+      "independent review regressions",
+      "targeted SQLite persistence and child-process crash recovery",
+      "signed production package",
+      "isolated semantic dependency closure",
+      "standalone 12-font math rendering"
+    ],
+    "remainingError": "Runner-specific accurate Vision OCR failure independently reproduced without Scholia/PDFKit/XCTest. Accurate default and CPU-only modes fail; fast CPU recognizes the phrase. All five variants and production OCR pass on physical macOS27.2. Underlying OS/virtualization/model-asset cause is not established.",
+    "visionDiagnostic": {
+      "url": "https://github.com/ravinav1/scholia/actions/runs/42439971761",
+      "codeCommit": "98f1b47ff5d63c7a14f21180f9573a5bd0c825b2",
+      "status": "completed; framework failures recorded without skipping regression gates",
+      "evidence": [
+        "vision-capabilities-ci.json",
+        "vision-capabilities-local.json"
+      ]
+    }
+  },
+  "targets": {
+    "filterP95Ms89And500": [
+      24.5,
+      47.1
+    ],
+    "filterTargetMs": 50,
+    "componentReturnP95Ms89And500": [
+      109.6,
+      125.0
+    ],
+    "fullWindowReturnP95Ms89And500": [
+      202.3,
+      245.5
+    ],
+    "returnTargetMs": 150,
+    "fullWindowTargetMet": false
+  },
+  "packages": [
+    {
+      "name": "Scholia-macos-0.2.2.zip",
+      "bytes": 64037819,
+      "sha256": "37b616bbae245537d4c4e8068eb210fbada8726945a253a6c693f65e032a02fb",
+      "archiveIntegrity": "passed"
+    },
+    {
+      "name": "scholia-chrome-0.2.2.zip",
+      "bytes": 15025279,
+      "sha256": "6146034640c44bdabcaae2b11af71de82ac6ba094268914750822ccb294eda3f",
+      "archiveIntegrity": "passed"
+    }
+  ],
+  "notPerformed": [
+    "merge",
+    "deploy",
+    "installation",
+    "live-data migration",
+    "paid inference"
+  ]
+}

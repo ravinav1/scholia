@@ -1,0 +1,160 @@
+{
+  "stage": "after-removal",
+  "runtime": "v26.4.0",
+  "browser": "Chrome/153.0.7999.0",
+  "platform": "darwin",
+  "build": "Chrome Web Store zip extracted into isolated directory",
+  "fixture": {
+    "topLevelFrames": 1,
+    "nestedFrames": 2,
+    "pageCSP": "script-src 'none'",
+    "localProvider": true
+  },
+  "procedure": {
+    "warmups": 1,
+    "sampleCount": 10,
+    "settleMs": 150
+  },
+  "samples": [
+    {
+      "loadMs": 23.700000017881393,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 12.429,
+      "scriptDurationMs": 0.472,
+      "usedHeapBytes": 3334072,
+      "domNodes": 132
+    },
+    {
+      "loadMs": 25.900000005960464,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 18.223,
+      "scriptDurationMs": 0.51,
+      "usedHeapBytes": 4723956,
+      "domNodes": 194
+    },
+    {
+      "loadMs": 20.80000001192093,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 13.520000000000001,
+      "scriptDurationMs": 0.45199999999999996,
+      "usedHeapBytes": 5750732,
+      "domNodes": 256
+    },
+    {
+      "loadMs": 28.599999994039536,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 15.126000000000001,
+      "scriptDurationMs": 0.603,
+      "usedHeapBytes": 6949028,
+      "domNodes": 318
+    },
+    {
+      "loadMs": 23.599999994039536,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 12.295,
+      "scriptDurationMs": 0.503,
+      "usedHeapBytes": 8339412,
+      "domNodes": 380
+    },
+    {
+      "loadMs": 23.400000005960464,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 12.775,
+      "scriptDurationMs": 0.47800000000000004,
+      "usedHeapBytes": 9731452,
+      "domNodes": 442
+    },
+    {
+      "loadMs": 25,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 14.789,
+      "scriptDurationMs": 0.47300000000000003,
+      "usedHeapBytes": 10769628,
+      "domNodes": 504
+    },
+    {
+      "loadMs": 28.099999994039536,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 17.418,
+      "scriptDurationMs": 0.748,
+      "usedHeapBytes": 12163972,
+      "domNodes": 566
+    },
+    {
+      "loadMs": 23.69999998807907,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 15.575999999999999,
+      "scriptDurationMs": 0.5479999999999999,
+      "usedHeapBytes": 13558548,
+      "domNodes": 628
+    },
+    {
+      "loadMs": 26.5,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 15.270999999999999,
+      "scriptDurationMs": 0.536,
+      "usedHeapBytes": 14603448,
+      "domNodes": 690
+    }
+  ],
+  "firstAnswerMs": 179.7908749999997,
+  "retryVerified": true,
+  "independentProductVerified": true,
+  "providerRequests": 2,
+  "bundle": {
+    "node": "v26.4.0",
+    "initialBytes": 4108,
+    "initialGzipBytes": 1942,
+    "initialModuleCount": 4,
+    "deferredBytes": 1638841,
+    "deferredGzipBytes": 489893,
+    "contextOnlyBytes": 42385,
+    "inputs": [
+      "apps/chrome/src/ui-primitives.js",
+      "apps/chrome/src/runtime-message.js",
+      "apps/chrome/src/content-bootstrap.js",
+      "apps/chrome/src/content.js"
+    ]
+  },
+  "errors": []
+}

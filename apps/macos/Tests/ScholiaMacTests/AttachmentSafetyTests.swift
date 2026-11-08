@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import PDFKit
 import Foundation
 import XCTest
@@ -145,8 +146,23 @@ final class AttachmentSafetyTests: XCTestCase {
     func testOversizedOrInvalidAttachmentsStopTheRequest() throws {
         let tooLong = document("over-limit.txt", text: String(repeating: "x", count: MessageAttachmentIngestion.maximumExtractedUTF16Units + 1))
         XCTAssertThrowsError(try prepare([ConversationMessage(role: .user, content: "Read", attachments: [tooLong])]))
-        let large = document("large.txt", text: String(repeating: "x", count: 200_000))
-        XCTAssertThrowsError(try prepare([ConversationMessage(role: .user, content: "Read", attachments: Array(repeating: large, count: 5))]))
+        let chunkSize = MessageAttachmentIngestion.maximumExtractedUTF16Units
+        var remaining = PromptBuilder.maxConversationAttachmentCharacters
+        var atLimit: [MessageAttachment] = []
+        while remaining > 0 {
+            let count = min(chunkSize, remaining)
+            atLimit.append(document("part-\(atLimit.count).txt", text: String(repeating: "x", count: count)))
+            remaining -= count
+        }
+        XCTAssertEqual(atLimit.reduce(0) { $0 + $1.extractedText.utf16.count }, PromptBuilder.maxConversationAttachmentCharacters)
+        XCTAssertNoThrow(try prepare([ConversationMessage(role: .user, content: "Read", attachments: atLimit)]),
+            "Exactly the documented request limit is allowed")
+        let overLimit = atLimit + [document("one-character-over.txt", text: "x")]
+        XCTAssertThrowsError(try prepare([ConversationMessage(role: .user, content: "Read", attachments: overLimit)])) { error in
+            guard case PromptBuilderError.attachmentsTooLarge = error else {
+                return XCTFail("Expected the aggregate request limit, got \(error)")
+            }
+        }
     }
 
     func testEveryProviderReceivesAllImagesAndDocumentText() throws {
@@ -204,20 +220,42 @@ final class AttachmentSafetyTests: XCTestCase {
 
     @MainActor
     func testScannedPDFUsesOCR() throws {
-        let image = NSImage(size: NSSize(width: 1_200, height: 400))
-        image.lockFocus()
-        NSColor.white.setFill()
-        NSRect(x: 0, y: 0, width: 1_200, height: 400).fill()
-        ("Scanned attachment contains all the evidence" as NSString).draw(
-            at: NSPoint(x: 40, y: 180), withAttributes: [.font: NSFont.systemFont(ofSize: 36), .foregroundColor: NSColor.black]
-        )
-        image.unlockFocus()
-        let pdf = PDFDocument()
-        pdf.insert(try XCTUnwrap(PDFPage(image: image)), at: 0)
+        // A fixed-pixel raster avoids lockFocus's display/backing-scale state
+        // on headless runners. The PDF contains an image, never a text layer.
+        let width = 1_600, height = 600
+        let bitmap = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        bitmap.setFillColor(CGColor(gray: 1, alpha: 1))
+        bitmap.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let text = NSAttributedString(string: "Scanned attachment contains all the evidence", attributes: [
+            NSAttributedString.Key(rawValue: kCTFontAttributeName as String): CTFontCreateWithName("Helvetica" as CFString, 48, nil),
+            NSAttributedString.Key(rawValue: kCTForegroundColorAttributeName as String): CGColor(gray: 0, alpha: 1)
+        ])
+        let line = CTLineCreateWithAttributedString(text)
+        XCTAssertLessThan(CTLineGetTypographicBounds(line, nil, nil, nil), Double(width - 100))
+        bitmap.textPosition = CGPoint(x: 50, y: 280)
+        CTLineDraw(line, bitmap)
+        let output = NSMutableData()
+        var bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        let consumer = try XCTUnwrap(CGDataConsumer(data: output))
+        let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &bounds, nil))
+        context.beginPDFPage(nil)
+        context.draw(try XCTUnwrap(bitmap.makeImage()), in: bounds)
+        context.endPDFPage()
+        context.closePDF()
+        let data = output as Data
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let page = try XCTUnwrap(pdf.page(at: 0))
+        XCTAssertTrue((page.string ?? "").isEmpty, "The fixture must require real OCR")
+        // Exercise the production OCR path directly so a platform Vision error
+        // is reported instead of being hidden behind an unreadable attachment.
+        let recognized = try MessageAttachmentIngestion.readPDFPage(page)
+        XCTAssertTrue(recognized.contains("all the evidence"), "Vision returned: \(recognized)")
         let attachment = try MessageAttachmentIngestion.read(
-            data: XCTUnwrap(pdf.dataRepresentation()), fileName: "scan.pdf", mimeType: "application/pdf"
+            data: data, fileName: "scan.pdf", mimeType: "application/pdf"
         )
-        XCTAssertTrue(attachment.extractedText.contains("all the evidence"))
+        XCTAssertEqual(attachment.effectiveReadStatus, .complete, attachment.readDetail ?? "")
+        XCTAssertTrue(attachment.extractedText.contains("all the evidence"), attachment.readDetail ?? "")
     }
 
     @MainActor

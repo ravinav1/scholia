@@ -24,25 +24,38 @@ export async function chromiumSession({ extensionPath = '' } = {}) {
       '--no-first-run',
       '--disable-default-apps',
       '--disable-gpu',
+      ...(process.env.SCHOLIA_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
       ...(extensionPath ? [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] : []),
       'about:blank',
     ],
-    { stdio: 'ignore' }
+    { stdio: ['ignore', 'ignore', 'pipe'] }
   );
+  let launchError = '';
+  processHandle.stderr.on('data', chunk => { launchError = (launchError + chunk).slice(-8000); });
+  processHandle.on('error', error => { launchError = error.message; });
   let socket;
   const close = async () => {
     socket?.close();
     processHandle.kill('SIGTERM');
     await new Promise((resolve) => {
-      if (processHandle.exitCode !== null) resolve();
+      if (processHandle.exitCode !== null || processHandle.signalCode !== null) resolve();
       else {
         processHandle.once('exit', resolve);
         setTimeout(resolve, 3000).unref();
       }
     });
-    await rm(profile, { recursive: true, force: true });
+    if (processHandle.exitCode === null && processHandle.signalCode === null) {
+      processHandle.kill('SIGKILL');
+      await new Promise(resolve => {
+        processHandle.once('exit', resolve);
+        setTimeout(resolve, 1000).unref();
+      });
+    }
+    // Chromium child processes can finish a final preferences write just after
+    // the browser process exits. Retry only bounded transient filesystem races.
+    await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   };
   try {
     let ready = false;
@@ -55,7 +68,7 @@ export async function chromiumSession({ extensionPath = '' } = {}) {
       } catch {}
       await sleep(100);
     }
-    if (!ready) throw new Error('Chromium did not start.');
+    if (!ready) throw new Error(`Chromium did not start: ${launchError || 'no launch diagnostics'}`);
     const target = await (
       await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: 'PUT' })
     ).json();

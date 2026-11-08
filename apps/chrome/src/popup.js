@@ -19,14 +19,13 @@ import { extractPdfContext, fetchPdfBlob } from './pdf/pdf-context.js';
 import { renderMarkdown, renderReasoning, renderActivity, addActivity, bindActivityDisclosure } from './render.js';
 import { sendRuntimeMessage as sendPopupMessage } from './runtime-message.js';
 import { PANEL_NAVIGATION_KEY } from './tab-context.js';
-import { openExamPlanner } from './exam-planner-launch.js';
 
 const popupWindow = chrome.windows?.getCurrent ? chrome.windows.getCurrent().then((value) => value.id).catch(() => null) : Promise.resolve(null);
 const message = async (payload) => sendPopupMessage({ ...payload, windowId: await popupWindow });
 
 const elements = Object.fromEntries([
   'settings', 'site-dot', 'site-state', 'site', 'site-toggle', 'open-sidebar', 'new-chat',
-  'explain', 'capture', 'open-pdf', 'open-pdf-viewer', 'open-exam-planner', 'model-settings', 'model-select', 'fast-mode', 'fast-mode-state', 'model-hint', 'chat-count',
+  'explain', 'capture', 'open-pdf', 'open-pdf-viewer', 'model-settings', 'model-select', 'fast-mode', 'fast-mode-state', 'model-hint', 'chat-count',
   'clear-chats', 'chat-list', 'chat-empty', 'status', 'quick-context-state', 'quick-reset',
   'quick-files', 'quick-attach', 'quick-messages', 'quick-empty', 'quick-compact', 'quick-none', 'quick-form', 'quick-input', 'quick-send', 'reasoning-select'
 ].map((id) => [id, document.getElementById(id)]));
@@ -399,6 +398,12 @@ async function refreshSettings() {
   renderModel();
 }
 
+function refreshLocalModelCatalogs() {
+  for (const provider of ['codex', 'opencode']) {
+    void message({ type: 'SCHOLIA_BRIDGE_STATUS', provider, timeoutMs: 1000 }).catch(() => {});
+  }
+}
+
 function chatRow(chat) {
   const row = document.createElement('div');
   row.className = 'chat-row';
@@ -456,9 +461,6 @@ const quickFiles = mountFileComposer({
 });
 
 elements.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
-elements['open-exam-planner'].addEventListener('click', () => {
-  openExamPlanner().then(() => window.close()).catch((error) => showStatus(error.message, true));
-});
 elements['model-settings'].addEventListener('click', () => chrome.runtime.openOptionsPage());
 elements['quick-compact'].addEventListener('click', () => setQuickContextMode(
   quickContextMode === CONTEXT_MODE_COMPACT ? CONTEXT_MODE_FULL : CONTEXT_MODE_COMPACT
@@ -562,6 +564,7 @@ function saveInlineModel({ reasoningEffort, fastMode } = {}) {
   return modelSave;
 }
 elements['model-select'].addEventListener('change', () => saveInlineModel());
+elements['model-select'].addEventListener('scholia-model-picker-open', refreshLocalModelCatalogs);
 elements['reasoning-select'].addEventListener('change', () => saveInlineModel({ reasoningEffort: elements['reasoning-select'].value }));
 elements['fast-mode'].addEventListener('click', () => saveInlineModel({ fastMode: !settings?.fastMode }));
 elements['chat-list'].addEventListener('click', async (event) => {
@@ -595,6 +598,7 @@ async function boot() {
     renderPdfAction();
   });
   await Promise.all([sourceTask, refreshSettings(), refreshSite(), refreshChats()]);
+  refreshLocalModelCatalogs();
   quickContextMode = defaultContextMode(settings);
   renderQuickContextMode();
   renderQuickMessages();

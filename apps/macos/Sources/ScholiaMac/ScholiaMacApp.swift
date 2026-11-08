@@ -38,8 +38,6 @@ struct ScholiaMacApp: App {
                     .keyboardShortcut("3", modifiers: .command)
                 Button("Import Study Documents…", action: model.chooseStudyDocuments)
                     .keyboardShortcut("o", modifiers: .command)
-                Button("Open Scholia in Browser", action: model.openStudyWebsite)
-                    .keyboardShortcut("2", modifiers: .command)
                 Button("Quick Chat", action: model.showQuickAsk)
             }
             CommandGroup(after: .sidebar) {
@@ -57,7 +55,6 @@ final class ScholiaAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.servicesProvider = self
         NSUpdateDynamicServices()
         AppModel.shared.start()
-        if CommandLine.arguments.contains("--serve-study") { AppModel.shared.startStudyWebsite() }
         if !CommandLine.arguments.contains("--background") {
             AppModel.shared.openStudyWorkspace()
         }

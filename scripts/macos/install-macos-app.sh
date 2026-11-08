@@ -9,7 +9,7 @@ migrate_permissions=0
 launch_after_install=0
 skip_build=0
 check_only=0
-configuration=debug
+configuration=release
 
 for argument in "$@"; do
   case "$argument" in
@@ -29,7 +29,8 @@ Options:
   --launch               Open Scholia after installing (default for update:macos).
   --skip-build           Install the already-built copy in dist/macos.
   --check-only           Check signing compatibility without replacing the app.
-  --release              Use the slower, fully optimized distribution build.
+  --release              Use the optimized release build (default).
+  --debug                Use an unoptimized development build.
   --migrate-permissions  Reset stale privacy grants if the signing identity changed.
   --help                 Show this help.
 
@@ -41,6 +42,7 @@ HELP
     --skip-build) skip_build=1 ;;
     --check-only) check_only=1 ;;
     --release) configuration=release ;;
+    --debug) configuration=debug ;;
     *) print -u2 "Unknown option: $argument"; exit 2 ;;
   esac
 done

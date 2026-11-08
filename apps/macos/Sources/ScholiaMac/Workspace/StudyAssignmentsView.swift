@@ -17,7 +17,8 @@ struct StudyAssignmentsPageView: View {
                     Label(workspace.assignmentRefreshBusy ? "Refreshing…" : "Refresh status", systemImage: "arrow.clockwise")
                 }.disabled(workspace.canvasBusy || workspace.assignmentRefreshBusy)
             }
-            StudyAssignmentAgendaView(workspace: workspace, initialFilter: .all, dedicated: true).equatable()
+            StudyAssignmentAgendaView(workspace: workspace, initialFilter: workspace.assignmentViewFilter,
+                initialQuery: workspace.assignmentViewQuery, dedicated: true).equatable()
         }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
@@ -83,30 +84,33 @@ struct StudyAssignmentAgendaView: View, Equatable {
     @State private var query = ""
     @State private var filter: StudyAssignmentFilter
     private let initialFilter: StudyAssignmentFilter
+    private let initialQuery: String
+    @State private var pageIndex = 0
     let dedicated: Bool
     @Environment(\.colorScheme) private var scheme
 
-    init(workspace: StudyWorkspaceModel, initialFilter: StudyAssignmentFilter = .due, dedicated: Bool = false) {
+    init(workspace: StudyWorkspaceModel, initialFilter: StudyAssignmentFilter = .due, initialQuery: String = "", dedicated: Bool = false) {
         self.workspace = workspace
         self.dedicated = dedicated
         self.initialFilter = initialFilter
-        _agenda = StateObject(wrappedValue: StudyAssignmentAgendaState(workspace: workspace))
+        self.initialQuery = initialQuery
+        _query = State(initialValue: initialQuery)
+        _agenda = StateObject(wrappedValue: workspace.assignmentAgendaState)
         _filter = State(initialValue: initialFilter)
     }
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.workspace === rhs.workspace && lhs.initialFilter == rhs.initialFilter && lhs.dedicated == rhs.dedicated
+        lhs.workspace === rhs.workspace && lhs.initialFilter == rhs.initialFilter && lhs.initialQuery == rhs.initialQuery && lhs.dedicated == rhs.dedicated
     }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
-            let courses = agenda.input.courses.map(\.studyCourse)
-            let groups = StudyAssignmentGroup.make(
-                courses: courses, query: query, filter: filter, now: context.date)
-            let count = groups.reduce(0) { $0 + $1.items.count }
-            let assignments = StudyAssignment.list(courses: courses, includeCompleted: true)
-            let handedIn = assignments.filter { $0.details?.status == .submitted }.count
-            let graded = assignments.filter { $0.details?.status == .graded }.count
+            let allGroups = agenda.groups(query: query, filter: filter, now: context.date)
+            let count = allGroups.reduce(0) { $0 + $1.items.count }
+            let page = min(pageIndex, max(0, (count - 1) / 100))
+            let groups = dedicated ? StudyAssignmentGroup.slice(allGroups, offset: page * 100, limit: 100)
+                : StudyAssignmentGroup.preview(allGroups, limit: 12, now: context.date)
+            let (handedIn, graded) = agenda.submissionCounts
             let timeline = StudyAssignmentTimeline(groups: groups)
             let showTimeline = filter != .all && (filter == .due || !timeline.past.isEmpty || !timeline.upcoming.isEmpty)
             let sections: [StudyAssignmentTimeframe] = filter == .all
@@ -119,11 +123,20 @@ struct StudyAssignmentAgendaView: View, Equatable {
                     Text("\(count)").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                     Spacer(minLength: 0)
                     if !dedicated {
-                        Button("View all", action: workspace.showAssignments)
+                        Button("View all") { workspace.showAssignments(query: query, filter: filter) }
                             .font(.system(size: 11)).scholiaButtonStyle(.plain)
                     }
                     if showTimeline {
-                        Button("Today") { scrollToToday(scroll) }
+                        Button("Today") {
+                            if dedicated {
+                                let before = allGroups.filter { $0.timeframe == .overdue }.reduce(0) { $0 + $1.items.count }
+                                pageIndex = before / 100
+                            }
+                            Task { @MainActor in
+                                await Task.yield()
+                                scrollToToday(scroll)
+                            }
+                        }
                             .font(.system(size: 11, weight: .medium)).foregroundStyle(Color.accentColor)
                             .scholiaButtonStyle(.plain).help("Jump to today in assignments")
                             .accessibilityLabel("Jump to today in assignments")
@@ -166,8 +179,8 @@ struct StudyAssignmentAgendaView: View, Equatable {
                 }
                 Divider()
                 ScrollView {
-                    // Measure day groups before jumping to Today. Lazy height estimates
-                    // leave large gaps in long timelines with rows of different heights.
+                    // Bounded pages preserve exact Today/section anchors without
+                    // asking SwiftUI to measure thousands of variable-height rows.
                     VStack(alignment: .leading, spacing: 22) {
                         Color.clear.frame(height: 0).id("assignment-start")
                         if showTimeline {
@@ -184,7 +197,7 @@ struct StudyAssignmentAgendaView: View, Equatable {
                             .overlay(alignment: .bottom) { Divider() }
                             .id("assignment-today")
                             agendaDays(timeline.upcoming)
-                            if timeline.upcoming.isEmpty && count > 0 {
+                            if !allGroups.contains(where: { $0.timeframe == .upcoming }) && count > 0 {
                                 Text("No upcoming deadlines.").font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                         }
@@ -217,11 +230,28 @@ struct StudyAssignmentAgendaView: View, Equatable {
                     if filter == .due && query.isEmpty { scrollToToday(scroll) }
                 }
                 .onChange(of: "\(filter.id):\(query)") { _, _ in
+                    pageIndex = 0
+                    if dedicated { workspace.assignmentViewQuery = query; workspace.assignmentViewFilter = filter }
                     if filter == .due && query.isEmpty {
                         scrollToToday(scroll)
                     } else {
                         scroll.scrollTo("assignment-start", anchor: .top)
                     }
+                }
+                if dedicated && count > 100 {
+                    HStack {
+                        Button("Previous") { pageIndex = max(0, page - 1); scroll.scrollTo("assignment-start", anchor: .top) }
+                            .disabled(page == 0)
+                        Spacer()
+                        Text("\(page * 100 + 1)–\(min(count, (page + 1) * 100)) of \(count)")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Next") { pageIndex = page + 1; scroll.scrollTo("assignment-start", anchor: .top) }
+                            .disabled((page + 1) * 100 >= count)
+                    }.controlSize(.small)
+                } else if !dedicated && count > 12 {
+                    Button("View all \(count) matching assignments") { workspace.showAssignments(query: query, filter: filter) }
+                        .font(.system(size: 11)).scholiaButtonStyle(.plain).foregroundStyle(Color.accentColor)
                 }
                 Text(
                     "\(filter == .hidden ? "Unhide assignments to show them in other lists" : filter == .due ? "Earlier deadlines above · Upcoming below" : filter == .handedIn ? "Handed in · awaiting a grade" : filter == .graded ? "Graded work · feedback marked when available" : filter == .all ? "Complete list, including hidden assignments" : "Undated & completed") · \(TimeZone.current.identifier)"

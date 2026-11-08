@@ -6,8 +6,8 @@ enum NativeCodeHighlight {
     private static let context: JSContext? = {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<6 { root.deleteLastPathComponent() }
-        let candidates = [Bundle.main.resourceURL?.appendingPathComponent("StudyWeb/code-highlight.js"),
-            root.appendingPathComponent("dist/web/code-highlight.js")].compactMap { $0 }
+        let candidates = [Bundle.main.resourceURL?.appendingPathComponent("NativeResources/code-highlight.js"),
+            root.appendingPathComponent("dist/native-resources/code-highlight.js")].compactMap { $0 }
         guard let source = candidates.compactMap({ try? String(contentsOf: $0, encoding: .utf8) }).first,
             let context = JSContext() else { return nil }
         context.evaluateScript(source)

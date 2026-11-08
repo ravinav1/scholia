@@ -1,21 +1,18 @@
 # Architecture
 
-Scholia has three independent runtimes: a native macOS app, a Chrome extension,
-and an optional hosted web service. `apps/web` supplies the browser workspace
-for either the native app's loopback API or the hosted service. Opening the
-native workspace does not start a web server.
+Scholia has two runtimes: a native macOS app and a Chrome extension. Their
+libraries are separate and do not synchronize.
 
 ## Repository map
 
-| Path            | Responsibility                                                                        |
-| --------------- | ------------------------------------------------------------------------------------- |
-| `apps/macos`    | SwiftUI/AppKit application, native document readers, local library, Canvas, providers |
-| `apps/web`      | Browser workspace, PDF.js reader, tutor UI, local and hosted API client               |
-| `apps/server`   | Hosted accounts, private storage, Canvas access, document indexing, provider requests |
-| `apps/chrome`   | Extension capture, PDF reader, side panel, settings, service worker                   |
-| `packages/core` | Shared JavaScript prompts, provider contracts, context ranking, tutoring rules        |
-| `scripts`       | Build, packaging, local bridges, account administration, integration checks           |
-| `tests`         | JavaScript unit and service integration tests                                         |
+| Path              | Responsibility                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| `apps/macos`      | SwiftUI/AppKit application, native document readers, local library, Canvas, providers |
+| `apps/chrome`     | Extension capture, PDF reader, side panel, settings, service worker                   |
+| `packages/core`   | Shared JavaScript prompts, provider contracts, context ranking, tutoring rules        |
+| `packages/search` | Local semantic embedding, indexing, and worker runtime for native search              |
+| `scripts`         | Build, packaging, local bridges, and integration checks                               |
+| `tests`           | JavaScript unit and service integration tests                                         |
 
 The normalized explanation request is defined in
 `packages/core/schemas/explain-request.schema.json`. Swift implements the same
@@ -34,14 +31,36 @@ not as the application's UI runtime.
 `StudyDocumentImporter` copies originals into the library and builds bounded indexes.
 PDF text and OCR, Office extraction, notebook parsing, and image processing use
 local frameworks and background work. Notebook cells, macros, and formulas are
-never executed. Native semantic search uses the bundled JavaScript ranker in
-JavaScriptCore; it requires no model request.
+never executed. Document passage ranking uses a bundled JavaScriptCore helper.
+Optional semantic library search uses a local embedding model in the Node worker
+under `packages/search`; it makes no provider request.
 
-Library snapshots are written through a serial utility queue that coalesces
-pending saves; lifecycle boundaries flush the latest state. Back/Forward records
-reading destinations and saves drafts before navigation. An AppKit split view
-lets the tutor occupy almost the full document window without replacing the
-reader or reloading the PDF.
+`npm run build:native-resources` builds the JavaScriptCore search/highlighting
+helpers and copies public study-plan data into `dist/native-resources`. The Mac
+build packages these files under `Contents/Resources/NativeResources`.
+
+A serial utility writer coalesces library snapshots, compares them with the
+last committed values, and writes only changed SQLite rows. Navigation metadata,
+course metadata, materials, documents, thread metadata, and messages have separate
+rows and explicit ordering. Each save is one transaction; revision conflicts
+reject stale writers. A one-time migration preserves the legacy JSON byte-for-byte,
+and an explicit export reconstructs JSON for rollback. See
+[native storage](performance/NATIVE_STORAGE.md) for the schema, failure handling,
+metrics and recovery commands. Lifecycle boundaries flush committed state.
+
+Document editing uses a separate ordered utility writer for recovery files.
+Pending saves coalesce per document; removal tombstones follow in-flight saves,
+and recovery results must still belong to the active editing session. Errors
+remain per-document and retryable. Atomic reading navigation preserves the
+outgoing conversation draft, validates ownership, records one history entry and
+publishes one coherent destination. Load tickets and document revisions reject
+obsolete asynchronous results. Back/Forward uses the same ownership rules.
+
+Dashboard and assignment display observers exclude conversation bodies and
+streaming progress. Workspace ordering caches searchable metadata while resolving
+contents from the current library. Bounded assignment previews link to complete
+filtered pages. An AppKit split view lets the tutor occupy almost the full document
+window without replacing the reader or reloading the PDF.
 
 Saved capture conversations use a separate coalescing utility writer, with
 clears ordered behind outstanding writes and a durability barrier at app exit.
@@ -95,82 +114,6 @@ a dedicated tutoring purpose. Paper sessions do not write `StudyLibrary` or
 `ConversationStore`; closing or clearing stops capture and releases the session.
 See [paper study](PAPER_STUDY.md) for controls and provider retention boundaries.
 
-## Local browser workspace
-
-**Open in Browser** starts `StudyWebServer` on `127.0.0.1:8792`. Its bundled
-frontend shares the native model, files, provider settings, Canvas connection,
-reading position, and learning store. The Mac must remain running. Native and
-local-browser navigation refer to the same active workspace.
-
-The dashboard loads a small ES module graph. PDF.js, notebook reading, practice,
-assignment instructions, and rich text rendering load when first used. HTML
-escaping stays independent of Markdown, math, and syntax highlighting. Reader
-generations prevent delayed loads from replacing a newer destination; failed
-loads expose a retry. Chat updates retain unchanged message sections so activity
-ticks and streamed tokens preserve source controls, disclosures, and selection.
-The PDF reader additionally budgets retained canvas pixels, evicting completed
-offscreen pages while protecting visible pages and active selections. This
-avoids retaining ten high-resolution canvases merely to fill PDF.js's page cache.
-
-Both browser APIs support conditional state requests with ETags. The browser
-acknowledges only accepted snapshots, skips parsing and rendering on unchanged
-responses, and separately advances deadline and answer timers. Native snapshots
-are invalidated by model changes and encoded off the main actor. Static assets
-revalidate privately; session HTML and API state remain `no-store`. Material
-groupings are reused until their catalog inputs change.
-
-The server validates Host and Origin, rejects cross-site requests, and requires
-a per-launch token for API and document access. It sends no raw Keychain
-credentials to the browser. Responses disable caching and set a restrictive
-Content Security Policy. The browser renders PDFs with PDF.js; provider calls,
-OCR, and library mutations remain native operations.
-
-Draft and page mutations carry an originating destination and revision. Stale
-writes cannot silently overwrite another window's work. Browser edit drafts and
-practice outbox entries remain available for recovery after a conflict.
-
-## Hosted web service
-
-`apps/server/server.js` runs independently of macOS on Node.js 24 or newer.
-It serves the same frontend with capability flags for hosted features. No
-native process, desktop permission, or loopback bridge is required.
-
-- `store.js` owns the SQLite account database, password hashes, sessions, and
-  credential encryption. Passwords use salted scrypt; sessions store hashed
-  random tokens and expire after seven days. Credentials use AES-256-GCM with
-  account-specific authenticated data and a server-held key.
-- `workspaces.js` scopes every operation to the authenticated account and
-  serializes that account's mutations. Workspaces and conversations are private;
-  each session has independent reading navigation. Document edits validate the
-  source revision before replacing the active file reference.
-- `documents.js` stores originals and indexes beneath account-specific
-  directories. Extraction runs in bounded worker threads. PDFs use PDF.js;
-  Office and notebook readers extract data without executing document content.
-  Hosted extraction does not perform the native app's Vision OCR.
-- `canvas.js` uses each account's own Canvas token and an operator-controlled
-  host allowlist. `network.js` rejects private/reserved network destinations,
-  pins validated DNS results for requests, bounds downloads, and strips
-  credentials when following file redirects.
-
-Original document and static-asset responses stream from open file descriptors
-with backpressure, instead of buffering complete files for each client. Search
-workers retire their isolates after idle deadlines and reopen persistent indexes
-on demand. Retirement is negotiated with the parent so a new request or ongoing
-semantic indexing cannot be interrupted by the idle timer.
-
-API and file routes authenticate the session and check ownership before reading
-data. Mutations require the session's CSRF token. Host/Origin checks, strict
-HttpOnly cookies, login throttling, upload limits, CSP, and worker limits provide
-additional boundaries. HTTPS is required for non-loopback public origins.
-The server operator can read stored files and decrypt credentials; this is not
-end-to-end encryption.
-
-The first hosted deployment uses one service process with persistent SQLite and
-file storage. It supports separate accounts, conversational tutoring, Canvas,
-imports, and editable text/notebooks. Native spaced practice and its review
-queue are not exposed in hosted web. Hosted, native, and extension libraries do
-not synchronize. See [Hosting](HOSTING.md) before deployment.
-
 ## Chrome extension
 
 The content script runs in an isolated world and never receives provider keys.
@@ -208,13 +151,11 @@ separate collapsed disclosure. Neither runtime loads remote executable code.
 ## Verification
 
 `npm run check` runs JavaScript tests, source validation, and Swift syntax checks.
-Hosted tests exercise two-account ownership, credentials, CSRF, independent
-navigation, and revision conflicts. `scripts/smoke/browser/smoke-hosted-web.mjs` exercises the
-real service in Chromium.
 
 Native smoke runners link application code against isolated temporary libraries
 and deterministic provider/Canvas fixtures. Data checks cover importing,
 reconciliation, search, edits, persistence, and image coordinates. UI checks
-cover native windows and the browser workspace. Browser automation in this
-repository uses Chromium. Build output and smoke screenshots are ignored; old
+cover native windows. Extension browser automation uses Chromium. CI builds
+and tests the native release with full Xcode on `macos-latest`; local XCTest
+requires full Xcode too. Build output and smoke screenshots are ignored; old
 one-off measurements are not maintained as product specifications.

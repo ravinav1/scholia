@@ -10,7 +10,7 @@ struct ExamPlannerSmoke {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         Task { @MainActor in
-            do { try await run(); print("PASS: native opening-page import refresh, flexible and fixed timing roundtrips, cached validation, chronological sorting, recommendations, selection, overlap boundaries, overnight dates, validation, persistence, favorites, conflict choices, fresh Canvas submissions, stale saves, local web API and light/dark rendering"); exit(0) }
+            do { try await run(); print("PASS: native opening-page import refresh, flexible and fixed timing roundtrips, cached validation, chronological sorting, recommendations, selection, overlap boundaries, overnight dates, validation, persistence, favorites, conflict choices, fresh Canvas submissions, stale saves, light/dark rendering"); exit(0) }
             catch { print("FAIL: \(error)"); exit(1) }
         }
         app.run()
@@ -317,44 +317,7 @@ struct ExamPlannerSmoke {
         try await searchControlsChecks(window: window, workspace: model, output: output)
         window.close()
 
-        let server = StudyWebServer(app: AppModel.shared, workspace: model, assets: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/web"), examRecommendationProvider: (providerConfiguration, recommend))
-        server.start(port: 0)
-        defer { server.stop() }
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        guard let address = server.address else { throw StudyError.message("Test website did not start") }
-        let (html, _) = try await URLSession.shared.data(from: address)
-        let source = String(data: html, encoding: .utf8)!
-        let marker = "name=\"scholia-token\" content=\""
-        let token = source.components(separatedBy: marker)[1].components(separatedBy: "\"")[0]
-        func request(_ path: String, body: [String: Any]? = nil) async throws -> (Int, [String: Any]) {
-            var request = URLRequest(url: address.appendingPathComponent(path))
-            request.setValue(token, forHTTPHeaderField: "X-Scholia-Token")
-            if let body {
-                request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            }
-            let (data, response) = try await URLSession.shared.data(for: request)
-            return ((response as! HTTPURLResponse).statusCode, try JSONSerialization.jsonObject(with: data) as! [String: Any])
-        }
-        let (stateStatus, state) = try await request("api/state")
-        precondition(stateStatus == 200)
-        let baseline = (state["library"] as! [String: Any])["examPlan"] as! [[String: Any]]
-        precondition(baseline.count == 4)
-        let advised = try await request("api/exam-recommendation", body: ["exams": baseline, "interests": "Robotics"])
-        precondition(advised.0 == 200 && (advised.1["selectedExamIDs"] as? [String]) == recommended.selectedExamIDs)
-        let discussed = try await request("api/exam-recommendation", body: ["exams": baseline, "interests": "Robotics: which overlapping exam should I take?", "mode": "advice"])
-        precondition(discussed.0 == 200 && (discussed.1["advice"] as? String)?.contains("Take TDT4100 over TMA4100") == true
-            && model.library.examPlan == exams)
-        let continued = try await request("api/exam-recommendation", body: ["exams": baseline, "interests": "Why that one?", "mode": "advice",
-            "history": [["role": "user", "content": "Robotics: which overlapping exam should I take?"],
-                ["role": "assistant", "content": discussed.1["advice"] as! String]]])
-        precondition(continued.0 == 200 && (continued.1["advice"] as? String)?.contains("earlier Robotics goal") == true
-            && model.library.examPlan == exams, "The native web API retains advice context without changing selections")
-        var updated = baseline; updated[0]["selected"] = false
-        let saved = try await request("api/action", body: ["action": "examPlan", "exams": updated, "baseExams": baseline])
-        precondition(saved.0 == 200 && model.library.examPlan?[0].selected == false)
-        let stale = try await request("api/action", body: ["action": "examPlan", "exams": [], "baseExams": baseline])
-        precondition(stale.0 != 200 && model.library.examPlan?.count == 4)
+
     }
 
     static func searchControlsChecks(window: NSWindow, workspace: StudyWorkspaceModel, output: URL) async throws {

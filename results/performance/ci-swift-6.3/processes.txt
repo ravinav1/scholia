@@ -1,0 +1,4 @@
+ 2080  2078   04:03   0.0  56512 /Applications/Xcode_26.5.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-build
+ 3141  2080   03:20   0.0  28560 /Applications/Xcode_26.5.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-driver
+ 3142  3141   03:20 100.0 908000 /Applications/Xcode_26.5.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend
+ 3766  3142   03:04   0.0   7760 /Applications/Xcode_26.5.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/bin/swift-plugin-server

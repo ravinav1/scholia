@@ -122,9 +122,7 @@ struct StudySearchView: View {
         guard let courseID = UUID(uuidString: hit.courseID),
               let course = workspace.library.courses.first(where: { $0.id == courseID }) else { return }
         if let id = hit.documentID.flatMap(UUID.init(uuidString:)), course.documents.contains(where: { $0.id == id }) {
-            workspace.selectCourse(courseID)
-            workspace.selectDocument(id)
-            workspace.setPage(max(1, hit.page))
+            workspace.openReading(id, courseID: courseID, page: max(1, hit.page))
         } else if let material = course.materials.first(where: { $0.id == hit.materialID }) {
             if material.kind == .assignments { workspace.openAssignment(material, courseID: courseID) }
             else { workspace.openCanvasMaterial(material, courseID: courseID) }

@@ -2,8 +2,8 @@
 
 Scholia is a native SwiftUI and AppKit study workspace with PDFKit, local Vision
 OCR, Quick Look, a resizable tutor pane, and a menu-bar companion. It requires
-macOS 14 or newer. Reading, indexing, navigation, and saved files work without a
-web server. Provider requests still require the selected service or local model.
+macOS 14 or newer. Reading, indexing, navigation, and saved files run locally.
+Provider requests require the selected service or local model.
 
 See the [workspace guide](../../docs/STUDY_WORKSPACE.md) for Canvas, assignments,
 file views, document editing, and practice.
@@ -37,11 +37,9 @@ you want changes from GitHub, update your checkout first. Keep the source folder
 on your Mac; if you move it, double-click its updater once to reconnect the app.
 Chats, documents, settings, and saved credentials survive app replacement.
 
-Local updates use incremental debug compilation and skip the IDE index, so repeat
-updates compile only affected Swift files. The first build still prepares the
-cache; Terminal prints an elapsed-time message during long compiler steps.
-For a fully optimized distribution build, use `npm run update:macos -- --release`
-or `npm run build:macos -- release`.
+Builds and updates use optimized release compilation by default. Terminal prints
+an elapsed-time message during long compiler steps. For an explicit debug build,
+use `npm run update:macos -- --debug` or `npm run build:macos -- debug`.
 
 The build packages and signs a temporary app before replacing the copy in `dist`.
 The updater force quits each running copy in `dist` and Applications before
@@ -55,8 +53,14 @@ if you want a permanent shortcut.
 
 For development, `npm run build:macos` only produces `dist/macos/Scholia.app`;
 `npm run install:macos -- --skip-build --launch` installs that build without
-rebuilding. `npm run run:macos` runs from source; packaged builds are needed for
-Services and launch at login. Use `npm run update:macos -- --help` for options.
+rebuilding. `npm run run:macos` runs a release from source;
+`npm run run:macos:debug` selects debug. Packaged builds are needed for Services
+and launch at login. Use `npm run update:macos -- --help` for options.
+
+The app build runs `npm run build:native-resources` to prepare local
+JavaScriptCore search/highlighting helpers and study-plan data in
+`dist/native-resources`, then packages them in `Contents/Resources/NativeResources`.
+The local semantic search worker is maintained in `packages/search`.
 
 The build automatically uses an installed macOS 26.5 SDK when the macOS 27
 Command Line Tools lack `SwiftUIMacros.StateMacro`. Set `SDKROOT` to explicitly
@@ -196,8 +200,7 @@ explicitly emptied fields/lists, so deleted preferences do not accumulate. Limit
 are 8,000 characters each for instructions/profile and 24,000 for memories.
 No conversation history or authentication tokens are imported. The snapshot
 is stored separately from course libraries in a local file readable only by
-the current user. This feature belongs to the Mac app; hosted accounts do not
-receive its saved personalization.
+the current user.
 
 The source controls are documented in [ChatGPT personalization](https://learn.chatgpt.com/docs/personalize)
 and [Claude memory import/export](https://support.claude.com/en/articles/12123587-import-and-export-your-memory-from-claude).
@@ -283,16 +286,14 @@ can also page through a specific archive member without unpacking or executing i
 File contents read for a question go to the selected model. macOS folder privacy
 permissions still apply; Settings includes a link to **Full Disk Access** for
 protected locations. Automatic classification, practice generation, and model
-connection tests do not receive these file tools. The Mac's local browser
-workspace shares its chat permissions. Hosted websites and the Chrome extension
-do not gain access to your Mac's filesystem from this setting.
+connection tests do not receive these file tools. The Chrome extension does not
+gain access to your Mac's filesystem from this setting.
 
 ## Companion shortcuts
 
 | Shortcut              | Action                                      |
 | --------------------- | ------------------------------------------- |
 | Command-1             | Open study workspace                        |
-| Command-2             | Start and open the optional local website   |
 | Command-[ / Command-] | Back / Forward in the workspace             |
 | Command-Shift-Space   | Open temporary Quick Ask / Quick Chat       |
 | Command-Shift-E       | Explain the current selection               |
@@ -365,11 +366,6 @@ reuses a healthy existing bridge, and stops only processes it owns. Node.js and
 the chosen CLI must be installed. Ollama and opencode keep their own lifecycle.
 GPT NTNU requires its personal API key and an NTNU network or VPN connection.
 
-**Open in Browser** starts a loopback server on `127.0.0.1:8792` for this Mac's
-workspace. The browser receives no raw provider or Canvas secrets. It requires
-the app to remain running. The [hosted web service](../../docs/HOSTING.md) is a
-separate deployment with separate account storage.
-
 ## Verification
 
 **Study on Paper (⌘3)** provides native iPhone Continuity Camera capture and a
@@ -393,5 +389,7 @@ zsh scripts/smoke/macos/run.sh panels
 Smoke scripts accept `SDKROOT`. They link actual application code against
 isolated libraries and deterministic fixtures. The panel check exercises
 content changes and resizing without provider requests. Browser verification
-uses Chromium. With full Xcode installed, `swift test --package-path apps/macos`
-also runs the Swift package tests.
+uses Chromium. With full Xcode installed,
+`swift test --package-path apps/macos --configuration release` runs the Swift
+package tests. CI uses full Xcode on `macos-latest` for release compilation and
+XCTest; Command Line Tools alone may not support XCTest.

@@ -1,8 +1,7 @@
 # Practice and review
 
-Practice is available in the native Mac app, its local website and the hosted
-web app. The Mac and local website share a learning store; hosted practice stays
-in the signed-in account and does not sync with the Mac library.
+Structured practice and review are available in the native Mac app. Questions,
+attempts, and review schedules are saved in its local learning store.
 
 **Practice course** on each course card opens course preparation. Choose **Cover
 the whole course**, **Revisit weak areas**, or the current reading/selection.
@@ -23,8 +22,7 @@ material is not claimed as covered. These counts describe source pages practiced
 not exhaustive coverage of every concept on a page or a prediction of exam results.
 
 **Practice this** still supports the selected passage or current page/section.
-The native/local service retains a selected figure with its source; hosted
-generation currently uses the saved text index. The Practice composer starter
+A selected figure is retained with its source. The Practice composer starter
 opens setup without replacing the chat draft. Generation uses the configured
 provider, happens only on request, and can be cancelled. Changing the reading
 in the native workspace cancels preparation for its previous scope.
@@ -37,24 +35,23 @@ Questions and feedback identify the supporting document and page/section. **Open
 
 ## Review scheduling
 
-Save selected questions during practice or in the recap. **Review due** is next to the reader/dashboard controls and includes recent sessions for resuming practice across native and browser views. The initial workload limit is ten completed reviews per local day, adjustable from 1–30. Snooze moves a question one day from now; saved questions can be removed from the queue without deleting attempts. There are no missed-day penalties.
+Save selected questions during practice or in the recap. **Review due** is next to the reader/dashboard controls and includes recent sessions for resuming practice. The initial workload limit is ten completed reviews per local day, adjustable from 1–30. Snooze moves a question one day from now; saved questions can be removed from the queue without deleting attempts. There are no missed-day penalties.
 
 Scheduler version 1 starts with a one-day delay. A correct first attempt without hints, source access, reveal or revision doubles the previous interval, with a minimum of three and maximum of thirty days. Assisted or incomplete reviews return after one day. Uncertain/disputed judgments, missing feedback and stale sources preserve the interval. Self-assessment alone does not establish independent recall. Confidence does not control the schedule. One finish event updates a review once; repeated requests and delayed feedback do not advance it again. These intervals are initial product parameters, not universal learning prescriptions.
 
-## Persistence and handoff
+## Persistence
 
-`Study/Learning/events.sqlite` is separate from `library.json` and chat history. SQLite transactions append uniquely identified events and reject a stale writer. A retried event must carry the same ID and content. Session versions protect concurrent actions; review versions protect snoozes/removals. Source snapshots, question revisions, attempts, feedback, concerns and schedule evidence are local by default. No research telemetry is collected.
+`Study/Learning/events.sqlite` is separate from `library.sqlite` and chat history. SQLite transactions append uniquely identified events and reject a stale writer. A retried event must carry the same ID and content. Session versions protect concurrent actions; review versions protect snoozes/removals. Source snapshots, question revisions, attempts, feedback, concerns and schedule evidence are local by default. No research telemetry is collected.
 
-Hosted practice uses a separate account-owned SQLite record with revision checks,
-stable event identifiers and immutable original answers. Its browser drafts and
-offline outbox are isolated by account. Answers are committed before feedback is
-requested, so provider failure leaves them available for retry or self-check.
+Reference answers stay hidden until an explicit reveal after a saved attempt.
+Generated text can still leak an answer indirectly, so model behavior requires
+evaluation beyond application checks.
 
-Native and local-web views use the same learning-session and question IDs. The browser fetches learning detail separately, while ordinary workspace polling carries only the learning revision and due count. The initial web projection omits the rubric and reference answer; only an explicit reveal includes them. Reference answers are also hidden in native views until that transition. Generated text can still leak an answer indirectly, so model behavior requires evaluation beyond these application checks.
-
-Saved questions, hints, solutions, attempts and scheduling work without internet or a provider. Automatic feedback and new questions require a provider; failure leaves the answer saved for later feedback or self-check. The local website requires the Mac app to remain running. Browser answer drafts are isolated per tab, retained across reload, and submissions have a durable local outbox with stable event IDs. Conflicting offline answers remain available for copying in the recovery list. Native unsent answer drafts are local and scoped to the library/session/question. Provider/model switches do not reset a session.
-
-Chat draft and page commands carry the originating course, document, thread, page and a content revision. Stale writes are rejected before mutating the native workspace. Browser drafts remain available for copying or returning to the original reading. Mutations queued by the same tab follow their own acknowledged revisions; this does not bypass conflicts from other windows.
+Saved questions, hints, solutions, attempts, and scheduling work without internet
+or a provider. Automatic feedback and new questions require a provider; failure
+leaves the answer saved for later feedback or self-check. Unsent answer drafts
+are local and scoped to the library, session, and question. Changing provider or
+model does not reset a session.
 
 ## Verification and remaining evaluation
 
@@ -62,14 +59,16 @@ Run:
 
 ```sh
 npm run check
-npm run build && npm run check:dist
-node scripts/smoke/browser/smoke-chromium-history.mjs
 zsh scripts/smoke/macos/run.sh workspace --learning-only
 zsh scripts/smoke/macos/run.sh workspace --data-only
 zsh scripts/smoke/macos/run.sh workspace
 ```
 
-The native smoke uses an isolated library and deterministic generation/feedback. It checks original/revised answers, confidence and assistance, hidden solutions, disputes, self-checks, source versions, restart, duplicate events, competing writers, scheduler outcomes and offline/late feedback. The full smoke drives Chromium through generation, submission, feedback, reload/resume, hints, revision, reveal, recap, review saving/snooze, and responsive layouts. It also checks the actual API rejects a draft delayed across a second window's navigation. A separate Chromium smoke loads the built extension and checks concurrent writes from two extension pages. Unit tests cover extension history concurrency, failed Canvas refresh retention, changed deadlines and the tutoring contract. No live provider completion or Canvas account is needed for these checks.
+The native smoke uses an isolated library and deterministic generation/feedback.
+It checks original/revised answers, confidence and assistance, hidden solutions,
+disputes, self-checks, source versions, restart, duplicate events, competing
+writers, scheduler outcomes, and offline/late feedback. No live provider
+completion or Canvas account is needed for these checks.
 
 Before broad educational use, evaluate actual responses from each offered provider/model with correct, partial, mistaken and ambiguous answers; equivalent mathematics and reasoning; non-English answers; explicit reveal requests; repeated difficulty; noisy OCR; missing pages/images; and indirect answer leakage. Check source support and question solvability manually. The first release provides structured partial/uncertain judgments but does not implement symbolic equivalence, numerical-tolerance grading or semantic proof that a generated rubric is correct. These remain evaluation/validation work. No learning-outcome improvement is claimed without a delayed, unassisted evaluation.
 

@@ -1,0 +1,97 @@
+{
+  "buildID" : "c4492b5",
+  "bytes" : "Encoded JSON payload bytes, not filesystem or SQLite WAL\/page bytes",
+  "configuration" : "release",
+  "kind" : "native-full-json-storage-reproduction",
+  "recordedAt" : "2026-11-08T00:34:54Z",
+  "results" : [
+    {
+      "courses" : 6,
+      "documents" : 120,
+      "encodedPayloadBytesPerSample" : [
+        536943,
+        536943,
+        536943,
+        536943,
+        536943
+      ],
+      "imageBytes" : 0,
+      "materials" : 420,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        3.9118750000000002,
+        3.2077909999999998,
+        3.316459,
+        3.2574580000000002,
+        3.2917079999999999
+      ],
+      "wholeFileReplacementsPerSample" : [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "courses" : 89,
+      "documents" : 1780,
+      "encodedPayloadBytesPerSample" : [
+        28283053,
+        28283053,
+        28283053,
+        28283053,
+        28283053
+      ],
+      "imageBytes" : 20000000,
+      "materials" : 6230,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        98.049791999999997,
+        93.636707999999999,
+        94.917833000000002,
+        94.703208000000004,
+        94.988957999999997
+      ],
+      "wholeFileReplacementsPerSample" : [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "courses" : 500,
+      "documents" : 10000,
+      "encodedPayloadBytesPerSample" : [
+        6991738,
+        6991738,
+        6991738,
+        6991738,
+        6991738
+      ],
+      "imageBytes" : 0,
+      "materials" : 35000,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        131.81420800000001,
+        127.19987500000001,
+        124.80241700000001,
+        128.62337500000001,
+        127.966917
+      ],
+      "wholeFileReplacementsPerSample" : [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "rows" : "Whole library JSON replacements"
+}

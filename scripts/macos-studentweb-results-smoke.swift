@@ -154,7 +154,9 @@ struct StudentwebResultsSmoke {
         let libraryAfter = try encoder.encode(model.library)
         precondition(libraryAfter == libraryBefore, "Import must not mutate shared course, favorite or exam data")
         model.flush()
-        let libraryOnDisk = try Data(contentsOf: root.appendingPathComponent("library.json"))
+        let exportedLibrary = root.appendingPathComponent("privacy-check-export.json")
+        try model.store.exportJSON(to: exportedLibrary)
+        let libraryOnDisk = try Data(contentsOf: exportedLibrary)
         precondition(!String(decoding: libraryOnDisk, as: UTF8.self).contains("PRIVATE1000"))
         let stored = await vault.read()!
         let object = try JSONSerialization.jsonObject(with: stored) as! [[String: Any]]
@@ -172,7 +174,6 @@ struct StudentwebResultsSmoke {
         try await verifyAdvice(model, rows: rows, configuration: configuration)
         let ranking = #"{"courseLimit":2,"rankedCourses":[{"courseKey":"TDT4100","reason":"Programming"},{"courseKey":"TMA4100","reason":"Calculus"}]}"#
         var wirePayloads: [Data] = []
-        var webAdvicePayloads: [Data] = []
         let mock: StudyCompletion = { messages, config, _ in
             let input = messages[0].attachments!.first { $0.fileName == "exam-plan.json" }!.extractedText
             precondition(!input.contains("passedCourseCodes") && !input.contains("PRIVATE1000"))
@@ -183,7 +184,7 @@ struct StudentwebResultsSmoke {
             let request = try ProviderClient().buildRequest(prepared: prepared, configuration: config, endpoint: URL(string: config.endpoint)!)
             let wire = try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: request.httpBody!), options: .sortedKeys)
             let isAdvice = messages[0].content.contains(StudyExamRecommender.adviceInstructions)
-            if isAdvice { webAdvicePayloads.append(wire) } else { wirePayloads.append(wire) }
+            if !isAdvice { wirePayloads.append(wire) }
             return CompletionResult(text: isAdvice ? "Synthetic advice." : ranking, providerID: "openai", providerName: "Fixture", model: "fixture")
         }
         let request = StudyExamRecommendationRequest(exams: exams, interests: "Programming and maths")
@@ -193,46 +194,12 @@ struct StudentwebResultsSmoke {
         precondition(local.excluded.last?.reason.contains("Already passed") == true)
         precondition(responseWith.selectedExamIDs == ["passed", "unpassed"], "Local filtering cannot contaminate the shared response")
 
-        let assets = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/web")
-        let server = StudyWebServer(app: AppModel.shared, workspace: model, assets: assets,
-            examRecommendationProvider: (configuration, mock))
-        server.start(port: 0)
-        defer { server.stop() }
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        guard let address = server.address else { throw StudyError.message("Test web server failed to start") }
-        let (html, _) = try await URLSession.shared.data(from: address)
-        let token = String(decoding: html, as: UTF8.self).components(separatedBy: "name=\"scholia-token\" content=\"")[1].components(separatedBy: "\"")[0]
-        func get(_ path: String, body: Data? = nil) async throws -> Data {
-            var request = URLRequest(url: address.appendingPathComponent(path))
-            request.setValue(token, forHTTPHeaderField: "X-Scholia-Token")
-            if let body {
-                request.httpMethod = "POST"; request.httpBody = body
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            }
-            let (data, response) = try await URLSession.shared.data(for: request)
-            precondition((response as! HTTPURLResponse).statusCode == 200)
-            return try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: data), options: .sortedKeys)
-        }
-        let stateWith = try await get("api/state")
-        precondition(!String(decoding: stateWith, as: UTF8.self).contains("PRIVATE1000"))
-        let apiWith = try await get("api/exam-recommendation", body: encoder.encode(request))
-        var adviceRequest = request; adviceRequest.mode = .advice
-        var untrusted = try JSONSerialization.jsonObject(with: encoder.encode(adviceRequest)) as! [String: Any]
-        untrusted["includePassedCourses"] = true; untrusted["passedCourseCodes"] = ["LEAK1000"]
-        let webAdviceBody = try JSONSerialization.data(withJSONObject: untrusted)
-        let webAdviceWith = try await get("api/exam-recommendation", body: webAdviceBody)
         try await render(model)
         try await model.replaceCourseCompletions([])
         let deletedData = await vault.read()
         precondition(deletedData == nil && model.courseCompletions.isEmpty)
-        let stateWithout = try await get("api/state")
-        let apiWithout = try await get("api/exam-recommendation", body: encoder.encode(request))
-        let webAdviceWithout = try await get("api/exam-recommendation", body: webAdviceBody)
-        precondition(stateWith == stateWithout, "The web client must not detect saved statuses")
-        precondition(apiWith == apiWithout, "Web recommendations must not expose local filtering")
-        precondition(Set(wirePayloads).count == 1, "Provider request content must be identical with and without saved results")
-        precondition(webAdviceWith == webAdviceWithout && Set(webAdvicePayloads).count == 1,
-            "The web API cannot opt into native passed-course context, even through extra JSON fields")
+        _ = try await model.recommendExams(request, using: AppModel.shared, configuration: configuration, complete: mock)
+        precondition(Set(wirePayloads).count == 1, "Ranking provider requests must remain identical with and without saved results")
         await restarted.loadCourseCompletions(allowInteraction: true)
         precondition(restarted.courseCompletions.isEmpty)
         // Account/institution replacement must drop old statuses, not merge them.

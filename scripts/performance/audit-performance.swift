@@ -1,5 +1,6 @@
 @preconcurrency import AppKit
 import Foundation
+import Darwin
 @testable import ScholiaMac
 
 // Match CanvasClient's actor isolation when measuring the previous implementation.
@@ -39,14 +40,23 @@ struct PerformanceAudit {
         return library
     }
     static func auditDownloads(session: URLSession, client: CanvasClient) async throws {
+        func cpu() -> Double {
+            var value = rusage(); getrusage(RUSAGE_SELF, &value)
+            return Double(value.ru_utime.tv_sec + value.ru_stime.tv_sec) + Double(value.ru_utime.tv_usec + value.ru_stime.tv_usec) / 1e6
+        }
+        func peakMemory() -> Int { var value = rusage(); getrusage(RUSAGE_SELF, &value); return value.ru_maxrss }
         for size in [1_000_000, 10_000_000, 50_000_000] {
             let url = URL(string: "https://canvas.example.test/blob/\(size)")!
             var start = ContinuousClock.now
+            var cpuStart = cpu()
             let data = try await client.download(url)
-            emit("native.download.chunks", ["bytes": data.count, "elapsedMs": milliseconds(start)])
+            emit("native.download.chunks", ["bytes": data.count, "elapsedMs": milliseconds(start),
+                "cpuSeconds": cpu() - cpuStart, "processPeakResidentBytes": peakMemory()])
             start = .now
+            cpuStart = cpu()
             let (bulk, _) = try await session.data(from: url)
-            emit("native.download.bulkBaseline", ["bytes": bulk.count, "elapsedMs": milliseconds(start)])
+            emit("native.download.bulkBaseline", ["bytes": bulk.count, "elapsedMs": milliseconds(start),
+                "cpuSeconds": cpu() - cpuStart, "processPeakResidentBytes": peakMemory()])
             if CommandLine.arguments.contains("--compare-byte-loop") {
                 start = .now
                 let previous = try await ByteLoopBaseline().download(url, session: session)
@@ -54,6 +64,26 @@ struct PerformanceAudit {
                 emit("native.download.byteLoopBaseline", ["bytes": previous.count, "elapsedMs": milliseconds(start)])
             }
         }
+        var heartbeat: [Double] = []
+        let ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                let start = ContinuousClock.now
+                do { try await Task.sleep(for: .milliseconds(10)) } catch { break }
+                heartbeat.append(max(0, milliseconds(start) - 10))
+            }
+        }
+        let start = ContinuousClock.now, cpuStart = cpu()
+        let total = try await withThrowingTaskGroup(of: Int.self) { group in
+            for _ in 0..<2 { group.addTask { try await client.download(URL(string: "https://canvas.example.test/blob/50000000")!).count } }
+            var total = 0
+            for try await count in group { total += count }
+            return total
+        }
+        ticker.cancel()
+        await ticker.value
+        precondition(total == 100_000_000)
+        emit("native.download.concurrent", ["transfers": 2, "totalBytes": total, "elapsedMs": milliseconds(start),
+            "cpuSeconds": cpu() - cpuStart, "processPeakResidentBytes": peakMemory(), "heartbeatDelayMs": heartbeat])
     }
     static func auditHistoryWrites(root: URL) throws {
         let url = root.appendingPathComponent("chats.json")
@@ -101,7 +131,7 @@ struct PerformanceAudit {
                 let model = StudyWorkspaceModel(store: store)
                 measure("native.\(count)courses.favorite") { model.toggleFavorite(library.courses[0].id) }
                 measure("native.\(count)courses.semesters") { _ = model.semesterGroups }
-                emit("native.\(count)courses.size", ["libraryBytes": try Data(contentsOf: store.root.appendingPathComponent("library.json")).count])
+                emit("native.\(count)courses.size", ["portableJSONBytes": try JSONEncoder().encode(store.load()).count])
             }
             var imageLibrary = library(89)
             var imageThread = StudyThread(title: "Image-heavy synthetic history")
@@ -109,7 +139,7 @@ struct PerformanceAudit {
             imageLibrary.courses[0].threads = [imageThread]
             let imageStore = StudyLibraryStore(root: root.appendingPathComponent("images"))
             try measure("native.89courses.20imageMessages.save", iterations: 5) { try imageStore.save(imageLibrary) }
-            emit("native.89courses.20imageMessages.size", ["libraryBytes": try Data(contentsOf: imageStore.root.appendingPathComponent("library.json")).count])
+            emit("native.89courses.20imageMessages.size", ["portableJSONBytes": try JSONEncoder().encode(imageStore.load()).count])
             let store = StudyLibraryStore(root: root.appendingPathComponent("context"))
             var course = StudyCourse(name: "Synthetic context")
             let text = String(repeating: "Eigenvectors preserve directions. Matrices transform vectors. Orthogonal basis and eigenvalue decomposition.\n\n", count: 500)
@@ -140,23 +170,7 @@ struct PerformanceAudit {
             do { _ = try await client.download(URL(string: "https://canvas.example.test/unavailable")!) } catch {
                 emit("native.sync.503", ["requests": AuditProtocol.state.requests, "error": error.localizedDescription])
             }
-            if CommandLine.arguments.contains("--browser") {
-                let webStore = StudyLibraryStore(root: root.appendingPathComponent("web"))
-                try webStore.save(library(89))
-                let webModel = StudyWorkspaceModel(store: webStore)
-                let server = StudyWebServer(app: AppModel.shared, workspace: webModel, assets: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("dist/web"))
-                server.start(port: 0)
-                for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-                guard let address = server.address else { throw StudyError.message(webModel.error ?? "Server did not start") }
-                defer { server.stop() }
-                let process = Process(); process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["node", "scripts/performance/audit-performance-browser.mjs", address.absoluteString]
-                let status: Int32 = try await withCheckedThrowingContinuation { continuation in
-                    process.terminationHandler = { process in continuation.resume(returning: process.terminationStatus) }
-                    do { try process.run() } catch { continuation.resume(throwing: error) }
-                }
-                if status != 0 { throw StudyError.message("Browser audit failed: \(status)") }
-            }
+
         } catch { emit("audit.error", ["error": String(describing: error)]); exit(1) }
     }
 }

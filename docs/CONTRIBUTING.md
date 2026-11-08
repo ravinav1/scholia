@@ -6,36 +6,35 @@ newer and Apple's developer tools. Browser checks need Chromium; do not use Brav
 
 ## Find the code
 
-| Directory       | Contents                                                       |
-| --------------- | -------------------------------------------------------------- |
-| `apps/chrome`   | Extension pages, capture, PDF reader, and service worker       |
-| `apps/macos`    | Swift app and native tests                                     |
-| `apps/server`   | Hosted API, accounts, storage, and document workers            |
-| `apps/web`      | Browser workspace shared by the native and hosted servers      |
-| `packages/core` | Shared JavaScript contracts, prompts, and provider definitions |
-| `scripts`       | Builds, local bridges, performance tools, and smoke checks     |
-| `tests`         | JavaScript unit and integration tests                          |
-| `docs`          | User guides, deployment, architecture, and privacy             |
+| Directory         | Contents                                                       |
+| ----------------- | -------------------------------------------------------------- |
+| `apps/chrome`     | Extension pages, capture, PDF reader, and service worker       |
+| `apps/macos`      | Swift app and native tests                                     |
+| `packages/core`   | Shared JavaScript contracts, prompts, and provider definitions |
+| `packages/search` | Native semantic search worker, local embedding, and indexing   |
+| `scripts`         | Builds, local bridges, performance tools, and smoke checks     |
+| `tests`           | JavaScript unit and integration tests                          |
+| `docs`            | User guides, architecture, privacy, and performance            |
 
 Start with [Architecture](ARCHITECTURE.md) when a change crosses clients.
 Keep code beside the feature that owns it. Share a helper when callers need the
 same behavior; avoid adding a file just to wrap a single expression.
 
 Client code is grouped by feature: readers, chat, courses, exams, and practice.
-Tests follow their component under `tests/core`, `tests/chrome`, `tests/web`,
-`tests/server`, and `tests/tooling`. Native XCTest files stay in `apps/macos/Tests`.
+Tests follow their component under `tests/core`, `tests/chrome`, and
+`tests/tooling`. Native XCTest files stay in `apps/macos/Tests`.
 
 Build and packaging tools live in `scripts/build`; source checks in
 `scripts/checks`; app installers in `scripts/macos`. Browser and native smoke
 checks share `scripts/smoke`, while benchmarks stay in `scripts/performance`.
-Deployment files belong to `apps/server`. Keep the root for the README, license,
+Keep the root for the README, license,
 repository instructions, and tools that need root-level configuration.
 
 ## Checks
 
 ```sh
 npm run check
-npm run build:web
+npm run build:native-resources
 npm run package:chrome
 ```
 
@@ -49,11 +48,9 @@ To run one JavaScript test while working:
 node --test tests/core/context.test.js
 ```
 
-For browser behavior, build the affected client first:
+For extension browser behavior, build the extension first:
 
 ```sh
-npm run build:web
-node scripts/smoke/browser/smoke-hosted-web.mjs
 npm run build
 node scripts/smoke/browser/smoke-chromium-region.mjs
 node scripts/smoke/browser/smoke-chromium-history.mjs
@@ -73,23 +70,26 @@ npm run smoke:macos:workspace -- --learning-only
 npm run smoke:macos:panels
 ```
 
-The full workspace smoke also exercises the local website in Chromium. With
-full Xcode installed, run `swift test --package-path apps/macos`. See the
+With full Xcode installed, run
+`swift test --package-path apps/macos --configuration release`. See the
 [Mac guide](../apps/macos/README.md) for SDK selection and signing.
-All native smoke commands use `scripts/smoke/macos/run.sh`. Pass `-- --skip-build`
+The listed native smoke commands use `scripts/smoke/macos/run.sh`. Pass `-- --skip-build`
 to reuse a current native build when running several suites.
 
-CI runs the JavaScript checks and web/extension builds. It also builds the
-Docker image and checks the running service and PDF worker dependencies.
-Native UI checks are run locally.
+Normal native builds and installs use release optimization. Use
+`npm run build:macos -- debug` or `npm run update:macos -- --debug` for an explicit
+debug build.
+
+CI runs JavaScript checks, builds native resources, packages the extension, and
+verifies it in Chromium. A `macos-latest` job with full Xcode builds and tests
+the native release. Native UI checks run locally.
 
 Feature smoke checks also cover search, exam imports, course documents, and
 native file tools:
 
 ```sh
-npm run smoke:chromium:search
-npm run smoke:chromium:exams
-npm run smoke:chromium:courses
+npm run smoke:macos:exams
+npm run smoke:macos:courses
 npm run smoke:chromium:studentweb
 npm run smoke:macos:search
 npm run smoke:macos:files
@@ -117,9 +117,8 @@ command names, explain limits where they affect a task, and keep setup steps in
 one guide with links from the others. Don't document unfinished features as
 available.
 
-Keep generated builds in `dist/`, exports in `output/`, and hosted development
-data in `.data/`. Do not commit credentials, local bridge environment files, or
-account data. `apps/server/.env.example` is the configuration template.
+Keep generated builds in `dist/` and exports in `output/`. Do not commit
+credentials, local bridge environment files, or personal library data.
 
 A PR should explain the problem, the resulting behavior, the checks run, and any
 remaining limitations. Report sensitive vulnerabilities through

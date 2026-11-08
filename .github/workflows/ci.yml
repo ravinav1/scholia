@@ -8,8 +8,12 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  javascript-and-extension:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,19 +23,100 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm run build:web
+      - run: npm run build:native-resources
       - run: npm run package:chrome
+      - name: Install Chromium for packaged extension verification
+        run: |
+          npx playwright install --with-deps chromium
+          browser=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")
+          test -n "$browser"
+          echo "CHROMIUM_BIN=$browser" >> "$GITHUB_ENV"
+      - name: Verify packaged extension in actual Chromium
+        env:
+          # Ubuntu runner AppArmor restricts unprivileged browser namespaces.
+          # These fixtures run in a disposable CI VM and isolated browser profile.
+          SCHOLIA_CHROMIUM_NO_SANDBOX: '1'
+        run: |
+          node scripts/performance/benchmark-extension.mjs --packaged --after-removal
+          node scripts/smoke/browser/smoke-codex-model-selection.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-verification
+          path: |
+            results/performance/extension-*.json
+            dist/verification/
 
-  hosted-container:
-    runs-on: ubuntu-latest
+  vision-diagnostics:
+    # Probe framework availability independently of application/test compilation.
+    # This diagnostic never skips or changes the native OCR regression gate.
+    runs-on: xcode-27
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --file apps/server/Dockerfile --tag scholia:test .
-      - name: Check independent hosted service
+      - name: Record direct Vision capabilities
         run: |
-          docker run --detach --name scholia-test -p 127.0.0.1:3000:3000 --env SCHOLIA_ORIGIN=http://127.0.0.1:3000 scholia:test
-          curl --fail --retry 10 --retry-all-errors --retry-delay 1 http://127.0.0.1:3000/healthz
-          docker exec scholia-test node --input-type=module -e "const { DOMMatrix } = await import('@napi-rs/canvas'); new DOMMatrix(); console.log('PDF worker dependencies available');"
-      - name: Show service output
+          mkdir -p results/performance/ci-native
+          xcrun swiftc -O scripts/performance/diagnose-vision.swift -o /tmp/scholia-vision-probe
+          /tmp/scholia-vision-probe results/performance/ci-native/vision-capabilities.json
+      - uses: actions/upload-artifact@v4
         if: always()
-        run: docker logs scholia-test || true
+        with:
+          name: vision-capabilities
+          path: results/performance/ci-native/vision-capabilities.json
+          if-no-files-found: warn
+
+  native-release:
+    # Match the Swift 6.4 compiler used for the measured release builds.
+    runs-on: xcode-27
+    timeout-minutes: 55
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build:native-resources
+      - name: Verify full Xcode toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun swiftc --version | tee /tmp/scholia-ci-swift-version.txt
+          grep -q "Swift version 6.4" /tmp/scholia-ci-swift-version.txt
+      - name: Compile native release and tests
+        id: native-build
+        timeout-minutes: 20
+        run: zsh scripts/macos/ci-swift-check.sh build
+      - name: Run native release XCTest
+        timeout-minutes: 20
+        run: zsh scripts/macos/ci-swift-check.sh test
+      - name: Check native performance work counts and navigation
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        run: |
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-review-regressions.swift
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-persistence-regressions.swift
+      - name: Verify native attachment limits and scanned PDF OCR
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        run: zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-attachment-regressions.swift
+      - name: Package the native app without installing
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        env:
+          SCHOLIA_CODESIGN_IDENTITY: '-'
+          SCHOLIA_AUTO_LOCAL_SIGNING: '0'
+        run: |
+          npm run build:macos
+          node scripts/checks/check-native-package.mjs
+          node scripts/macos/verify-swiftmath-resource-patch.mjs
+          zsh scripts/macos/check-swiftmath-package.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-compiler-diagnostics
+          path: results/performance/ci-native/
+          if-no-files-found: ignore

@@ -37,6 +37,7 @@ const required = [
   manifest.side_panel?.default_path,
   ...manifest.content_scripts.flatMap((entry) => entry.js || []),
   ...Object.values(manifest.icons || {}),
+  'content-ui.js', 'content-context.js',
   'options.js', 'options.css', 'panel.js', 'panel.css', 'file-attachments.css',
   'chat.html', 'chat.css', 'chat-bootstrap.js',
   'popup.js', 'popup.css', 'pdf-viewer.html', 'pdf-viewer.js', 'pdf-viewer.css',
@@ -58,18 +59,25 @@ for (const htmlFile of [manifest.options_page, manifest.action.default_popup, ma
   if (/\son\w+\s*=/.test(html)) throw new Error(`${htmlFile} contains an inline event handler.`);
 }
 
-for (const jsFile of ['content.js', 'chatgpt-probe.js', 'service-worker.js', 'options.js', 'panel.js', 'chat-bootstrap.js', 'popup.js', 'pdf-viewer.js', 'ocr-offscreen.js']) {
+for (const jsFile of ['content.js', 'content-ui.js', 'content-context.js', 'chatgpt-probe.js', 'service-worker.js', 'options.js', 'panel.js', 'chat-bootstrap.js', 'popup.js', 'pdf-viewer.js', 'ocr-offscreen.js']) {
   const source = await readFile(join(dist, jsFile), 'utf8');
   if (/\b(?:eval|Function)\s*\(/.test(source)) throw new Error(`${jsFile} contains dynamic code execution.`);
   if (/\bimport\s*\(\s*["']https?:\/\//.test(source)) throw new Error(`${jsFile} imports remote code.`);
 }
 
-for (const jsFile of ['content.js', 'service-worker.js', 'options.js', 'panel.js', 'popup.js']) {
+for (const jsFile of ['content-ui.js', 'service-worker.js', 'options.js', 'panel.js', 'popup.js']) {
   const source = await readFile(join(dist, jsFile), 'utf8');
   if (!source.includes('GPT NTNU')
       || !source.includes('https://llm.hpc.ntnu.no/v1/chat/completions')) {
     throw new Error(`${jsFile} is missing the GPT NTNU provider.`);
   }
+}
+
+// Every idle frame gets only the bounded bootstrap, never rich renderers.
+const bootstrap = await readFile(join(dist, 'content.js'), 'utf8');
+if (Buffer.byteLength(bootstrap) > 16_384) throw new Error('Content bootstrap exceeds its 16 KiB budget.');
+if (!manifest.web_accessible_resources?.some((entry) => ['content-ui.js', 'content-context.js'].every((path) => entry.resources?.includes(path)))) {
+  throw new Error('The lazy content module must be accessible from the isolated content world.');
 }
 
 const fonts = await readdir(join(dist, 'vendor', 'katex', 'fonts'));

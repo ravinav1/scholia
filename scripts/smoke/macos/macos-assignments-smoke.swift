@@ -1,6 +1,7 @@
 @preconcurrency import AppKit
 import PDFKit
 import SwiftUI
+import SQLite3
 
 @testable import ScholiaMac
 
@@ -798,7 +799,7 @@ extension StudyWorkspaceSmoke {
         if let index = course.canvasMaterials?.firstIndex(where: { $0.remoteID == "1" }) {
             course.canvasMaterials?[index].assignment?.dueAt = ISO8601DateFormatter().string(from: Date().addingTimeInterval(7 * 86400))
         }
-        // Save descriptions so Read assignment exercises native/web navigation offline.
+        // Save descriptions so Read assignment exercises native navigation offline.
         for material in catalog.items {
             var document = try StudyDocumentImporter.read(
                 data: Data(
@@ -844,23 +845,10 @@ extension StudyWorkspaceSmoke {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         try await Task.sleep(for: .milliseconds(500))
         try snapshot(controller.window, at: output.appendingPathComponent("workspace-dashboard-assignments.png"))
-        let server = StudyWebServer(
-            app: AppModel.shared, workspace: workspace, assets: URL(fileURLWithPath: "dist/web"))
-        server.start(port: 0)
-        for _ in 0..<100 where server.address == nil { try await Task.sleep(for: .milliseconds(20)) }
-        print("ASSIGNMENTS_PREVIEW \(server.address!.absoluteString)")
-        fflush(stdout)
         if CommandLine.arguments.contains("--assignment-page-smoke") {
-            let browser = Process()
-            browser.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            browser.arguments = [
-                "node", "scripts/smoke/browser/smoke-assignment-page.mjs", server.address!.absoluteString, output.path,
-            ]
-            let result: Int32 = await withCheckedContinuation { continuation in
-                browser.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-                do { try browser.run() } catch { continuation.resume(returning: -1) }
-            }
-            precondition(result == 0, "Chromium assignment page smoke failed")
+            let reading = course.materials.first { $0.remoteID == "3" && $0.kind == .assignments }!
+            workspace.openAssignment(reading, courseID: course.id)
+            for _ in 0..<200 where workspace.assignmentPreparing { try await Task.sleep(for: .milliseconds(20)) }
             func splitView(in view: NSView) -> NSSplitView? {
                 if let split = view as? NSSplitView, split.isVertical, split.arrangedSubviews.count == 2 {
                     return split
@@ -931,11 +919,9 @@ extension StudyWorkspaceSmoke {
             workspace.showAssignments()
             try await Task.sleep(for: .milliseconds(300))
             try snapshot(controller.window, at: output.appendingPathComponent("assignments-overview-native.png"))
-            server.stop()
             return
         }
         while !Task.isCancelled { try await Task.sleep(for: .seconds(1)) }
-        server.stop()
     }
 }
 
@@ -1142,20 +1128,33 @@ extension StudyWorkspaceSmoke {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = StudyLibraryStore(root: root)
         let writer = StudyLibraryWriter(store: store)
-        let file = root.appendingPathComponent("library.json")
+        let file = root.appendingPathComponent("library.sqlite")
+        func sql(_ text: String) throws -> Int64 {
+            var db: OpaquePointer?
+            guard sqlite3_open(file.path, &db) == SQLITE_OK, let db else { throw StudyError.message("Could not open test database") }
+            defer { sqlite3_close_v2(db) }
+            sqlite3_busy_timeout(db, 5_000)
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, text, -1, &statement, nil) == SQLITE_OK, let statement else {
+                throw StudyError.message(String(cString: sqlite3_errmsg(db)))
+            }
+            defer { sqlite3_finalize(statement) }
+            let result = sqlite3_step(statement)
+            guard result == SQLITE_DONE || result == SQLITE_ROW else { throw StudyError.message(String(cString: sqlite3_errmsg(db))) }
+            return result == SQLITE_ROW ? sqlite3_column_int64(statement, 0) : 0
+        }
+        let rejectWrites = "CREATE TRIGGER reject_test_write BEFORE INSERT ON courses BEGIN SELECT RAISE(ABORT, 'Injected persistence failure'); END"
         func snapshot(_ name: String) -> StudyLibrary { StudyLibrary(courses: [StudyCourse(name: name)]) }
         for index in 0..<128 { writer.save(snapshot("Queued \(index)"), onError: { _ in }) }
         try await writer.waitForPendingWrites()
         let latestQueued = try store.load()
         precondition(latestQueued.courses.first?.name == "Queued 127",
             "The durability barrier must wait for the newest coalesced snapshot")
-        let saved = try Data(contentsOf: file)
+        let savedRevision = try sql("SELECT revision FROM library_metadata WHERE singleton = 1")
         try await writer.waitForPendingWrites()
-        let afterIdleBarrier = try Data(contentsOf: file)
-        precondition(afterIdleBarrier == saved, "An idle barrier must not rewrite a captured snapshot")
-        try FileManager.default.removeItem(at: file)
-        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
-        try Data("prevent atomic file replacement".utf8).write(to: file.appendingPathComponent("blocker"))
+        let afterIdleRevision = try sql("SELECT revision FROM library_metadata WHERE singleton = 1")
+        precondition(afterIdleRevision == savedRevision, "An idle barrier must not rewrite a captured snapshot")
+        _ = try sql(rejectWrites)
         writer.save(snapshot("Cannot save"), onError: { _ in })
         do {
             try await writer.waitForPendingWrites()
@@ -1165,15 +1164,13 @@ extension StudyWorkspaceSmoke {
             try await writer.waitForPendingWrites()
             preconditionFailure("An idle barrier must retain the latest write failure")
         } catch {}
-        try FileManager.default.removeItem(at: file)
+        _ = try sql("DROP TRIGGER reject_test_write")
         writer.save(snapshot("Recovered"), onError: { _ in })
         try await writer.waitForPendingWrites()
         let recovered = try store.load()
         precondition(recovered.courses.first?.name == "Recovered",
             "A successful save must clear the previous failure")
-        try FileManager.default.removeItem(at: file)
-        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
-        try Data("blocker".utf8).write(to: file.appendingPathComponent("blocker"))
+        _ = try sql(rejectWrites)
         do {
             try writer.flush(snapshot("Cannot flush"))
             preconditionFailure("Synchronous flush must propagate its write failure")
@@ -1182,7 +1179,7 @@ extension StudyWorkspaceSmoke {
             try await writer.waitForPendingWrites()
             preconditionFailure("A failed flush must also be visible to the async barrier")
         } catch {}
-        try FileManager.default.removeItem(at: file)
+        _ = try sql("DROP TRIGGER reject_test_write")
         try writer.flush(snapshot("Flushed"))
         try await writer.waitForPendingWrites()
         let flushed = try store.load()

@@ -10,11 +10,15 @@ scripts/**/.opencode-env
 apps/macos/.build/
 apps/macos/.swiftpm/
 
-# Private hosted service storage
+# Preserve ignored legacy private libraries after product removal
 .data/
+
+# Local development secrets
 .env
 .env.*
-!apps/server/.env.example
 
 # Generated benchmark logs, screenshots, fixtures and live-model reports
 output/
+
+# Worktrees may share the dependency directory using a symlink.
+node_modules

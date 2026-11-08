@@ -1,0 +1,42 @@
+{
+  "configuration": "release",
+  "storageImplementationCommit": "c4492b5",
+  "recordedDate": "2026-11-08",
+  "dataScope": "Synthetic fixtures and temporary directories only; installed user library was not opened",
+  "nativePersistenceRegressionExitCode": 0,
+  "independentNativeReviewExitCode": 0,
+  "persistenceChecks": [
+    "Actual child _exit during migration and multi-row WAL transaction, fresh reopen, and successful subsequent save",
+    "Two simultaneous first-launch processes serialize schema and backup publication",
+    "Copied version-1 JSON, byte-identical immutable backup, repeated and interrupted migration, restart",
+    "Reading position: exactly one encoded document payload row, no previous images or catalogs encoded",
+    "Message edit and composer draft: exactly one appropriate payload row",
+    "No-op save: zero encoding, payload writes, position writes, or revision commit",
+    "Reordering: explicit position updates without re-encoding unchanged payloads",
+    "Rollback and retry preserve all-or-nothing multi-row state",
+    "Stale process rejection and export without rebasing expected revision",
+    "Active SQLite export symlink rejection",
+    "Unicode and embedded-NUL identifiers are preserved without truncating or merging rows",
+    "Duplicate IDs within one owner rejected; IDs reused across separate owners preserved",
+    "Course cascade deletion, independent roots and Canvas account metadata preservation",
+    "Existing interrupted-answer repair retained",
+    "Unsupported schema rejected by fresh and already-open stores without stale JSON fallback"
+  ],
+  "independentReviewChecks": [
+    "Ordered draft writes, in-flight tombstones, recovery, retry, flush and per-document failure isolation",
+    "Recent-reading bounded selection matches a full-sort reference across limits and ties",
+    "Metadata cache invalidation for favorites, terms, names, removals and locale changes",
+    "Complete assignment pagination and nearest-deadline preview",
+    "Streamed content, drafts and download status do not rebuild dashboard or assignment projections",
+    "Canvas eligibility observation, assignment filter transfer and failed-save visibility after successful draft backup"
+  ],
+  "measurements": {
+    "targeted": "native-storage-after.json",
+    "legacyReproduction": "native-storage-legacy-reproduced.json",
+    "originalBaseline": "native-storage-before.json",
+    "samplesPerFixture": 5,
+    "fixtures": [6, 89, 500],
+    "measurementUnits": "Encoded JSON payload bytes and changed payload rows; SQLite page/WAL bytes and separate revision update are not included in those work counters",
+    "overlappedUIBenchmarks": false
+  }
+}

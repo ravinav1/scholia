@@ -1,6 +1,6 @@
 # Scholia privacy policy
 
-**Effective date:** 27 September 2026
+**Effective date:** 8 November 2026
 
 Scholia explains material you choose from a page, document, screenshot, or image.
 It includes no analytics, advertising, or telemetry. Storage and transmission
@@ -9,16 +9,9 @@ depend on the client you use:
 - The **Chrome extension** processes sources locally and sends questions directly
   to your chosen provider. Its history and settings stay in extension storage.
 - The **native Mac app** stores its library on your Mac and credentials in
-  Keychain. Its optional **Open in Browser** interface uses a loopback server on
-  that Mac and shares the same library.
-- The **hosted web service** stores account data and uploaded or downloaded files
-  on the server you sign into. It sends provider requests on your behalf using
-  your saved credentials. Workspaces are private between accounts, but the
-  server operator can access stored data and decrypt credentials.
+  Keychain.
 
-Native, extension, and hosted libraries do not automatically synchronize. A
-hosted operator must provide their own contact, backup, and retention details in
-addition to this description of the software.
+The native and extension libraries are separate and do not synchronize.
 
 ## Data Scholia handles
 
@@ -60,14 +53,12 @@ Depending on the feature you use, Scholia may handle:
 - provider API keys or local-endpoint credentials;
 - the current site's hostname when you add it to an allowlist or blocklist;
 - imported documents, extracted indexes, edits, and retained earlier versions;
-- in native chats and the Mac's local browser workspace, local filenames, paths,
-  and file contents read to answer your question when **Allow file access** is
+- in native chats, local filenames, paths, and file contents read to answer
+  your question when **Allow file access** is
   enabled; file text and images read this way are sent to the selected model;
 - Canvas account/course identifiers, catalogs, deadlines, submission status,
   downloaded course material, and your Canvas token or native session;
-- native practice questions, attempts, assistance, feedback, and review dates; and
-- for hosted web, your account email, password hash, session records, private
-  workspaces, and account-specific settings.
+- native practice questions, attempts, assistance, feedback, and review dates.
 
 The extension does not read Chrome browsing history, copy browser cookies, or
 collect form history, contacts, location, or financial information. Canvas
@@ -102,8 +93,7 @@ See [camera controls and retention](PAPER_STUDY.md).
 Data is used only to provide the explanation or contextual conversation you
 request, remember your extension settings, enforce your site access choices,
 keep an active conversation grounded in the source you chose, and let you
-return to saved chats and readings. Hosted data is additionally used to
-authenticate your account and keep its workspaces separate from other accounts.
+return to saved chats and readings.
 
 The Mac app's **Settings → Privacy → Local files** controls file tools in chat.
 Read access is enabled by default. **Allow write access** is separately disabled
@@ -111,7 +101,7 @@ by default and permits creating folders and creating or editing text/code files
 when enabled. Disabling access blocks subsequent file operations, including in
 an active answer. macOS folder permissions still apply. These tools are not
 available to background document classification or model connection tests, and
-do not give the hosted website or extension access to your Mac's filesystem.
+do not give the extension access to your Mac's filesystem.
 
 Long pages, sites, and PDFs are indexed on the device. Completed PDF text
 indexes may be retained in extension-local IndexedDB under a document
@@ -158,9 +148,9 @@ or 7 days.
 Scholia sends a provider request only after an explicit action such as asking a
 question, choosing **Explain**, starting a capture, or submitting a follow-up.
 In the native app and extension, that request goes directly to the provider or
-compatible endpoint selected in Settings. Hosted web sends it through the
-service's server to your chosen provider. Supported hosted choices include Anthropic, OpenAI, OpenRouter, Groq,
-Together AI, Mistral AI, Cohere, and GPT NTNU's IDUN service. You can instead
+compatible endpoint selected in Settings. Supported hosted providers include
+Anthropic, OpenAI, OpenRouter, Groq, Together AI, Mistral AI, Cohere, and
+GPT NTNU's IDUN service. You can instead
 choose Ollama, a local CLI bridge, opencode, or a custom compatible endpoint.
 
 The selected provider receives the question and the source material required
@@ -192,9 +182,7 @@ inclusion.
 
 The software contains no advertising, profiling, or model-training data
 collection. Native and extension use does not send content to project
-maintainers. A hosted service's operator can access its database, files,
-backups, and credential-encryption key; choose an operator you trust and review
-their policy. Provider processing and retention are governed by that provider.
+maintainers. Provider processing and retention are governed by that provider.
 
 ## Storage and retention
 
@@ -314,7 +302,7 @@ choose **Draft reply**, invoke the explicit selection command, or submit your
 own question. Scholia produces a draft inside its own window and never sends it
 through the mail client.
 
-### Native workspaces and local website
+### Native workspaces
 
 The native study library lives under
 `~/Library/Application Support/Scholia/Study`. It contains imported originals,
@@ -343,8 +331,8 @@ copied out of WebKit or saved by Scholia. A check sends normal HTTPS requests to
 Studentweb and Feide, which still handle sign-in. Importing itself sends no
 results to a Scholia server or AI provider.
 
-These records are outside the study library, browser API, hosted service, search,
-exports and backups made by Scholia. Native recommendation selections are
+These records are outside the study library, search, exports and backups made
+by Scholia. Native recommendation selections are
 filtered locally after the AI response. Native **Get advice** uses the passed
 course codes when you submit a question or follow-up, including passed courses
 outside the exam plan. Those codes are sent to your selected model provider,
@@ -355,8 +343,8 @@ selection step and the final advice step; an invalid lookup plan may require one
 repair call. No additional provider is introduced. The current list is read for
 each turn, and deleting statuses removes them from subsequent request context;
 it cannot retract earlier provider requests or mentions in conversation history.
-Other provider workflows, browser advice and hosted advice cannot access this
-Keychain record. Applying a selection still changes the normal shared exam
+Other provider workflows cannot access this Keychain record. Applying a
+selection still changes the normal exam
 plan. The Keychain record lasts until replaced or deleted in **Studentweb
 results → Delete all saved statuses**, and individual records can also be
 deleted. Clearing library files or uninstalling the app does not remove this
@@ -382,47 +370,6 @@ fetches it; explicit bulk download controls fetch more. If **Preload frequent
 courses** is enabled, the Mac may download a small batch after repeated visits
 and an idle delay. This can be disabled in the workspace menu. Canvas access is
 read-only; hiding an assignment changes only Scholia's list.
-
-**Open in Browser** explicitly starts a server bound to `127.0.0.1:8792`. It
-requires a per-launch token, validates Host and Origin, rejects cross-site
-requests, and does not expose provider keys or Canvas credentials to the
-browser. It shares native storage and remains available only while Scholia runs.
-Opening the native workspace alone does not start this server.
-
-### Hosted web accounts
-
-Hosted web uploads chosen documents and stores fetched Canvas files on its
-server. It also stores extracted indexes, conversations and source references,
-reading history, drafts, edits, assignment visibility, Canvas metadata, and
-provider settings. Files are private to the authenticated account at the API
-boundary; separate sessions retain independent navigation.
-
-Account emails and salted scrypt password hashes are stored in SQLite. Provider
-keys and Canvas tokens are encrypted with AES-256-GCM using a server-held key.
-This is encryption of credentials at rest, not end-to-end encryption: the
-operator can decrypt them, and document contents are readable in server storage.
-The service needs that access to index documents, fetch Canvas material, and
-send questions to your selected provider.
-
-Sessions use HttpOnly, SameSite=Strict cookies, with Secure enabled for HTTPS,
-and expire after seven days. The database stores hashes of random session
-tokens. Signing out revokes that session. An administrator's password reset
-revokes all of that account's sessions. Login attempts are rate-limited by
-account and connection address; the software does not persist an analytics
-history. A reverse proxy or hosting platform may maintain access logs under
-the operator's policy.
-
-Workspace preferences and unsent drafts can also be retained in the browser,
-scoped to the account. Signing out clears Scholia session draft storage. Clearing
-browser data does not delete server data. Previous document versions and server
-backups may be retained after edits or removal. There is no self-service account
-deletion interface; contact the service operator for account/file deletion and
-backup retention. Provider-side deletion must be requested from the provider.
-
-The hosted service does not run native desktop capture, native OCR, or the
-native spaced-practice store. Its saved files require server access; they are
-not an automatic offline copy in the browser. See [Hosting](HOSTING.md) for
-operator configuration and backup responsibilities.
 
 ## Browser access and user controls
 

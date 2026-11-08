@@ -1,0 +1,73 @@
+{
+  "recordedAt": "2026-11-08T00:16:40.829Z",
+  "scenario": "Expired Codex discovery cache narrows GPT-6.1 Sol to low/high while a healthy bridge advertises low, medium, high, xhigh, max and ultra.",
+  "before": {
+    "popup": {
+      "status": "reproduced failure",
+      "output": "file:///private/tmp/scholia-performance/scripts/smoke/browser/lib/chromium.mjs:103\n      throw new Error(`Timed out: ${expression}`);\n            ^\n\nError: Timed out: [...document.querySelector(\"#reasoning-select\").options].some(option=>option.value===\"xhigh\")\n    at until (file:///private/tmp/scholia-performance/scripts/smoke/browser/lib/chromium.mjs:103:13)\n    at async file:///private/tmp/scholia-performance/scripts/smoke/browser/smoke-codex-model-selection.mjs:83:7\n\nNode.js v26.4.0\n"
+    },
+    "options": {
+      "status": "reproduced failure",
+      "output": "file:///private/tmp/scholia-performance/scripts/smoke/browser/lib/chromium.mjs:103\n      throw new Error(`Timed out: ${expression}`);\n            ^\n\nError: Timed out: [...document.querySelector(\"#reasoning\").options].some(option=>option.value===\"xhigh\")\n    at until (file:///private/tmp/scholia-performance/scripts/smoke/browser/lib/chromium.mjs:103:13)\n    at async file:///private/tmp/scholia-performance/scripts/smoke/browser/smoke-codex-model-selection.mjs:73:7\n\nNode.js v26.4.0\n"
+    }
+  },
+  "after": {
+    "packagedChromium": {
+      "status": "passed",
+      "command": "node scripts/smoke/browser/smoke-codex-model-selection.mjs",
+      "browser": "Chrome/153.0.7999.0",
+      "packaged": true,
+      "surfaces": [
+        "popup",
+        "panel",
+        "options"
+      ],
+      "model": "gpt-6.1-sol",
+      "reasoningEffort": "xhigh",
+      "catalogRequests": 4,
+      "cachedOpensVerified": true,
+      "offlineRetentionVerified": true,
+      "fixtureCompletions": 1,
+      "paidInference": false,
+      "exceptions": 0
+    },
+    "javascript": {
+      "status": "passed",
+      "command": "node --test tests/chrome/*.test.js tests/core/*.test.js tests/tooling/codex*.test.js",
+      "tests": 372,
+      "failures": 0,
+      "skips": 0
+    },
+    "bridgeSubprocess": {
+      "status": "passed",
+      "fixtureExecutableOnly": true,
+      "checks": [
+        "offline catalog includes gpt-6.1-sol",
+        "CLI receives --model gpt-6.1-sol",
+        "CLI receives model_reasoning_effort=\"xhigh\"",
+        "read-only ephemeral execution"
+      ]
+    },
+    "existingInteractions": {
+      "status": "passed",
+      "command": "node scripts/smoke/browser/smoke-chromium-panel-recursion.mjs"
+    },
+    "package": {
+      "status": "passed",
+      "command": "npm run package:chrome",
+      "includes": [
+        "production build",
+        "check:dist",
+        "archive validation"
+      ],
+      "path": "dist/scholia-chrome-0.2.2.zip",
+      "bytes": 15025279,
+      "sha256": "2a7f02b0e28891b765a2270834dd3997a55b2d24d70121fe1873596cf231be1e"
+    }
+  },
+  "limitations": [
+    "No real provider inference was performed.",
+    "The installed extension and existing browser profiles were not modified.",
+    "The deterministic stale-cache reproduction establishes the repaired failure path; the user’s installed storage was not inspected."
+  ]
+}

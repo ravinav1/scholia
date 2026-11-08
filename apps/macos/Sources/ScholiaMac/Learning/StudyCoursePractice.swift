@@ -66,12 +66,14 @@ extension StudyLearningModel {
             return CoursePracticeMaterial(id: doc.id, title: doc.title, pages: max(0, doc.pageCount - doc.unreadablePages),
                 attempted: attempted, independent: independent, needsReview: needsReview)
         }
-        let concepts = state.concepts.values.filter { $0.courseID == course.id }.map { concept in
+        let concepts: [CoursePracticeConcept] = state.concepts.values.filter { $0.courseID == course.id }.map { concept -> CoursePracticeConcept in
             let evidence = attempts.filter { concept.questionIDs.contains($0.questionID) }.sorted { $0.createdAt < $1.createdAt }
             return CoursePracticeConcept(id: concept.id, title: concept.description, attempts: evidence.count,
                 independent: evidence.last?.independentSuccess == true,
                 needsReview: !evidence.isEmpty && evidence.last?.independentSuccess != true)
-        }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        }.sorted { (lhs: CoursePracticeConcept, rhs: CoursePracticeConcept) in
+            lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
         return CoursePracticeCoverage(courseID: course.id, title: course.displayName, saved: course.documents.count,
             missing: course.materials.filter { ref in !course.documents.contains { $0.sourceKey == ref.id } }.count,
             materials: materials, concepts: concepts)

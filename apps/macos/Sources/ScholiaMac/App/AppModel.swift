@@ -130,7 +130,6 @@ final class AppModel: ObservableObject {
 
     private lazy var explanationPanel = ExplanationPanelController(model: self)
     private lazy var studyWindow = StudyWindowController(app: self)
-    private lazy var studyWebServer = StudyWebServer(app: self, workspace: studyWindow.workspace)
     private lazy var quickAskPanel = QuickAskPanelController(model: self)
     private lazy var selectionPill = SelectionPillController(
         initialOffset: settings.resolvedSelectionPopupOffset,
@@ -741,19 +740,6 @@ final class AppModel: ObservableObject {
     var studyWorkspace: StudyWorkspaceModel {
         studyWorkspaceUsed = true
         return studyWindow.workspace
-    }
-
-    func openStudyWebsite() {
-        studyWorkspaceUsed = true
-        applicationWindowOpened()
-        studyWebServer.open()
-    }
-
-    /// Start the local workspace API for explicit CLI/browser verification,
-    /// without opening the user's default browser.
-    func startStudyWebsite() {
-        studyWorkspaceUsed = true
-        studyWebServer.start()
     }
 
     func applicationWindowOpened() {

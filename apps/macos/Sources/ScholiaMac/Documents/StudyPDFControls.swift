@@ -19,12 +19,12 @@ struct StudySearchMatch {
 final class StudyDocumentSearch {
     private let context = JSContext()
     init(scriptURL: URL? = nil) {
-        let bundled = Bundle.main.resourceURL?.appendingPathComponent("StudyWeb/pdf-search.js")
+        let bundled = Bundle.main.resourceURL?.appendingPathComponent("NativeResources/pdf-search.js")
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<6 { root.deleteLastPathComponent() }
         let url =
             scriptURL ?? (bundled.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil })
-            ?? root.appendingPathComponent("dist/web/pdf-search.js")
+            ?? root.appendingPathComponent("dist/native-resources/pdf-search.js")
         if let source = try? String(contentsOf: url, encoding: .utf8) { context?.evaluateScript(source) }
     }
     func matches(pages: [StudyPage], query: String, semantic: Bool) -> [Int] {

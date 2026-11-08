@@ -1,0 +1,159 @@
+{
+  "stage": "after",
+  "runtime": "v26.4.0",
+  "browser": "Chrome/153.0.7999.0",
+  "platform": "darwin",
+  "build": "Chrome Web Store zip extracted into isolated directory",
+  "fixture": {
+    "topLevelFrames": 1,
+    "nestedFrames": 2,
+    "pageCSP": "script-src 'none'",
+    "localProvider": true
+  },
+  "procedure": {
+    "warmups": 1,
+    "sampleCount": 10,
+    "settleMs": 150
+  },
+  "samples": [
+    {
+      "loadMs": 24,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 12.541,
+      "scriptDurationMs": 0.512,
+      "usedHeapBytes": 3334072,
+      "domNodes": 132
+    },
+    {
+      "loadMs": 19.69999998807907,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 14.387,
+      "scriptDurationMs": 0.513,
+      "usedHeapBytes": 4723732,
+      "domNodes": 194
+    },
+    {
+      "loadMs": 21.200000017881393,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 15.001000000000001,
+      "scriptDurationMs": 0.61,
+      "usedHeapBytes": 5750700,
+      "domNodes": 256
+    },
+    {
+      "loadMs": 26.200000017881393,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 19.227999999999998,
+      "scriptDurationMs": 0.5860000000000001,
+      "usedHeapBytes": 6947288,
+      "domNodes": 318
+    },
+    {
+      "loadMs": 23.69999998807907,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 16.074,
+      "scriptDurationMs": 0.708,
+      "usedHeapBytes": 8338584,
+      "domNodes": 380
+    },
+    {
+      "loadMs": 25,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 14.81,
+      "scriptDurationMs": 0.6759999999999999,
+      "usedHeapBytes": 9731424,
+      "domNodes": 442
+    },
+    {
+      "loadMs": 25.599999994039536,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 17.132,
+      "scriptDurationMs": 0.799,
+      "usedHeapBytes": 10762808,
+      "domNodes": 504
+    },
+    {
+      "loadMs": 22.5,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 15.020999999999999,
+      "scriptDurationMs": 0.514,
+      "usedHeapBytes": 12157392,
+      "domNodes": 566
+    },
+    {
+      "loadMs": 25.700000017881393,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 17.732000000000003,
+      "scriptDurationMs": 0.708,
+      "usedHeapBytes": 13551980,
+      "domNodes": 628
+    },
+    {
+      "loadMs": 25.19999998807907,
+      "hosts": 0,
+      "nestedHosts": [
+        0,
+        0
+      ],
+      "taskDurationMs": 18.566,
+      "scriptDurationMs": 0.57,
+      "usedHeapBytes": 14609868,
+      "domNodes": 690
+    }
+  ],
+  "firstAnswerMs": 171.2627080000002,
+  "retryVerified": true,
+  "providerRequests": 2,
+  "bundle": {
+    "node": "v26.4.0",
+    "initialBytes": 4108,
+    "initialGzipBytes": 1942,
+    "initialModuleCount": 4,
+    "deferredBytes": 1638841,
+    "deferredGzipBytes": 489893,
+    "contextOnlyBytes": 42385,
+    "inputs": [
+      "apps/chrome/src/ui-primitives.js",
+      "apps/chrome/src/runtime-message.js",
+      "apps/chrome/src/content-bootstrap.js",
+      "apps/chrome/src/content.js"
+    ]
+  },
+  "errors": []
+}

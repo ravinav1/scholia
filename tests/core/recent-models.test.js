@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseHTML } from 'linkedom';
 import { normalizeRecentModels, recordRecentModel, recentModelChoices } from '../../packages/core/src/recent-models.js';
 import { mergeSettings, publicSettings, providerModelChoices } from '../../packages/core/src/providers.js';
-import { studyModelPickerMarkup } from '../../apps/web/chat/model-picker.js';
 
 test('recent use persists provider/model identity, moves repeats to the top and bounds history', () => {
   let records = [];
@@ -18,16 +16,12 @@ test('recent use persists provider/model identity, moves repeats to the top and 
   assert.equal(normalizeRecentModels([null, {}, { providerID: 'codex', modelID: 'bad', lastUsedAt: Infinity }]).length, 0);
 });
 
-test('study picker shows recent models once, newest first, and keeps the selected provider distinct', () => {
+test('recent model choices stay newest first and keep provider identity distinct', () => {
   const models = [
     { id: 'same', label: 'A', provider: 'OpenAI', providerID: 'openai', lastUsedAt: 10 },
     { id: 'other', label: 'Other', provider: 'OpenAI', providerID: 'openai' },
     { id: 'same', label: 'B', provider: 'Codex', providerID: 'codex', lastUsedAt: 20 }
   ];
   assert.deepEqual(recentModelChoices(models).map((m) => m.label), ['B', 'A']);
-  const { document } = parseHTML(`<select>${studyModelPickerMarkup(models, 'codex', 'same')}</select>`);
-  assert.equal(document.querySelector('optgroup').getAttribute('label'), 'Recently used');
-  assert.equal(document.querySelectorAll('option').length, 3);
-  assert.equal(document.querySelectorAll('option[selected]').length, 1);
-  assert.equal(document.querySelector('option[selected]').textContent, 'B · Codex');
+  assert.deepEqual(recentModelChoices(models).map(m => [m.providerID, m.id]), [['codex', 'same'], ['openai', 'same']]);
 });

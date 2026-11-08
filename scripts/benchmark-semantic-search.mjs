@@ -3,8 +3,8 @@ import { mkdtemp, writeFile, rm, stat, mkdir } from 'node:fs/promises';
 import { tmpdir, cpus } from 'node:os';
 import { join, dirname } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
-import { SemanticIndex } from '../apps/server/semantic-index.js';
-import { LocalSemanticEmbedder } from '../apps/server/semantic-embedding.js';
+import { SemanticIndex } from '../packages/search/semantic-index.js';
+import { LocalSemanticEmbedder } from '../packages/search/semantic-embedding.js';
 
 // Real local embeddings, deterministic disposable documents. Service timings
 // include file stamps, embedding, ranking and evidence, excluding HTTP and UI.
