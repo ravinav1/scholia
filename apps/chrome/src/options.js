@@ -1,4 +1,4 @@
-import { PROVIDERS, mergeSettings, modelId, modelLabel, modelReasoning, modelSupportsImages, normalizeSiteKey, providerById, providerModelChoices, providerSupportsFastMode, resolveModelId } from '../../../packages/core/src/providers.js';
+import { PROVIDERS, SETTINGS_KEY, mergeSettings, modelId, modelLabel, modelReasoning, modelSupportsImages, normalizeSiteKey, providerById, providerModelChoices, providerSupportsFastMode, resolveModelId } from '../../../packages/core/src/providers.js';
 import { CHATGPT_QUICK_CHAT_REFRESH_INTERVALS } from '../../../packages/core/src/chatgpt-context.js';
 import { bridgeLaunchDecision } from './bridge-launch.js';
 import { sendRuntimeMessage as message } from './runtime-message.js';
@@ -23,6 +23,7 @@ const elements = Object.fromEntries([
 ].map((id) => [id, document.getElementById(id)]));
 
 let settings = mergeSettings();
+let settingsReady = false;
 let renderedProviderId = settings.provider;
 let bridgeStatus = null;
 let bridgeRequest = 0;
@@ -140,6 +141,17 @@ function renderVisionCapability(provider, model) {
   elements['vision-badge'].classList.toggle('no-vision', !supportsImages);
 }
 
+function renderModelChoices(provider) {
+  elements['model-list'].textContent = '';
+  for (const entry of providerModelChoices(provider, settings)) {
+    const option = document.createElement('option');
+    option.value = modelId(entry);
+    option.label = modelLabel(entry);
+    elements['model-list'].append(option);
+  }
+  renderReasoning(provider, elements.model.value);
+}
+
 function renderProvider(providerId = elements.provider.value, { refreshBridge = true } = {}) {
   const provider = providerById(providerId);
   renderedProviderId = provider.id;
@@ -155,16 +167,7 @@ function renderProvider(providerId = elements.provider.value, { refreshBridge = 
       ? 'Optional opencode server password. Sent as HTTP Basic auth with username “opencode”.'
       : 'Optional. Leave blank unless your local or custom endpoint requires a bearer token.';
   elements['local-note'].hidden = provider.keyRequired;
-  elements['model-list'].textContent = '';
-  for (const entry of providerModelChoices(provider, settings)) {
-    const model = modelId(entry);
-    const label = modelLabel(entry);
-    const option = document.createElement('option');
-    option.value = model;
-    option.label = label;
-    elements['model-list'].append(option);
-  }
-  renderReasoning(provider, elements.model.value);
+  renderModelChoices(provider);
   elements['bridge-card'].hidden = !provider.localBridge;
   if (provider.localBridge && refreshBridge) refreshBridgeStatus();
   else bridgeStatus = null;
@@ -405,10 +408,6 @@ async function refreshBridgeStatus({ includeUsage = false, timeoutMs, refreshMod
       ...(timeoutMs ? { timeoutMs } : {})
     });
     if (request === bridgeRequest && renderedProviderId === provider.id) {
-      if (Array.isArray(result.models)) {
-        settings.discoveredModels[provider.id] = result.models;
-        renderProvider(provider.id, { refreshBridge: false });
-      }
       paintBridgeStatus(result);
     }
     return result;
@@ -570,6 +569,25 @@ window.addEventListener('focus', refreshChatGptWebStateOnReturn);
 window.addEventListener('focus', renderShortcuts);
 document.addEventListener('visibilitychange', refreshChatGptWebStateOnReturn);
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (!settingsReady || area !== 'local' || !changes[SETTINGS_KEY]?.newValue) return;
+  const latest = mergeSettings(changes[SETTINGS_KEY].newValue);
+  // Discovery finishes after the bridge health reply. Apply its capabilities
+  // without replacing provider/model/credential edits still in this form.
+  rememberVisibleProvider();
+  let visibleCatalogChanged = false;
+  for (const provider of ['codex', 'opencode']) {
+    if (latest.endpoints[provider] !== settings.endpoints[provider]) continue;
+    const models = latest.discoveredModels[provider] || [];
+    if (provider === renderedProviderId && JSON.stringify(models) !== JSON.stringify(settings.discoveredModels[provider] || [])) {
+      visibleCatalogChanged = true;
+    }
+    settings.discoveredModels[provider] = models;
+    settings.modelCatalogCheckedAt[provider] = latest.modelCatalogCheckedAt[provider];
+  }
+  if (visibleCatalogChanged) renderModelChoices(providerById(renderedProviderId));
+});
+
 elements['settings-form'].addEventListener('submit', async (event) => {
   event.preventDefault();
   showStatus('Saving…');
@@ -597,6 +615,7 @@ async function boot() {
   try {
     settings = mergeSettings(await message({ type: 'SCHOLIA_GET_SETTINGS' }));
     renderAll();
+    settingsReady = true;
     renderShortcuts();
     refreshChatGptWebState();
   } catch (error) {

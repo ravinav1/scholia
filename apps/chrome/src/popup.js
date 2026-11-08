@@ -398,6 +398,12 @@ async function refreshSettings() {
   renderModel();
 }
 
+function refreshLocalModelCatalogs() {
+  for (const provider of ['codex', 'opencode']) {
+    void message({ type: 'SCHOLIA_BRIDGE_STATUS', provider, timeoutMs: 1000 }).catch(() => {});
+  }
+}
+
 function chatRow(chat) {
   const row = document.createElement('div');
   row.className = 'chat-row';
@@ -558,6 +564,7 @@ function saveInlineModel({ reasoningEffort, fastMode } = {}) {
   return modelSave;
 }
 elements['model-select'].addEventListener('change', () => saveInlineModel());
+elements['model-select'].addEventListener('scholia-model-picker-open', refreshLocalModelCatalogs);
 elements['reasoning-select'].addEventListener('change', () => saveInlineModel({ reasoningEffort: elements['reasoning-select'].value }));
 elements['fast-mode'].addEventListener('click', () => saveInlineModel({ fastMode: !settings?.fastMode }));
 elements['chat-list'].addEventListener('click', async (event) => {
@@ -591,6 +598,7 @@ async function boot() {
     renderPdfAction();
   });
   await Promise.all([sourceTask, refreshSettings(), refreshSite(), refreshChats()]);
+  refreshLocalModelCatalogs();
   quickContextMode = defaultContextMode(settings);
   renderQuickContextMode();
   renderQuickMessages();

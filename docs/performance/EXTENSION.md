@@ -76,3 +76,40 @@ Final verification is recorded in `results/performance/extension-verification-af
 
 The generic `browser-workspace-context.js` remains part of the service worker:
 it ranks ordinary browser tabs and has no dependency on either removed application.
+
+## Codex model selection regression
+
+The follow-up report that GPT-6.1 Sol / Extra High could not be selected exposed
+two reproducible stale-catalog paths. A saved live catalog can narrow the built-in
+model's reasoning choices. The popup never requested a fresh catalog, while
+Settings ignored the storage update produced by asynchronous bridge discovery.
+With an expired cached entry containing only `low` and `high`, both packaged
+surfaces failed to show `xhigh` even though the fixture bridge advertised it.
+
+The popup now checks bridge catalogs when it opens or its model picker opens.
+The service worker's existing two-minute cache and in-flight discovery sharing
+bound those requests. Settings updates model capabilities when discovery arrives
+without replacing unsaved model, credential or language edits. It no longer
+re-renders the whole form using the older health reply. GPT-6.1 Sol is also
+included in the bridge's offline fallback catalog.
+
+The actual packaged Chromium regression starts with another selected model and
+stale GPT-6.1 Sol capabilities, selects GPT-6.1 Sol during discovery, chooses
+Extra High, and verifies persistence after reload in popup, sidebar and Settings.
+It then submits from the real popup through the real service worker to a local
+fixture and asserts `model: "gpt-6.1-sol"` and `reasoning_effort: "xhigh"`.
+Repeated picker opens reuse the catalog cache; failed discovery preserves the
+last working models, chosen effort and credentials. Zero browser exceptions
+occurred. No real Codex inference or installed browser profile was used.
+
+```sh
+npm run package:chrome
+node scripts/smoke/browser/smoke-codex-model-selection.mjs
+node --test tests/chrome/*.test.js tests/core/*.test.js tests/tooling/codex*.test.js
+```
+
+All 372 targeted JavaScript tests passed, including a real bridge subprocess
+driven by a fake Codex executable. That test verifies offline catalog availability
+and that the bridge passes GPT-6.1 Sol / `xhigh` to the CLI unchanged. Before/after
+results and package identity are retained in
+`results/performance/codex-model-selection-verification.json`.
