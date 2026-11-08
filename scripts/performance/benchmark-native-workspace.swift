@@ -165,6 +165,12 @@ private final class MeasurementCanvasProtocol: URLProtocol, @unchecked Sendable 
             let restored = try store.load()
             let draftsRestored = restored.courses.flatMap(\.threads).contains { $0.draft.contains("fixture") }
             precondition(restored.courses.count == count && stopCompleted && tokens > 0 && restarted && draftsRestored)
+            // Cancellation/restart changes several hosted views. Snapshot only
+            // after the resulting layout settles; timed samples above already
+            // use their own input-to-display boundary.
+            await paint(window)
+            try await Task.sleep(for: .milliseconds(200))
+            await paint(window)
             let screenshot = output.deletingLastPathComponent().appendingPathComponent("native-workspace-\(count).png")
             if let view = window.contentView, let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: bitmap)

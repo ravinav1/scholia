@@ -1,5 +1,6 @@
 @preconcurrency import AppKit
 import Foundation
+import Darwin
 @testable import ScholiaMac
 
 // Match CanvasClient's actor isolation when measuring the previous implementation.
@@ -39,14 +40,23 @@ struct PerformanceAudit {
         return library
     }
     static func auditDownloads(session: URLSession, client: CanvasClient) async throws {
+        func cpu() -> Double {
+            var value = rusage(); getrusage(RUSAGE_SELF, &value)
+            return Double(value.ru_utime.tv_sec + value.ru_stime.tv_sec) + Double(value.ru_utime.tv_usec + value.ru_stime.tv_usec) / 1e6
+        }
+        func peakMemory() -> Int { var value = rusage(); getrusage(RUSAGE_SELF, &value); return value.ru_maxrss }
         for size in [1_000_000, 10_000_000, 50_000_000] {
             let url = URL(string: "https://canvas.example.test/blob/\(size)")!
             var start = ContinuousClock.now
+            var cpuStart = cpu()
             let data = try await client.download(url)
-            emit("native.download.chunks", ["bytes": data.count, "elapsedMs": milliseconds(start)])
+            emit("native.download.chunks", ["bytes": data.count, "elapsedMs": milliseconds(start),
+                "cpuSeconds": cpu() - cpuStart, "processPeakResidentBytes": peakMemory()])
             start = .now
+            cpuStart = cpu()
             let (bulk, _) = try await session.data(from: url)
-            emit("native.download.bulkBaseline", ["bytes": bulk.count, "elapsedMs": milliseconds(start)])
+            emit("native.download.bulkBaseline", ["bytes": bulk.count, "elapsedMs": milliseconds(start),
+                "cpuSeconds": cpu() - cpuStart, "processPeakResidentBytes": peakMemory()])
             if CommandLine.arguments.contains("--compare-byte-loop") {
                 start = .now
                 let previous = try await ByteLoopBaseline().download(url, session: session)
@@ -54,6 +64,26 @@ struct PerformanceAudit {
                 emit("native.download.byteLoopBaseline", ["bytes": previous.count, "elapsedMs": milliseconds(start)])
             }
         }
+        var heartbeat: [Double] = []
+        let ticker = Task { @MainActor in
+            while !Task.isCancelled {
+                let start = ContinuousClock.now
+                do { try await Task.sleep(for: .milliseconds(10)) } catch { break }
+                heartbeat.append(max(0, milliseconds(start) - 10))
+            }
+        }
+        let start = ContinuousClock.now, cpuStart = cpu()
+        let total = try await withThrowingTaskGroup(of: Int.self) { group in
+            for _ in 0..<2 { group.addTask { try await client.download(URL(string: "https://canvas.example.test/blob/50000000")!).count } }
+            var total = 0
+            for try await count in group { total += count }
+            return total
+        }
+        ticker.cancel()
+        await ticker.value
+        precondition(total == 100_000_000)
+        emit("native.download.concurrent", ["transfers": 2, "totalBytes": total, "elapsedMs": milliseconds(start),
+            "cpuSeconds": cpu() - cpuStart, "processPeakResidentBytes": peakMemory(), "heartbeatDelayMs": heartbeat])
     }
     static func auditHistoryWrites(root: URL) throws {
         let url = root.appendingPathComponent("chats.json")

@@ -1,0 +1,7 @@
+{"bytes":1000000,"cpuSeconds":0.002697999999999999,"elapsedMs":2.1216249999999999,"name":"native.download.chunks","processPeakResidentBytes":33521664}
+{"bytes":1000000,"cpuSeconds":0.0011210000000000039,"elapsedMs":0.92537499999999995,"name":"native.download.bulkBaseline","processPeakResidentBytes":35045376}
+{"bytes":10000000,"cpuSeconds":0.0087440000000000018,"elapsedMs":4.7588749999999997,"name":"native.download.chunks","processPeakResidentBytes":57147392}
+{"bytes":10000000,"cpuSeconds":0.0084769999999999915,"elapsedMs":6.4325000000000001,"name":"native.download.bulkBaseline","processPeakResidentBytes":67567616}
+{"bytes":50000000,"cpuSeconds":0.035900000000000001,"elapsedMs":18.206458000000001,"name":"native.download.chunks","processPeakResidentBytes":168607744}
+{"bytes":50000000,"cpuSeconds":0.038745000000000002,"elapsedMs":31.261333,"name":"native.download.bulkBaseline","processPeakResidentBytes":221642752}
+{"cpuSeconds":0.056953000000000004,"elapsedMs":26.729709,"heartbeatDelayMs":[1.1219169999999998,5.0705410000000004],"name":"native.download.concurrent","processPeakResidentBytes":324599808,"totalBytes":100000000,"transfers":2}

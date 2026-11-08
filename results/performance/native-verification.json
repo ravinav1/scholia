@@ -1,0 +1,82 @@
+{
+  "appSourceCommit": "c4492b5",
+  "configuration": "optimized release with enable-testing for standalone object linkage",
+  "releaseCompilation": {
+    "status": "passed",
+    "seconds": 114.85,
+    "sdk": "macOS 26.5",
+    "compiler": "Swift 6.4.2"
+  },
+  "standaloneChecks": [
+    {
+      "name": "native-focused-regressions",
+      "status": "passed",
+      "coverage": [
+        "metadata and grouping cache invalidation",
+        "GPT-6.1 Sol xhigh payload",
+        "atomic ownership and one history entry",
+        "search page and citation conversation",
+        "rapid navigation",
+        "same-ID replacement and deletion",
+        "ordered edit writes and restart"
+      ]
+    },
+    {
+      "name": "native-review-regressions",
+      "status": "passed",
+      "evidence": "native-storage-verification.json"
+    },
+    {
+      "name": "native-persistence-regressions",
+      "status": "passed",
+      "evidence": "native-storage-verification.json"
+    },
+    {
+      "name": "native course UI and Quick Jump",
+      "status": "passed",
+      "coverage": [
+        "wide, standard, compact, light, dark",
+        "drafts and transcript",
+        "native quick-jump keyboard focus",
+        "rapid queries, Enter, Escape",
+        "selected search result and page",
+        "accessible controls",
+        "attachments and errors"
+      ]
+    },
+    {
+      "name": "assignment opening and writer durability",
+      "status": "passed",
+      "coverage": [
+        "async barrier and retained failure",
+        "recovery",
+        "downloads during sync",
+        "foreground file switching",
+        "independent cancellation",
+        "assignment companion context"
+      ]
+    },
+    {
+      "name": "adaptive reading context",
+      "status": "passed",
+      "note": "Also passed unchanged against baseline; not a reproduced defect"
+    },
+    {
+      "name": "native indexed search",
+      "status": "passed",
+      "comparisons": 144
+    }
+  ],
+  "runtimeEvidence": [
+    "native-after.json",
+    "native-workspace-after.json",
+    "native-downloads-after.jsonl",
+    "native-startup-after.json"
+  ],
+  "localXCTest": {
+    "status": "not run",
+    "reason": "Command Line Tools lack XCTest/full Xcode; actual CI tracked by parent delivery report"
+  },
+  "isolation": "Synthetic temporary libraries only; installed app and live study library not changed",
+  "remainingTargetGap": "Full-workspace return p95 199/202/245ms exceeds 150ms; isolated dashboard p95 95/110/125ms meets it."
+}

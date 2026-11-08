@@ -537,11 +537,13 @@ extension StudyWorkspaceSmoke {
         for _ in 0..<30 where window.attachedSheet == nil { try await courseUISettle() }
         let search = try courseUIUnwrap(window.attachedSheet)
         _ = try await courseUIWaitForElement("workspace-search-query", in: search)
+        let fileQuery = first.code + " 202"
         let hits = try await workspace.fileSearch.search(courses: workspace.library.courses,
-            store: workspace.store, query: first.code)
-        try courseUIRequire(hits.results.count >= 2 && hits.results[1].documentID != nil, "Search fixture needs two saved results")
+            store: workspace.store, query: fileQuery, mode: "files")
+        try courseUIRequire(hits.results.count >= 2 && hits.results[1].documentID != nil,
+            "Search fixture needs two saved file-name matches (got \(hits.results.map { $0.title + ":" + ($0.documentID ?? "cloud") }))")
         let expected = hits.results[1]
-        try await courseUIEditTextField("workspace-search-query", value: first.code, in: search)
+        try await courseUIEditTextField("workspace-search-query", value: fileQuery, in: search)
         _ = try await courseUIWaitForElement("workspace-search-hit-\(expected.id)", in: search)
         search.sendEvent(try key("\u{f701}", code: 125, in: search))
         try await courseUISettle()
@@ -549,7 +551,7 @@ extension StudyWorkspaceSmoke {
         for _ in 0..<30 where window.attachedSheet === search { try await courseUISettle() }
         try courseUIRequire(window.attachedSheet == nil, "Opening a search result must dismiss library search")
         try courseUIRequire(workspace.document?.id.uuidString == expected.documentID,
-            "Arrow keys and Enter must open the selected coursework search result")
+            "Arrow keys and Enter must open the selected coursework search result (expected \(expected.documentID ?? "none"), received \(workspace.document?.id.uuidString ?? "none"))")
         try courseUIRequire(workspace.currentPage == max(1, expected.page),
             "Opening the selected search hit must retain its page")
         // AppKit detaches a sheet before its closing animation and responder
