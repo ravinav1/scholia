@@ -362,7 +362,12 @@ final class StudyLibraryPersistence: @unchecked Sendable {
                 let index = Int32(offset + 1)
                 let result: Int32
                 switch input {
-                case .text(let text): result = sqlite3_bind_text(value, index, text, -1, Self.transient)
+                case .text(let text):
+                    let utf8 = text.utf8CString
+                    guard utf8.count - 1 <= Int(Int32.max) else { throw StudyError.message("A study library identifier is too large to save.") }
+                    result = utf8.withUnsafeBufferPointer {
+                        sqlite3_bind_text(value, index, $0.baseAddress, Int32($0.count - 1), Self.transient)
+                    }
                 case .data(let data):
                     guard data.count <= Int(Int32.max) else { throw StudyError.message("A study library item is too large to save.") }
                     result = data.withUnsafeBytes { sqlite3_bind_blob(value, index, $0.baseAddress, Int32($0.count), Self.transient) }

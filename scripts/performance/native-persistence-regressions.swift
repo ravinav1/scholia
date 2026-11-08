@@ -219,6 +219,14 @@ import SQLite3
         catch { try require(error.localizedDescription.contains("active SQLite"), "Export rejects symlink aliases to active database files") }
         try require(try StudyLibraryStore(root: migrationRoot).load() == crossOwner,
             "Rejected export preserves the current database")
+        var specialIDs = original
+        specialIDs.courses[0].canvasMaterials![0].id = "教学\0alpha"
+        specialIDs.courses[0].canvasMaterials![1].id = "教学\0beta"
+        let specialRoot = root.appendingPathComponent("unicode-nul-identifiers")
+        try FileManager.default.createDirectory(at: specialRoot, withIntermediateDirectories: true)
+        try encoder.encode(specialIDs).write(to: specialRoot.appendingPathComponent("library.json"))
+        try require(try StudyLibraryStore(root: specialRoot).load() == specialIDs,
+            "Unicode and embedded-NUL identifiers migrate without truncating or merging rows")
         var streaming = original
         streaming.courses[0].threads[0].messages.append(ConversationMessage(role: .assistant, content: "Partial answer", isStreaming: true))
         streaming.courses[0].threads[0].messages.append(ConversationMessage(role: .assistant, content: "", isStreaming: true))
