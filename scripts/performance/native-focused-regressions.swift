@@ -108,9 +108,9 @@ private func check(_ value: Bool, _ message: String = "", line: UInt = #line) {
         try store.write(document: replacement, index: StudyDocumentIndex(pages: [
             StudyPage(number: 1, text: "Replacement beginning"), StudyPage(number: 2, text: "Replacement middle"),
             StudyPage(number: 3, text: "Replacement evidence")]), data: Data("Replacement evidence".utf8))
-        model.openReading(second.id, courseID: otherCourse.id)
+        model.openReading(second.id, courseID: otherCourse.id, page: 3)
         for _ in 0..<100 where model.documentIndex == nil { try await Task.sleep(for: .milliseconds(10)) }
-        check(model.currentPageText.contains("Replacement evidence"))
+        check(model.currentPageText.contains("Replacement evidence"), "Replacement must load current contents on the requested page")
         model.openReading(third.id, courseID: otherCourse.id)
         model.removeDocument(third.id)
         try await Task.sleep(for: .milliseconds(30))
