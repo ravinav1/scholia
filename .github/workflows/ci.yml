@@ -80,6 +80,7 @@ jobs:
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-review-regressions.swift
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-persistence-regressions.swift
+          zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-attachment-regressions.swift
       - name: Package the native app without installing
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         env:
