@@ -10,6 +10,9 @@ scripts/**/.opencode-env
 apps/macos/.build/
 apps/macos/.swiftpm/
 
+# Preserve ignored legacy private libraries after product removal
+.data/
+
 # Local development secrets
 .env
 .env.*
