@@ -41,7 +41,7 @@ Scheduler version 1 starts with a one-day delay. A correct first attempt without
 
 ## Persistence
 
-`Study/Learning/events.sqlite` is separate from `library.json` and chat history. SQLite transactions append uniquely identified events and reject a stale writer. A retried event must carry the same ID and content. Session versions protect concurrent actions; review versions protect snoozes/removals. Source snapshots, question revisions, attempts, feedback, concerns and schedule evidence are local by default. No research telemetry is collected.
+`Study/Learning/events.sqlite` is separate from `library.sqlite` and chat history. SQLite transactions append uniquely identified events and reject a stale writer. A retried event must carry the same ID and content. Session versions protect concurrent actions; review versions protect snoozes/removals. Source snapshots, question revisions, attempts, feedback, concerns and schedule evidence are local by default. No research telemetry is collected.
 
 Reference answers stay hidden until an explicit reveal after a saved attempt.
 Generated text can still leak an answer indirectly, so model behavior requires

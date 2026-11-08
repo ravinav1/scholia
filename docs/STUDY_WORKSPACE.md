@@ -425,7 +425,7 @@ your existing exam plan, favorites or courses.
 
 The saved record contains only `{courseCode, passed}` pairs in a separate,
 non-synchronizing macOS Keychain item per local library. It is excluded from
-`library.json`, search indexes, and exports.
+`library.sqlite`, search indexes, and exports.
 Native **Get advice** is the explicit exception for provider input: it sends only
 the passed-course codes. Other provider requests do not read this record.
 Studentweb grades and personal details are reduced inside

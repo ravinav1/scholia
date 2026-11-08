@@ -176,7 +176,7 @@ Native search uses the NEON SQLite predicate without retaining a second full
 text snapshot. Scheduling stays with macOS rather than binding work to
 particular performance or efficiency cores.
 
-The index is a disposable cache named `needle-v1.sqlite` beside `library.json`
+The index is a disposable cache named `needle-v1.sqlite` beside `library.sqlite`
 on your Mac. It contains searchable document text and has owner-only file
 permissions. Removing it while Scholia is stopped causes the next search to
 rebuild it; original documents are unaffected.
