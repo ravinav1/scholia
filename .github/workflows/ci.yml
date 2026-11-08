@@ -49,6 +49,9 @@ jobs:
 
   native-release:
     runs-on: macos-latest
+    timeout-minutes: 55
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -58,11 +61,15 @@ jobs:
       - run: npm ci
       - run: npm run build:native-resources
       - name: Verify full Xcode toolchain
-        run: xcodebuild -version
+        run: |
+          xcodebuild -version
+          swift --version
       - name: Compile native release
-        run: swift build --package-path apps/macos --configuration release --build-system native --jobs 4
+        timeout-minutes: 20
+        run: zsh scripts/macos/ci-swift-check.sh build
       - name: Run native release XCTest
-        run: swift test --package-path apps/macos --configuration release --build-system native --jobs 4
+        timeout-minutes: 20
+        run: zsh scripts/macos/ci-swift-check.sh test
       - name: Check native performance work counts and navigation
         run: |
           zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-focused-regressions.swift
@@ -75,3 +82,11 @@ jobs:
         run: |
           npm run build:macos
           node scripts/checks/check-native-package.mjs
+          node scripts/macos/verify-swiftmath-resource-patch.mjs
+          zsh scripts/macos/check-swiftmath-package.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-compiler-diagnostics
+          path: results/performance/ci-native/
+          if-no-files-found: ignore

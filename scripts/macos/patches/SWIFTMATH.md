@@ -9,7 +9,7 @@ The patch checks the exact locked version/revision and SHA-256 of both upstream 
 After packaging, run:
 
 ```sh
-node scripts/macos/test-swiftmath-resource-patch.mjs
+node scripts/macos/verify-swiftmath-resource-patch.mjs
 zsh scripts/macos/check-swiftmath-package.sh
 ```
 
