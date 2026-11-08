@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import SQLite3
 @testable import ScholiaMac
 
 private final class RefreshResponseState: @unchecked Sendable {
@@ -78,9 +79,19 @@ struct AssignmentRefreshPerformanceSmoke {
         var publications = 0
         let observation = workspace.$library.dropFirst().sink { _ in publications += 1 }
         defer { observation.cancel() }
-        let libraryFile = root.appendingPathComponent("library.json")
-        func modificationDate() throws -> Date {
-            try libraryFile.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate!
+        let libraryFile = root.appendingPathComponent("library.sqlite")
+        func savedRevision() throws -> Int64 {
+            var db: OpaquePointer?
+            guard sqlite3_open_v2(libraryFile.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+                throw StudyError.message("Could not open refresh test database")
+            }
+            defer { sqlite3_close_v2(db) }
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT revision FROM library_metadata WHERE singleton = 1", -1, &statement, nil) == SQLITE_OK,
+                let statement else { throw StudyError.message("Missing library revision") }
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_step(statement) == SQLITE_ROW else { throw StudyError.message("Could not read library revision") }
+            return sqlite3_column_int64(statement, 0)
         }
         func awaitSaved(_ matches: (StudyLibrary) -> Bool) async throws {
             for _ in 0..<200 {
@@ -90,11 +101,11 @@ struct AssignmentRefreshPerformanceSmoke {
             preconditionFailure("The refresh snapshot was not persisted")
         }
 
-        let unchangedDate = try modificationDate()
+        let unchangedDate = try savedRevision()
         await workspace.refreshCanvasAssignmentsIfNeeded(now: now, force: true)
         try await Task.sleep(for: .milliseconds(50))
         precondition(publications == 0, "Equal assignment data and metadata must not publish the library")
-        let afterUnchangedDate = try modificationDate()
+        let afterUnchangedDate = try savedRevision()
         precondition(afterUnchangedDate == unchangedDate, "An identical refresh must not rewrite the library")
         print("PASS: 400 unchanged assignments produce zero library publications and no rewrite")
 
@@ -123,10 +134,10 @@ struct AssignmentRefreshPerformanceSmoke {
         await workspace.refreshCanvasAssignmentsIfNeeded(now: changedCheck, force: true)
         try await awaitSaved { $0.canvasAssignmentsError != nil }
         publications = 0
-        let failureDate = try modificationDate()
+        let failureDate = try savedRevision()
         await workspace.refreshCanvasAssignmentsIfNeeded(now: changedCheck, force: true)
         try await Task.sleep(for: .milliseconds(50))
-        let afterFailureDate = try modificationDate()
+        let afterFailureDate = try savedRevision()
         precondition(publications == 0 && afterFailureDate == failureDate,
             "An unchanged failure must not invalidate or rewrite the library")
         print("PASS: repeated offline refresh retains saved status without publishing or rewriting")

@@ -148,7 +148,7 @@ enum StudyTeachingMode: String, Codable, CaseIterable, Identifiable, Sendable {
 
 }
 
-struct StudyThread: Codable, Identifiable, Sendable {
+struct StudyThread: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var title = "New conversation"
     var documentID: UUID?
@@ -168,7 +168,7 @@ struct StudyThread: Codable, Identifiable, Sendable {
     var isSelectionScratch: Bool?
 }
 
-struct StudyCourse: Codable, Identifiable, Sendable {
+struct StudyCourse: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var name: String
     var code: String = ""
@@ -238,7 +238,7 @@ struct StudyCourse: Codable, Identifiable, Sendable {
     }
 }
 
-struct StudyLibrary: Codable, Sendable {
+struct StudyLibrary: Codable, Equatable, Sendable {
     var version = 1
     var courses: [StudyCourse] = []
     var selectedCourseID: UUID?
@@ -266,21 +266,18 @@ enum StudyError: LocalizedError {
 
 struct StudyLibraryStore: Sendable {
     let root: URL
+    private let persistence: StudyLibraryPersistence
 
     init(root: URL? = nil) {
         self.root =
             root
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Scholia/Study", isDirectory: true)
+        persistence = StudyLibraryPersistence(root: self.root)
     }
 
     func load() throws -> StudyLibrary {
-        let file = root.appendingPathComponent("library.json")
-        guard FileManager.default.fileExists(atPath: file.path) else { return StudyLibrary() }
-        var library = try JSONDecoder().decode(StudyLibrary.self, from: Data(contentsOf: file))
-        guard library.version == 1 else {
-            throw StudyError.message("This library was created by a newer Scholia version.")
-        }
+        var library = try persistence.load()
         for ci in library.courses.indices {
             for ti in library.courses[ci].threads.indices {
                 library.courses[ci].threads[ti].messages = library.courses[ci].threads[ti].messages.compactMap {
@@ -298,11 +295,12 @@ struct StudyLibraryStore: Sendable {
     }
 
     func save(_ library: StudyLibrary) throws {
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(library).write(to: root.appendingPathComponent("library.json"), options: .atomic)
+        try persistence.save(library)
     }
+
+    /// Explicit portable export; normal reading and chat updates never rewrite it.
+    func exportJSON(to destination: URL) throws { try persistence.exportJSON(to: destination) }
+    var persistenceMetrics: StudyLibraryPersistence.Metrics { persistence.metrics }
 
     func directory(for id: UUID) -> URL { root.appendingPathComponent("Documents/\(id.uuidString)", isDirectory: true) }
     func file(for document: StudyDocument) -> URL {

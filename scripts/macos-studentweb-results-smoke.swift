@@ -154,7 +154,9 @@ struct StudentwebResultsSmoke {
         let libraryAfter = try encoder.encode(model.library)
         precondition(libraryAfter == libraryBefore, "Import must not mutate shared course, favorite or exam data")
         model.flush()
-        let libraryOnDisk = try Data(contentsOf: root.appendingPathComponent("library.json"))
+        let exportedLibrary = root.appendingPathComponent("privacy-check-export.json")
+        try model.store.exportJSON(to: exportedLibrary)
+        let libraryOnDisk = try Data(contentsOf: exportedLibrary)
         precondition(!String(decoding: libraryOnDisk, as: UTF8.self).contains("PRIVATE1000"))
         let stored = await vault.read()!
         let object = try JSONSerialization.jsonObject(with: stored) as! [[String: Any]]

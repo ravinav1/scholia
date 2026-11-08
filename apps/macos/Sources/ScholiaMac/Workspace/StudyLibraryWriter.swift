@@ -1,6 +1,7 @@
 import Foundation
 
-/// A serial, coalescing writer keeps JSON encoding and disk I/O off the UI thread.
+/// A serial, coalescing writer keeps changed-row encoding and SQLite commits off
+/// the UI thread. The store shares its committed snapshot across value copies.
 /// Flush remains synchronous at lifecycle boundaries so the latest draft is durable.
 final class StudyLibraryWriter: @unchecked Sendable {
     private let store: StudyLibraryStore

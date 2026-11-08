@@ -101,7 +101,7 @@ struct PerformanceAudit {
                 let model = StudyWorkspaceModel(store: store)
                 measure("native.\(count)courses.favorite") { model.toggleFavorite(library.courses[0].id) }
                 measure("native.\(count)courses.semesters") { _ = model.semesterGroups }
-                emit("native.\(count)courses.size", ["libraryBytes": try Data(contentsOf: store.root.appendingPathComponent("library.json")).count])
+                emit("native.\(count)courses.size", ["portableJSONBytes": try JSONEncoder().encode(store.load()).count])
             }
             var imageLibrary = library(89)
             var imageThread = StudyThread(title: "Image-heavy synthetic history")
@@ -109,7 +109,7 @@ struct PerformanceAudit {
             imageLibrary.courses[0].threads = [imageThread]
             let imageStore = StudyLibraryStore(root: root.appendingPathComponent("images"))
             try measure("native.89courses.20imageMessages.save", iterations: 5) { try imageStore.save(imageLibrary) }
-            emit("native.89courses.20imageMessages.size", ["libraryBytes": try Data(contentsOf: imageStore.root.appendingPathComponent("library.json")).count])
+            emit("native.89courses.20imageMessages.size", ["portableJSONBytes": try JSONEncoder().encode(imageStore.load()).count])
             let store = StudyLibraryStore(root: root.appendingPathComponent("context"))
             var course = StudyCourse(name: "Synthetic context")
             let text = String(repeating: "Eigenvectors preserve directions. Matrices transform vectors. Orthogonal basis and eigenvalue decomposition.\n\n", count: 500)

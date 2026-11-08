@@ -1,0 +1,54 @@
+{
+  "configuration" : "release",
+  "kind" : "native-full-json-storage-baseline",
+  "results" : [
+    {
+      "courses" : 6,
+      "documents" : 120,
+      "encodedBytesPerSave" : 536941,
+      "imageBytes" : 0,
+      "materials" : 420,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        5.2924170000000004,
+        4.5670419999999998,
+        3.7601659999999999,
+        3.33725,
+        3.9864169999999999
+      ]
+    },
+    {
+      "courses" : 89,
+      "documents" : 1780,
+      "encodedBytesPerSave" : 28283067,
+      "imageBytes" : 20000000,
+      "materials" : 6230,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        93.420957999999999,
+        93.693833999999995,
+        94.296250000000001,
+        92.558000000000007,
+        91.838667000000001
+      ]
+    },
+    {
+      "courses" : 500,
+      "documents" : 10000,
+      "encodedBytesPerSave" : 6991795,
+      "imageBytes" : 0,
+      "materials" : 35000,
+      "messages" : 200,
+      "operation" : "single reading position change",
+      "samplesMs" : [
+        130.620791,
+        132.607167,
+        130.86358300000001,
+        130.726833,
+        130.22191699999999
+      ]
+    }
+  ]
+}
