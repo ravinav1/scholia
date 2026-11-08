@@ -39,6 +39,26 @@ SCHOLIA_BUILD_ID="$(git rev-parse HEAD)" zsh scripts/macos/run-release-check.sh 
   scripts/performance/benchmark-native-workspace.swift results/performance/native-workspace-after.json
 ```
 
+For the baseline, the current component harness is source-compatible with `92a8e16`. Copy only the measurement runner and harness into a detached checkout, leaving application sources unchanged:
+
+```sh
+repro_source=$(git rev-parse --show-toplevel)
+repro_parent=$(mktemp -d "${TMPDIR:-/tmp}/scholia-baseline.XXXXXX")
+repro_baseline="$repro_parent/source"
+git worktree add --detach "$repro_baseline" 92a8e1689b20d30ba6c95cba9b332bece17c12ca
+mkdir -p "$repro_baseline/scripts/macos" "$repro_baseline/scripts/performance"
+cp scripts/macos/run-release-check.sh "$repro_baseline/scripts/macos/"
+cp scripts/performance/benchmark-native.swift "$repro_baseline/scripts/performance/"
+(
+  cd "$repro_baseline"
+  SCHOLIA_SKIP_BUILD=0 SCHOLIA_BUILD_ID=92a8e1689b20d30ba6c95cba9b332bece17c12ca \
+    zsh scripts/macos/run-release-check.sh scripts/performance/benchmark-native.swift \
+    "$repro_parent/native-before-reproduced.json"
+)
+```
+
+No native resource or npm build is needed for this component-only baseline. The current harness preserves the original workload, timing boundary and sample budget; it adds report metadata and revised console wording. The untracked original prototype was not retained as a byte-identical artifact. Use the same compiler/SDK/hardware and an idle visible desktop for comparable results. Reproduced output is separate from the checked-in original data.
+
 Avoid builds and other heavy jobs during timing collection. The release runner links only the current SwiftPM output map: incremental build directories may still contain object files for removed sources. Ordinary macOS build/install scripts default to release; `debug`/`--debug` remains available explicitly. Packaging and installing are separate actions.
 
 Local XCTest is unavailable because this machine has Command Line Tools without the XCTest module/full Xcode. Standalone checks link the actual optimized app objects; they do not replace a claimed XCTest pass. The full-Xcode CI job compiles release, runs XCTest and runs the standalone focused regressions. CI status is recorded in the final delivery report.

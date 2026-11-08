@@ -48,7 +48,24 @@ node --test tests/chrome/*.test.js
 node scripts/smoke/browser/smoke-chromium-panel-recursion.mjs
 ```
 
-For a baseline, build `92a8e16` in a separate checkout, then run the benchmark scripts from this change against that checkout with `--baseline` (copy the scripts and their existing Chromium helper or set up an equivalent checkout-relative invocation). Reports overwrite their stage-specific filenames; copy an existing report before another run when retaining multiple trials. Override `CHROMIUM_BIN` with a Chromium binary on other supported systems. `SCHOLIA_BENCHMARK_SAMPLES` changes sample count. Tests create isolated storage/profiles and clean them up. No extension storage schema changed; rollback requires rebuilding/loading the previous package. Replacing or reloading an installed extension remains a user action.
+To reproduce the baseline with the same harness, copy only measurement tooling into a detached checkout; the application source remains at `92a8e16`:
+
+```sh
+implementation_checkout=$(pwd)
+benchmark_baseline=$(mktemp -d "${TMPDIR:-/tmp}/scholia-extension-baseline.XXXXXX")
+git worktree add --detach "$benchmark_baseline" 92a8e1689b20d30ba6c95cba9b332bece17c12ca
+mkdir -p "$benchmark_baseline/scripts/performance" "$benchmark_baseline/scripts/smoke/browser/lib"
+cp scripts/performance/benchmark-extension.mjs scripts/performance/measure-extension-bundle.mjs "$benchmark_baseline/scripts/performance/"
+cp scripts/smoke/browser/lib/chromium.mjs "$benchmark_baseline/scripts/smoke/browser/lib/"
+cd "$benchmark_baseline"
+npm ci
+npm run build
+node scripts/performance/measure-extension-bundle.mjs --baseline
+node scripts/performance/benchmark-extension.mjs --baseline
+cd "$implementation_checkout"
+```
+
+The runtime harness uses Node's built-in WebSocket and the installed Chromium executable; Playwright is only used to obtain Chromium on Linux CI. Reports overwrite their stage-specific filenames; copy an existing report before another run when retaining multiple trials. Override `CHROMIUM_BIN` with a Chromium binary on other supported systems. `SCHOLIA_BENCHMARK_SAMPLES` changes sample count. Tests create isolated storage/profiles and clean them up. No extension storage schema changed; rollback requires rebuilding/loading the previous package. Replacing or reloading an installed extension remains a user action.
 
 ## Final product scope
 

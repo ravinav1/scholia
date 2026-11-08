@@ -14,7 +14,7 @@ npm run package:chrome
 npm run build:macos
 ```
 
-The extension ZIP is `dist/scholia-chrome-0.2.2.zip`; its unpacked directory is `dist/chrome`. The native bundle is `dist/macos/Scholia.app`. `build:macos` packages an optimized release and does not install it. `npm run build:macos -- debug` is an explicit development build. Full Xcode is required for XCTest; the release smoke runner also supports the installed Command Line Tools configuration described in the native report.
+The extension ZIP is `dist/scholia-chrome-0.2.2.zip`; its unpacked directory is `dist/chrome`. The native bundle is `dist/macos/Scholia.app`. The delivered ZIP contains an Apple Silicon build, ad hoc signed for local review rather than notarized distribution. Source builds target the build Mac architecture. `build:macos` packages an optimized release and does not install it. `npm run build:macos -- debug` is an explicit development build. Full Xcode is required for XCTest; the release smoke runner also supports the installed Command Line Tools configuration described in the native report.
 
 For a local ad hoc package without certificate provisioning:
 
@@ -39,7 +39,7 @@ zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/native-p
 SCHOLIA_BUILD_ID=$(git rev-parse HEAD) zsh scripts/macos/run-release-check.sh --skip-build scripts/performance/benchmark-native.swift /tmp/scholia-native-after.json
 ```
 
-Keep raw reports from each run; stage-specific report filenames are overwritten by repeat runs. Fixtures are synthetic and stored in temporary directories. Never point migration tests at the live library. Use Chromium, not Brave. For the baseline, use an isolated checkout at `92a8e16` and the baseline-compatible measurement harness.
+Keep raw reports from each run; stage-specific report filenames are overwritten by repeat runs. Fixtures are synthetic and stored in temporary directories. Never point migration tests at the live library. Use Chromium, not Brave. The native and extension reports provide exact detached-checkout commands for reproducing the baseline at `92a8e16`.
 
 ## Verification matrix
 
@@ -54,15 +54,28 @@ Keep raw reports from each run; stage-specific report filenames are overwritten 
 | Actual native UI | **Passed:** Quick Jump rapid typing and keyboard selection, assignments, wide/compact layout, light/dark, drafts, attachments and error states. |
 | Native persistence and recovery | **Passed:** exact changed payload rows, legacy migration, simultaneous first launch, actual process-crash recovery, conflicts, ordered tombstones, retry, Unicode/NUL IDs, rollback export and root isolation. |
 | Native timing collection | **Completed:** raw component, full window, fresh process, storage and transfer series; see target results below. |
+| Quick Jump latency percentiles | **Unrun:** desktop locked before the new benchmark could obtain keyboard focus. Harness compiled/launched and retains its focus assertion; [exact barrier and reproduction](NATIVE_QUICK_JUMP.md). Prior keyboard behavior checks passed. |
 | Native app package | **Passed:** production app built, ad hoc signed and deep/strict verified; isolated semantic runtime and all 12 bundled math fonts work with development fallbacks unavailable. No installed app was replaced. |
 | Local release XCTest | **Unrun:** Command Line Tools do not provide `XCTest`; full Xcode is absent. |
 | Linux source/package/Chromium CI | **Passed:** [run 42434768150](https://github.com/ravinav1/scholia/actions/runs/42434768150), including actual packaged extension and GPT-6.1 Sol/xhigh smoke. |
-| Full-Xcode release XCTest CI | [Swift 6.4 run 42435124350](https://github.com/ravinav1/scholia/actions/runs/42435124350) in progress. Previous Swift 6.3 runs did not finish compilation; no XCTest pass is inferred. |
+| Full-Xcode release XCTest CI | **298 passed, one failed, one opt-in skip:** [run 42437617202](https://github.com/ravinav1/scholia/actions/runs/42437617202). The remaining accurate-Vision error is reproduced independently of Scholia; [exact capability evidence](VISION_CI.md). CI is not fully green. |
+| Native regressions and packaging on CI | **Passed:** focused navigation/cache/drafts, independent review, SQLite/crash recovery, signed package, semantic dependencies and all 12 math fonts. The separate attachment executable reproduces the same runner OCR failure. |
 | Optional live embedding-model test | **Skipped:** not enabled; deterministic semantic-index tests passed. |
 | Optional Terminal-window updater test | **Skipped:** desktop Terminal opt-in not enabled; disposable app replacement tests passed. |
 | Merge, deployment, installation | **Not performed**, as requested. |
 
 The previous Xcode 26.5 compiler sample was entirely in `ClosureLifetimeFixup` / `computeDominatedBoundaryBlocks` at the sampled instant, with a 1.2 GB footprint. That is compiler-side evidence, not an application runtime stall or a completed diagnosis of the source trigger. Raw sample and process counters are retained in `results/performance/ci-swift-6.3`. CI now uses the official `xcode-27` runner and Xcode 27.2, with a Swift 6.4 assertion matching local verification and bounded diagnostic collection.
+
+The first completed Swift 6.4 build took 317.89 seconds on CI. XCTest compilation then exposed an existing focus-eligibility test calling a main-actor model method from a non-isolated test. The test now runs on `@MainActor`; all four truth-table assertions remain unchanged. A second existing test helper also needed an explicit escaping, main-actor predicate across asynchronous suspension. Its polling bound and failure assertion remain unchanged. CI now explicitly enables test access, builds optimized testable objects once, and executes that exact suite; the intermediate missing-test-access configuration failure is retained in GitHub history.
+
+The first complete XCTest execution is preserved in `results/performance/native-xctest-initial.json`. Its failing fixtures were corrected without changing application behavior:
+
+- Request attachments now test the inclusive 1,000,000-character boundary and one character above it; the previous “oversized” fixture was exactly at the limit.
+- Attachment transfer distinguishes the 200,000-character preview from the 50,000,000-character full-text limit, and tests both boundaries using a temporary TaskLocal corpus.
+- The legacy OpenCode catalog fixture now contains valid JSON instead of extra quote characters from an inline triple-quote literal.
+- Timeout verification waits for the actual state transition within a bounded deadline, preserving the configured 20 ms timeout and all cancellation/error/late-response assertions. Its corrected body passed 50 local release repetitions.
+- The review-policy fixture advances explicit event time to the stored due date, while retaining the per-session attempt/reveal/recap restrictions and checking the initial not-due state.
+- Scanned PDF construction uses fixed CoreGraphics/CoreText pixels. It asserts no embedded text, exercises production Vision OCR directly, and retains the required phrase while adding complete-status coverage. Both the original and fixed raster passed locally. The corrected fixture still fails on CI; a direct framework probe independently reproduces the accurate-Vision error, including CPU-only mode. See [VISION_CI.md](VISION_CI.md). Local release evidence is in `native-attachment-verification.json`.
 
 The prior current-page-context smoke passed both before and after this change, unchanged. It was not a reproduced navigation defect. New ownership/race regressions independently cover actual navigation faults. Two additional native UI smoke assumptions were corrected with retained behavior assertions: keyboard prediction now uses the UI's file-search scope, and useful composer height measures its editing viewport. The compact control was raised to the existing 32-point minimum assertion.
 
@@ -76,7 +89,7 @@ The actual full-workspace return series remains **202 / 245 ms p95** at 89/500 w
 
 Fresh-process first-dashboard display is **500 / 976 ms p95** at 89/500 workspaces. Each child is new, while filesystem caches are warm. This starts at process launch and ends at AppKit display; compositor scanout and external AppDelegate services are excluded. There is no prechange fresh-process baseline.
 
-See [NATIVE.md](NATIVE.md), [NATIVE_STARTUP.md](NATIVE_STARTUP.md), [NATIVE_STORAGE.md](NATIVE_STORAGE.md), [EXTENSION.md](EXTENSION.md), and `results/performance/environment.json` for fixtures, raw samples, CPU/memory observations, encoding counts, methods and limitations.
+See [VISION_CI.md](VISION_CI.md), [NATIVE.md](NATIVE.md), [NATIVE_QUICK_JUMP.md](NATIVE_QUICK_JUMP.md), [NATIVE_STARTUP.md](NATIVE_STARTUP.md), [NATIVE_STORAGE.md](NATIVE_STORAGE.md), [EXTENSION.md](EXTENSION.md), and `results/performance/environment.json` for fixtures, raw samples, CPU/memory observations, encoding counts, methods and limitations.
 
 ## Review and patch application
 

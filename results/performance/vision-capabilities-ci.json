@@ -1,0 +1,287 @@
+{
+  "architecture" : "arm64",
+  "complete" : true,
+  "currentRevision" : 3,
+  "defaultRevision" : 3,
+  "diagnosticOnly" : true,
+  "expectedPhrase" : "all the evidence",
+  "image" : {
+    "construction" : "CoreGraphics bitmap + CoreText Helvetica 48; direct CGImage; no PDF or AppKit",
+    "height" : 600,
+    "width" : 1600
+  },
+  "kind" : "direct-vision-capability-diagnostic",
+  "os" : "Version 27.0.1 (Build 26A434)",
+  "physicalMemory" : 7516192768,
+  "processorCount" : 3,
+  "recordedAt" : "2026-11-08T02:47:32Z",
+  "supportedRevisions" : [
+    1,
+    2,
+    3
+  ],
+  "variants" : [
+    {
+      "automaticallyDetectsLanguage" : true,
+      "elapsedMilliseconds" : 597.21589088439941,
+      "error" : {
+        "code" : 9,
+        "debugDescription" : "TextRecognition.CRImageReaderError.unknownError",
+        "description" : "TextRecognition.CRImageReaderError.unknownError",
+        "domain" : "TextRecognition.CRImageReaderError",
+        "localizedDescription" : "The operation couldn’t be completed. (TextRecognition.CRImageReaderError error 9.)",
+        "userInfo" : {
+
+        }
+      },
+      "expectedPhraseMatched" : false,
+      "name" : "accurate_auto_default",
+      "performSucceeded" : false,
+      "recognitionLanguages" : [
+        "en_US"
+      ],
+      "recognitionLevel" : "accurate",
+      "revision" : 3,
+      "supportedLanguages" : [
+        "en-US",
+        "fr-FR",
+        "it-IT",
+        "de-DE",
+        "es-ES",
+        "pt-BR",
+        "zh-Hans",
+        "zh-Hant",
+        "yue-Hans",
+        "yue-Hant",
+        "ko-KR",
+        "ja-JP",
+        "ru-RU",
+        "uk-UA",
+        "th-TH",
+        "vi-VT",
+        "ar-SA",
+        "ars-SA",
+        "tr-TR",
+        "id-ID",
+        "cs-CZ",
+        "da-DK",
+        "nl-NL",
+        "no-NO",
+        "nn-NO",
+        "nb-NO",
+        "ms-MY",
+        "pl-PL",
+        "ro-RO",
+        "sv-SE",
+        "fi-FI",
+        "hi-IN",
+        "mr-IN"
+      ],
+      "usesCPUOnly" : false,
+      "usesLanguageCorrection" : true
+    },
+    {
+      "automaticallyDetectsLanguage" : true,
+      "elapsedMilliseconds" : 224.31302070617676,
+      "error" : {
+        "code" : 9,
+        "debugDescription" : "TextRecognition.CRImageReaderError.unknownError",
+        "description" : "TextRecognition.CRImageReaderError.unknownError",
+        "domain" : "TextRecognition.CRImageReaderError",
+        "localizedDescription" : "The operation couldn’t be completed. (TextRecognition.CRImageReaderError error 9.)",
+        "userInfo" : {
+
+        }
+      },
+      "expectedPhraseMatched" : false,
+      "name" : "accurate_auto_cpu",
+      "performSucceeded" : false,
+      "recognitionLanguages" : [
+        "en_US"
+      ],
+      "recognitionLevel" : "accurate",
+      "revision" : 3,
+      "supportedLanguages" : [
+        "en-US",
+        "fr-FR",
+        "it-IT",
+        "de-DE",
+        "es-ES",
+        "pt-BR",
+        "zh-Hans",
+        "zh-Hant",
+        "yue-Hans",
+        "yue-Hant",
+        "ko-KR",
+        "ja-JP",
+        "ru-RU",
+        "uk-UA",
+        "th-TH",
+        "vi-VT",
+        "ar-SA",
+        "ars-SA",
+        "tr-TR",
+        "id-ID",
+        "cs-CZ",
+        "da-DK",
+        "nl-NL",
+        "no-NO",
+        "nn-NO",
+        "nb-NO",
+        "ms-MY",
+        "pl-PL",
+        "ro-RO",
+        "sv-SE",
+        "fi-FI",
+        "hi-IN",
+        "mr-IN"
+      ],
+      "usesCPUOnly" : true,
+      "usesLanguageCorrection" : true
+    },
+    {
+      "automaticallyDetectsLanguage" : false,
+      "elapsedMilliseconds" : 100.21400451660156,
+      "error" : {
+        "code" : 0,
+        "debugDescription" : "Foundation._GenericObjCError.nilError",
+        "description" : "Foundation._GenericObjCError.nilError",
+        "domain" : "Foundation._GenericObjCError",
+        "localizedDescription" : "The operation couldn’t be completed. (Foundation._GenericObjCError error 0.)",
+        "userInfo" : {
+
+        }
+      },
+      "expectedPhraseMatched" : false,
+      "name" : "accurate_english_default",
+      "performSucceeded" : false,
+      "recognitionLanguages" : [
+        "en-US"
+      ],
+      "recognitionLevel" : "accurate",
+      "revision" : 3,
+      "supportedLanguages" : [
+        "en-US",
+        "fr-FR",
+        "it-IT",
+        "de-DE",
+        "es-ES",
+        "pt-BR",
+        "zh-Hans",
+        "zh-Hant",
+        "yue-Hans",
+        "yue-Hant",
+        "ko-KR",
+        "ja-JP",
+        "ru-RU",
+        "uk-UA",
+        "th-TH",
+        "vi-VT",
+        "ar-SA",
+        "ars-SA",
+        "tr-TR",
+        "id-ID",
+        "cs-CZ",
+        "da-DK",
+        "nl-NL",
+        "no-NO",
+        "nn-NO",
+        "nb-NO",
+        "ms-MY",
+        "pl-PL",
+        "ro-RO",
+        "sv-SE",
+        "fi-FI",
+        "hi-IN",
+        "mr-IN"
+      ],
+      "usesCPUOnly" : false,
+      "usesLanguageCorrection" : true
+    },
+    {
+      "automaticallyDetectsLanguage" : false,
+      "elapsedMilliseconds" : 29.143929481506348,
+      "error" : {
+        "code" : 0,
+        "debugDescription" : "Foundation._GenericObjCError.nilError",
+        "description" : "Foundation._GenericObjCError.nilError",
+        "domain" : "Foundation._GenericObjCError",
+        "localizedDescription" : "The operation couldn’t be completed. (Foundation._GenericObjCError error 0.)",
+        "userInfo" : {
+
+        }
+      },
+      "expectedPhraseMatched" : false,
+      "name" : "accurate_english_cpu",
+      "performSucceeded" : false,
+      "recognitionLanguages" : [
+        "en-US"
+      ],
+      "recognitionLevel" : "accurate",
+      "revision" : 3,
+      "supportedLanguages" : [
+        "en-US",
+        "fr-FR",
+        "it-IT",
+        "de-DE",
+        "es-ES",
+        "pt-BR",
+        "zh-Hans",
+        "zh-Hant",
+        "yue-Hans",
+        "yue-Hant",
+        "ko-KR",
+        "ja-JP",
+        "ru-RU",
+        "uk-UA",
+        "th-TH",
+        "vi-VT",
+        "ar-SA",
+        "ars-SA",
+        "tr-TR",
+        "id-ID",
+        "cs-CZ",
+        "da-DK",
+        "nl-NL",
+        "no-NO",
+        "nn-NO",
+        "nb-NO",
+        "ms-MY",
+        "pl-PL",
+        "ro-RO",
+        "sv-SE",
+        "fi-FI",
+        "hi-IN",
+        "mr-IN"
+      ],
+      "usesCPUOnly" : true,
+      "usesLanguageCorrection" : true
+    },
+    {
+      "automaticallyDetectsLanguage" : false,
+      "confidences" : [
+        0.5
+      ],
+      "elapsedMilliseconds" : 251.03592872619629,
+      "expectedPhraseMatched" : true,
+      "name" : "fast_english_cpu",
+      "performSucceeded" : true,
+      "recognitionLanguages" : [
+        "en-US"
+      ],
+      "recognitionLevel" : "fast",
+      "recognizedText" : "Scanned attachment contains all the evidence",
+      "revision" : 3,
+      "supportedLanguages" : [
+        "en-US",
+        "fr-FR",
+        "it-IT",
+        "de-DE",
+        "es-ES",
+        "pt-BR"
+      ],
+      "usesCPUOnly" : true,
+      "usesLanguageCorrection" : true
+    }
+  ]
+}
