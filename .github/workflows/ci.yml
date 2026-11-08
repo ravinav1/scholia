@@ -28,7 +28,9 @@ jobs:
           test -n "$browser"
           echo "CHROMIUM_BIN=$browser" >> "$GITHUB_ENV"
       - name: Verify packaged extension in actual Chromium
-        run: node scripts/performance/benchmark-extension.mjs --packaged
+        run: |
+          node scripts/performance/benchmark-extension.mjs --packaged --after-removal
+          node scripts/smoke/browser/smoke-codex-model-selection.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
