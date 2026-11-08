@@ -1784,5 +1784,3 @@ class ScholiaContent {
     this.toastTimer = setTimeout(() => { this.els.toast.hidden = true; }, duration);
   }
 }
-
-
